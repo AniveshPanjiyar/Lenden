@@ -7,7 +7,18 @@ Payment collection, transfer, settlement, and daily closing app for Guest House,
 - Next.js App Router
 - Supabase Auth, Postgres, Storage, and RLS
 - TypeScript
-- PWA manifest for browser install/add-to-home-screen support
+- React Query client cache with view-only persistence
+- PWA manifest and service worker for browser install/add-to-home-screen support
+
+## Runtime Architecture
+
+Lenden runs as a Next.js backend-for-frontend over Supabase. There is no active Supabase Edge Function in the request path.
+
+- Initial page render: `src/app/page.tsx` loads authenticated data on the server and renders `AppShell`.
+- Client refreshes: `src/app/api/app/bootstrap/route.ts` and `src/app/api/app/dashboard/route.ts` expose focused GET payloads for React Query.
+- Mutations: forms call Server Actions in `src/app/actions.ts`; those actions validate the signed-in profile and execute business logic in `src/lib/lenden-actions.ts`.
+- Auth/session refresh: `src/proxy.ts` runs the Supabase cookie refresh helper before application routes.
+- Database/storage: Supabase owns Auth, Postgres tables, RLS policies, the private `receipts` bucket, and the `lenden_closing_summaries(date)` RPC.
 
 ## Local Setup
 
@@ -19,7 +30,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_j7srvJgYdT9dEyqDwOW9mQ_-GSZD
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
-The service role key is required only on the Next.js server for the first-owner setup flow. The transaction, ledger, approval, settlement, staff, room, course, and referral mutations now run through the Supabase Edge Function at `supabase/functions/lenden-actions`.
+The service role key is required only on the Next.js server for the first-owner setup flow and direct server action execution. Transaction, ledger, approval, settlement, staff, room, course, and referral mutations run directly from the Next.js server to Supabase.
 
 Run locally:
 
@@ -28,17 +39,17 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:4000`.
 
-## Edge Function
+## Database Migration
 
-Deploy the backend mutation function after linking the Supabase project:
+Apply the Supabase migrations before deploying a fresh environment. The latest performance migration adds dashboard indexes and the `public.lenden_closing_summaries(date)` RPC used by the fast dashboard path.
 
 ```bash
-supabase functions deploy lenden-actions --use-api
+supabase db push
 ```
 
-The app calls `https://<project-ref>.supabase.co/functions/v1/lenden-actions` with the signed-in user's JWT. Keep the function's JWT verification enabled. During local development, the Next.js server falls back to the same backend action logic if Supabase returns `404` because the function has not been deployed yet.
+This app no longer ships a Supabase Edge Function. Keep mutation logic in Next.js Server Actions unless a new deployment boundary is deliberately introduced.
 
 ## First Owner
 

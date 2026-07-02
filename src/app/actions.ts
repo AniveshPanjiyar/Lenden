@@ -8,26 +8,16 @@ import {
   type LendenActionAdminClient,
   type LendenActionName,
   type LendenActionProfile,
-} from "@/lib/lenden-actions-local";
+} from "@/lib/lenden-actions";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 
-type EdgeActionName = LendenActionName;
-
 const appPath = "/";
+const salesAgentAllowedActions = new Set<LendenActionName>(["markNotificationsRead", "updateProfile"]);
 
 function asString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isActionResult(value: unknown): value is ActionResult {
-  if (!value || typeof value !== "object" || !("ok" in value)) return false;
-  const result = value as { ok?: unknown; message?: unknown };
-  return (
-    result.ok === true ||
-    (result.ok === false && typeof result.message === "string")
-  );
 }
 
 async function requireUserProfile() {
@@ -54,83 +44,40 @@ async function requireUserProfile() {
   return profile as LendenActionProfile;
 }
 
-async function invokeLocalLendenAction(action: EdgeActionName, formData: FormData): Promise<ActionResult> {
-  try {
-    const profile = await requireUserProfile();
-    const admin = createAdminClient() as unknown as LendenActionAdminClient;
-    const result = await executeLendenAction(action, formData, { admin, profile });
-
-    if (result.ok) {
-      revalidatePath(appPath);
-    }
-
-    return result;
-  } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Could not process request.",
-    };
-  }
+function logActionTiming(action: LendenActionName, profile: LendenActionProfile | null, startedAt: number, result: ActionResult) {
+  const durationMs = Math.round(performance.now() - startedAt);
+  const status = result.ok ? "success" : "failure";
+  console.info("[lenden-action]", {
+    action,
+    status,
+    durationMs,
+    userId: profile?.id ?? null,
+    message: result.message ?? null,
+  });
 }
 
-async function invokeLendenAction(action: EdgeActionName, formData = new FormData()): Promise<ActionResult> {
-  const supabase = await createClient();
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError || !session?.access_token) {
-    redirect("/login");
-  }
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  if (!supabaseUrl || !publishableKey) {
-    return { ok: false, message: "Supabase Edge Function configuration is missing." };
-  }
-
-  let response: Response;
+async function invokeLendenAction(action: LendenActionName, formData = new FormData()): Promise<ActionResult> {
+  const startedAt = performance.now();
+  let profile: LendenActionProfile | null = null;
   try {
-    response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/functions/v1/lenden-actions`, {
-      method: "POST",
-      headers: {
-        apikey: publishableKey,
-        Authorization: `Bearer ${session.access_token}`,
-        "x-lenden-action": action,
-      },
-      body: formData,
-      cache: "no-store",
-    });
-  } catch {
-    return invokeLocalLendenAction(action, formData);
+    profile = await requireUserProfile();
+    if (profile.role === "sales_agent" && !salesAgentAllowedActions.has(action)) {
+      const result = { ok: false, message: "Sales agents have read-only incentive access." } satisfies ActionResult;
+      logActionTiming(action, profile, startedAt, result);
+      return result;
+    }
+    const admin = createAdminClient() as unknown as LendenActionAdminClient;
+    const result = await executeLendenAction(action, formData, { admin, profile });
+    logActionTiming(action, profile, startedAt, result);
+    return result;
+  } catch (error) {
+    const result = {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not process request.",
+    } satisfies ActionResult;
+    logActionTiming(action, profile, startedAt, result);
+    return result;
   }
-
-  if (response.status === 401) {
-    redirect("/login");
-  }
-
-  if (response.status === 404) {
-    return invokeLocalLendenAction(action, formData);
-  }
-
-  let payload: unknown = null;
-  try {
-    payload = await response.json();
-  } catch {
-    return { ok: false, message: `Edge Function returned an unreadable response (${response.status}).` };
-  }
-
-  if (!isActionResult(payload)) {
-    return { ok: false, message: `Edge Function returned an unexpected response (${response.status}).` };
-  }
-
-  if (payload.ok) {
-    revalidatePath(appPath);
-  }
-
-  return payload;
 }
 
 export async function loginAction(formData: FormData) {
@@ -160,18 +107,28 @@ export async function logoutAction() {
 export async function setupOwnerAction(formData: FormData): Promise<ActionResult> {
   try {
     const admin = createAdminClient();
-    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true });
-
-    if ((count ?? 0) > 0) {
-      return { ok: false, message: "Setup is closed because at least one profile already exists." };
-    }
-
-    const email = asString(formData, "email");
+    const email = asString(formData, "email")?.toLowerCase();
     const password = asString(formData, "password");
     const fullName = asString(formData, "full_name") ?? "Owner";
 
     if (!email || !password || password.length < 8) {
       return { ok: false, message: "Enter an email and a password with at least 8 characters." };
+    }
+
+    const { data: existingProfile, error: existingProfileError } = await admin
+      .from("profiles")
+      .select("id")
+      .ilike("email", email)
+      .maybeSingle();
+    if (existingProfileError) throw new Error(existingProfileError.message);
+    if (existingProfile) {
+      return { ok: true, message: "Owner created. You can log in now." };
+    }
+
+    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true });
+
+    if ((count ?? 0) > 0) {
+      return { ok: false, message: "Setup is closed because at least one profile already exists." };
     }
 
     const { data, error } = await admin.auth.admin.createUser({
@@ -200,6 +157,10 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
 
 export async function markNotificationsReadAction(): Promise<ActionResult> {
   return invokeLendenAction("markNotificationsRead");
+}
+
+export async function updateProfileAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("updateProfile", formData);
 }
 
 export async function createStaffAction(formData: FormData): Promise<ActionResult> {
@@ -238,6 +199,14 @@ export async function reviewChangeRequestAction(formData: FormData): Promise<Act
   return invokeLendenAction("reviewChangeRequest", formData);
 }
 
+export async function requestPaymentTransferAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("requestPaymentTransfer", formData);
+}
+
+export async function respondPaymentTransferAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("respondPaymentTransfer", formData);
+}
+
 export async function requestTransferAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("requestTransfer", formData);
 }
@@ -262,10 +231,22 @@ export async function saveRoomAction(formData: FormData): Promise<ActionResult> 
   return invokeLendenAction("saveRoom", formData);
 }
 
+export async function deleteRoomAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("deleteRoom", formData);
+}
+
 export async function saveCourseAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("saveCourse", formData);
 }
 
+export async function deleteCourseAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("deleteCourse", formData);
+}
+
 export async function saveReferralAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("saveReferral", formData);
+}
+
+export async function deleteReferralAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("deleteReferral", formData);
 }

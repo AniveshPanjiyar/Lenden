@@ -4,6 +4,15 @@ import { FormEvent, useState, useTransition } from "react";
 import { Landmark } from "lucide-react";
 import { setupOwnerAction } from "@/app/actions";
 
+const actionIdempotencyField = "_action_idempotency_key";
+
+function createActionRequestKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `act_${crypto.randomUUID()}`;
+  }
+  return `act_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
 export default function SetupPage() {
   const [pending, startTransition] = useTransition();
   const [state, setState] = useState<{ ok: boolean; message?: string } | null>(null);
@@ -13,12 +22,17 @@ export default function SetupPage() {
     const form = event.currentTarget;
     if (form.dataset.submitting === "true") return;
     const formData = new FormData(form);
+    const existingRequestKey = form.dataset.idempotencyKey;
+    const requestKey = existingRequestKey && existingRequestKey.trim() ? existingRequestKey : createActionRequestKey();
+    form.dataset.idempotencyKey = requestKey;
+    formData.set(actionIdempotencyField, requestKey);
     form.dataset.submitting = "true";
     form.setAttribute("aria-busy", "true");
     setState(null);
     startTransition(async () => {
       try {
         setState(await setupOwnerAction(formData));
+        delete form.dataset.idempotencyKey;
       } finally {
         form.dataset.submitting = "false";
         form.setAttribute("aria-busy", "false");

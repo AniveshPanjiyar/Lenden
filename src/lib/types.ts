@@ -14,6 +14,7 @@ export type Profile = {
   id: string;
   email: string;
   full_name: string;
+  avatar_url: string | null;
   role: AppRole;
   active: boolean;
 };
@@ -83,6 +84,7 @@ export type Payment = {
   photo_path: string | null;
   collected_by: string;
   current_holder_id: string | null;
+  client_request_id: string | null;
   approval_status: ApprovalStatus;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
@@ -99,6 +101,7 @@ export type Expense = {
   remark: string | null;
   photo_path: string | null;
   spent_by: string;
+  client_request_id: string | null;
   approval_status: ApprovalStatus;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
@@ -110,11 +113,13 @@ export type MoneyMovement = {
   type: "transfer" | "settlement";
   mode: PaymentMode;
   amount: number;
+  payment_id: string | null;
   from_profile_id: string;
   to_profile_id: string | null;
   status: MovementStatus;
   requested_by: string;
   responded_by: string | null;
+  client_request_id: string | null;
   note: string | null;
   created_at: string;
   responded_at: string | null;
@@ -138,6 +143,7 @@ export type ChangeRequest = {
   record_id: string;
   request_type: "edit" | "cancel";
   requested_by: string;
+  client_request_id: string | null;
   status: MovementStatus;
   reason: string | null;
   proposed_changes: Record<string, unknown>;
@@ -153,6 +159,7 @@ export type AgentSettlement = {
   status: MovementStatus;
   paid_by: string;
   responded_by: string | null;
+  client_request_id: string | null;
   note: string | null;
   created_at: string;
   responded_at: string | null;
@@ -166,9 +173,23 @@ export type AppNotification = {
   body: string;
   category: "payment" | "expense" | "transfer" | "approval" | "agent" | "settings" | "system";
   tone: "success" | "error" | "warning" | "info";
+  event_key: string | null;
   metadata: Record<string, unknown>;
   read_at: string | null;
   created_at: string;
+};
+
+export type ClosingSummary = {
+  profile_id: string;
+  full_name: string;
+  role: AppRole;
+  opening: number;
+  collected: number;
+  expenses: number;
+  received: number;
+  sent: number;
+  adjustments: number;
+  closing: number;
 };
 
 export type AppData = {
@@ -183,7 +204,25 @@ export type AppData = {
   expenses: Expense[];
   movements: MoneyMovement[];
   ledger: LedgerEntry[];
+  closingSummaries: ClosingSummary[];
   changeRequests: ChangeRequest[];
   agentSettlements: AgentSettlement[];
   notifications: AppNotification[];
 };
+
+export type BootstrapPayload = Pick<
+  AppData,
+  "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals"
+>;
+
+export type DashboardPayload = Pick<
+  AppData,
+  | "payments"
+  | "expenses"
+  | "movements"
+  | "ledger"
+  | "closingSummaries"
+  | "changeRequests"
+  | "agentSettlements"
+  | "notifications"
+>;

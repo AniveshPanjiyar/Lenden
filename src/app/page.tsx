@@ -1,5 +1,5 @@
 import { AppShell } from "@/components/app-shell";
-import { getAppData } from "@/lib/data";
+import { getBootstrapData, getDashboardData, mergeAppData } from "@/lib/data";
 import { parseAppViewState } from "@/lib/view-state";
 
 export default async function Home({
@@ -7,8 +7,10 @@ export default async function Home({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const data = await getAppData();
-  const initialViewState = parseAppViewState(await searchParams, data.profile.id);
+  const bootstrap = await getBootstrapData();
+  const initialViewState = parseAppViewState(await searchParams, bootstrap.profile.id);
+  const dashboard = await getDashboardData(initialViewState);
+  const data = mergeAppData(bootstrap, dashboard);
 
   return <AppShell data={data} initialViewState={initialViewState} />;
 }

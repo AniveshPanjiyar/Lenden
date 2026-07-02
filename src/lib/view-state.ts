@@ -1,9 +1,8 @@
 import { todayIso } from "@/lib/constants";
 
-export type AppTab = "home" | "payments" | "closing" | "transfers" | "settings";
+export type AppTab = "home" | "payments" | "closing" | "settings";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
-export type TransactionFilter = "all" | "received" | "sent" | "deleted";
-export type SettlementFilter = "all" | "received" | "sent";
+export type TransactionFilter = "all" | "collections" | "expenses" | "settlements";
 
 export type DateRangeState = {
   preset: DateRangePreset;
@@ -16,15 +15,13 @@ export type AppViewState = {
   dateRange: DateRangeState;
   transactionProfileId: string;
   transactionFilter: TransactionFilter;
-  settlementFilter: SettlementFilter;
 };
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
-const appTabs = ["home", "payments", "closing", "transfers", "settings"] as const;
+const appTabs = ["home", "payments", "closing", "settings"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
-const transactionFilters = ["all", "received", "sent", "deleted"] as const;
-const settlementFilters = ["all", "received", "sent"] as const;
+const transactionFilters = ["all", "collections", "expenses", "settlements"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 function singleParam(params: RawSearchParams, name: string) {
@@ -66,7 +63,8 @@ export function rangeForPreset(preset: DateRangePreset, current?: DateRangeState
 }
 
 export function parseAppViewState(params: RawSearchParams, defaultProfileId: string): AppViewState {
-  const tab = oneOf(singleParam(params, "tab"), appTabs, "home");
+  const rawTab = singleParam(params, "tab");
+  const tab = rawTab === "transfers" ? "payments" : oneOf(rawTab, appTabs, "home");
   const preset = oneOf(singleParam(params, "range"), dateRangePresets, "today");
   const from = validIsoDate(singleParam(params, "from"));
   const to = validIsoDate(singleParam(params, "to"));
@@ -75,9 +73,8 @@ export function parseAppViewState(params: RawSearchParams, defaultProfileId: str
 
   return {
     tab,
-    dateRange: tab === "transfers" && dateRange.preset === "this_month" ? rangeForPreset("today") : dateRange,
+    dateRange,
     transactionProfileId: singleParam(params, "txUser") || defaultProfileId,
     transactionFilter: oneOf(singleParam(params, "txFilter"), transactionFilters, "all"),
-    settlementFilter: oneOf(singleParam(params, "settlementFilter"), settlementFilters, "all"),
   };
 }

@@ -43,3 +43,7 @@ export function formatMoney(value: number | string | null | undefined) {
 export function isOwnerish(role: string) {
   return role === "admin" || role === "owner";
 }
+
+export function isSalesAgent(role: string) {
+  return role === "sales_agent";
+}
