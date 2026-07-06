@@ -83,6 +83,7 @@ const businessPermissions: Record<BusinessType, string> = {
 };
 const idempotencyField = "_action_idempotency_key";
 const actionsWithoutIdempotency = new Set<string>(["markNotificationsRead"]);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function asString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -98,6 +99,47 @@ function asNumber(formData: FormData, key: string) {
 
 function asBool(formData: FormData, key: string) {
   return formData.get(key) === "on" || formData.get(key) === "true";
+}
+
+function normalizeLibraryRollNumber(value: string | null) {
+  if (!value) return null;
+  const normalized = value.trim().replace(/\.0+$/, "");
+  return normalized || null;
+}
+
+function normalizeLibraryStudentId(value: string | null) {
+  return value && uuidPattern.test(value) ? value : null;
+}
+
+function normalizePhoneNumber(value: string | null) {
+  if (!value) return null;
+  const normalized = value.replace(/[^\d+]/g, "");
+  return normalized || null;
+}
+
+function normalizeClockTime(value: string | null) {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function minutesFromTime(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function slotHoursBetween(startTime: string | null, endTime: string | null) {
+  if (!startTime || !endTime) return null;
+  const startMinutes = minutesFromTime(startTime);
+  const endMinutes = minutesFromTime(endTime);
+  if (endMinutes <= startMinutes) return null;
+  return (endMinutes - startMinutes) / 60;
 }
 
 function calculateConfiguredAmount(type: string | null | undefined, value: number | null | undefined, base: number) {
@@ -125,12 +167,54 @@ function canTransferPaymentStatus(status: string | null | undefined) {
   return status !== "approved" && status !== "rejected" && status !== "cancelled";
 }
 
-function isMissingPaymentSplitSchemaError(error: { code?: string; message?: string }) {
-  const message = error.message ?? "";
+function errorCodeAndMessage(error: unknown) {
+  const errorLike = error && typeof error === "object" && !(error instanceof Error)
+    ? (error as { code?: string; message?: string })
+    : null;
+  return {
+    code: errorLike?.code,
+    message: (error instanceof Error ? error.message : errorLike?.message ?? "").toLowerCase(),
+  };
+}
+
+function isMissingDbSchemaError(error: unknown, identifiers: string[]) {
+  const { code, message } = errorCodeAndMessage(error);
+  const mentionsIdentifier = identifiers.some((identifier) => message.includes(identifier));
+  const hasMissingSchemaCode = code === "PGRST204" || code === "PGRST205" || code === "42703" || code === "42P01";
+
   return (
-    (error.code === "PGRST204" || error.code === "42703") &&
-    (message.includes("cash_collection") || message.includes("online_collection"))
+    mentionsIdentifier &&
+    (hasMissingSchemaCode ||
+      message.includes("schema cache") ||
+      message.includes("could not find") ||
+      message.includes("does not exist"))
   );
+}
+
+function isMissingPaymentSplitSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["cash_collection", "online_collection"]);
+}
+
+function isMissingLibraryStudentSchemaError(error: unknown) {
+  const { message } = errorCodeAndMessage(error);
+  if (message.includes("library student migration")) return true;
+  return isMissingDbSchemaError(error, [
+    "library_student_id",
+    "library_students",
+    "library_student_subscription_events",
+  ]);
+}
+
+function isMissingActionRequestSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["app_action_requests"]);
+}
+
+function isMissingClientRequestSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["client_request_id"]);
+}
+
+function isMissingNotificationEventKeySchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["event_key"]);
 }
 
 function permissionsFromForm(formData: FormData) {
@@ -152,6 +236,27 @@ function isSalesAgent(role: string) {
 function requireOwnerish(role: string) {
   if (!isOwnerish(role)) {
     throw new Error("Only admin or owner can do this.");
+  }
+}
+
+async function userPermissions(admin: SupabaseAdminClient, profileId: string) {
+  const permissionsResponse = await admin
+    .from("staff_permissions")
+    .select("permission")
+    .eq("profile_id", profileId);
+  return typedDataArray<{ permission: string }>(permissionsResponse).map((item) => item.permission);
+}
+
+async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile, business: BusinessType) {
+  if (isOwnerish(profile.role)) return true;
+  if (isSalesAgent(profile.role)) return false;
+  const permissions = await userPermissions(admin, profile.id);
+  return permissions.includes(businessPermissions[business]);
+}
+
+async function requireLibraryCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile) {
+  if (!(await hasBusinessCollectionAccess(admin, profile, "library"))) {
+    throw new Error("You do not have access to library students.");
   }
 }
 
@@ -264,6 +369,10 @@ async function beginIdempotentAction(
     return { kind: "new" as const, requestId: row.id, requestKey };
   }
 
+  if (isMissingActionRequestSchemaError(insertResponse.error)) {
+    return { kind: "new" as const, requestId: null, requestKey };
+  }
+
   if (!isDuplicateError(insertResponse.error)) {
     throw new Error(insertResponse.error?.message ?? "Could not start action.");
   }
@@ -308,6 +417,7 @@ async function finishIdempotentAction(
       completed_at: new Date().toISOString(),
     })
     .eq("id", requestId);
+  if (isMissingActionRequestSchemaError(error)) return;
   if (error) throw new Error(error.message);
 }
 
@@ -430,7 +540,7 @@ async function createNotifications(
   if (recipientIds.length === 0) return;
 
   for (const recipientId of recipientIds) {
-    const { error } = await admin.from("app_notifications").insert({
+    const notificationPayload: Record<string, unknown> = {
       recipient_id: recipientId,
       actor_id: params.actorId ?? null,
       title: params.title,
@@ -439,7 +549,13 @@ async function createNotifications(
       tone: params.tone ?? "info",
       event_key: params.eventKey ?? null,
       metadata: params.metadata ?? {},
-    });
+    };
+    let { error } = await admin.from("app_notifications").insert(notificationPayload);
+    if (error && isMissingNotificationEventKeySchemaError(error)) {
+      delete notificationPayload.event_key;
+      const retry = await admin.from("app_notifications").insert(notificationPayload);
+      error = retry.error;
+    }
     if (isDuplicateError(error)) continue;
     if (error) throw new Error(error.message);
   }
@@ -459,8 +575,198 @@ async function existingByClientRequest<T>(
     .eq(actorColumn, actorId)
     .eq("client_request_id", requestKey)
     .maybeSingle();
+  if (isMissingClientRequestSchemaError(response.error)) return null;
   if (response.error) throw new Error(response.error.message);
   return typedData<T>(response);
+}
+
+type LibraryStudentFormFields = {
+  rollNumber: string;
+  studentName: string;
+  phoneNumber: string | null;
+  seatNumber: string | null;
+  lockerNumber: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  slotHours: number | null;
+  subscriptionStartDate: string | null;
+  subscriptionEndDate: string | null;
+  feeAmount: number | null;
+  paidAmount: number | null;
+  duesAmount: number | null;
+  advanceAmount: number | null;
+};
+
+function readLibraryStudentFields(
+  formData: FormData,
+  options: { requireSubscription: boolean; requirePayment: boolean },
+): { ok: true; fields: LibraryStudentFormFields } | { ok: false; result: ActionResult } {
+  const rollNumber = normalizeLibraryRollNumber(asString(formData, "roll_number"));
+  const studentName = asString(formData, "customer_name") ?? asString(formData, "student_name");
+  const phoneNumber = normalizePhoneNumber(asString(formData, "phone_number"));
+  const startDate = asString(formData, "start_date");
+  const endDate = asString(formData, "end_date");
+  const startTime = normalizeClockTime(asString(formData, "start_time"));
+  const endTime = normalizeClockTime(asString(formData, "end_time"));
+  const feeAmount = asNumber(formData, "fee_amount");
+  const paidAmount = asNumber(formData, "paid_amount") ?? asNumber(formData, "amount");
+  const slotHours = slotHoursBetween(startTime, endTime);
+
+  if (!rollNumber || !studentName) {
+    return { ok: false, result: fail("Roll number and student name are required.") };
+  }
+  if (options.requireSubscription && (!startDate || !endDate || !isIsoDate(startDate) || !isIsoDate(endDate) || endDate < startDate)) {
+    return { ok: false, result: fail("Enter a valid subscription date range.") };
+  }
+  if ((startDate && !isIsoDate(startDate)) || (endDate && !isIsoDate(endDate)) || (startDate && endDate && endDate < startDate)) {
+    return { ok: false, result: fail("Enter a valid subscription date range.") };
+  }
+  if (!startTime || !endTime || slotHours === null) {
+    return { ok: false, result: fail("Enter a valid library time slot.") };
+  }
+  if (options.requirePayment && (!paidAmount || paidAmount <= 0)) {
+    return { ok: false, result: fail("Paid amount is required for library collection.") };
+  }
+
+  const duesAmount = feeAmount !== null && paidAmount !== null ? Math.max(feeAmount - paidAmount, 0) : null;
+  const advanceAmount = feeAmount !== null && paidAmount !== null ? Math.max(paidAmount - feeAmount, 0) : null;
+
+  return {
+    ok: true,
+    fields: {
+      rollNumber,
+      studentName,
+      phoneNumber,
+      seatNumber: asString(formData, "seat_number"),
+      lockerNumber: asString(formData, "locker_number"),
+      startTime,
+      endTime,
+      slotHours,
+      subscriptionStartDate: startDate,
+      subscriptionEndDate: endDate,
+      feeAmount,
+      paidAmount,
+      duesAmount,
+      advanceAmount,
+    },
+  };
+}
+
+function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean) {
+  return {
+    roll_number: fields.rollNumber,
+    phone_number: fields.phoneNumber,
+    student_name: fields.studentName,
+    seat_number: fields.seatNumber,
+    locker_number: fields.lockerNumber,
+    start_time: fields.startTime,
+    end_time: fields.endTime,
+    slot_hours: fields.slotHours,
+    subscription_start_date: fields.subscriptionStartDate,
+    subscription_end_date: fields.subscriptionEndDate,
+    fee_amount: fields.feeAmount,
+    paid_amount: fields.paidAmount,
+    dues_amount: fields.duesAmount,
+    advance_amount: fields.advanceAmount,
+    active,
+    placeholder: false,
+  };
+}
+
+async function upsertLibraryStudentEvent(
+  admin: SupabaseAdminClient,
+  params: {
+    studentId: string;
+    paymentId?: string | null;
+    eventKey: string;
+    eventType: "payment_renewal" | "manual_update" | "status_change";
+    eventDate: string;
+    source: string;
+    fields: LibraryStudentFormFields;
+    active: boolean;
+    createdBy: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const { error } = await admin.from("library_student_subscription_events").upsert(
+    {
+      library_student_id: params.studentId,
+      payment_id: params.paymentId ?? null,
+      event_key: params.eventKey,
+      event_type: params.eventType,
+      event_date: params.eventDate,
+      source: params.source,
+      subscription_start_date: params.fields.subscriptionStartDate,
+      subscription_end_date: params.fields.subscriptionEndDate,
+      fee_amount: params.fields.feeAmount,
+      paid_amount: params.fields.paidAmount,
+      dues_amount: params.fields.duesAmount,
+      advance_amount: params.fields.advanceAmount,
+      seat_number: params.fields.seatNumber,
+      locker_number: params.fields.lockerNumber,
+      start_time: params.fields.startTime,
+      end_time: params.fields.endTime,
+      active: params.active,
+      created_by: params.createdBy,
+      metadata: params.metadata ?? {},
+    },
+    { onConflict: "event_key" },
+  );
+  if (isMissingLibraryStudentSchemaError(error)) return;
+  if (error) throw new Error(error.message);
+}
+
+async function saveLibraryStudentRecord(
+  admin: SupabaseAdminClient,
+  params: {
+    id: string | null;
+    fields: LibraryStudentFormFields;
+    active: boolean;
+    lastPaymentId?: string | null;
+    lastPaymentDate?: string | null;
+  },
+) {
+  const payload: Record<string, unknown> = {
+    ...libraryStudentPayload(params.fields, params.active),
+  };
+  if (params.lastPaymentId) payload.last_payment_id = params.lastPaymentId;
+  if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
+
+  const studentId = normalizeLibraryStudentId(params.id);
+  const query = studentId
+    ? admin.from("library_students").update(payload).eq("id", studentId)
+    : admin.from("library_students").upsert(payload, { onConflict: "roll_number" });
+  const response = await query.select("id").single();
+  const student = typedData<{ id: string }>(response);
+  if (response.error || !student) {
+    if (isMissingLibraryStudentSchemaError(response.error)) {
+      throw new Error("Apply the library student migration before saving student records.");
+    }
+    if (isDuplicateError(response.error)) {
+      throw new Error("This roll number is already linked to another student.");
+    }
+    throw new Error(response.error?.message ?? "Could not save library student.");
+  }
+  return student.id;
+}
+
+function fieldsFromLibraryStudentRecord(record: Record<string, string | number | boolean | null>): LibraryStudentFormFields {
+  return {
+    rollNumber: String(record.roll_number ?? ""),
+    studentName: String(record.student_name ?? ""),
+    phoneNumber: typeof record.phone_number === "string" ? record.phone_number : null,
+    seatNumber: typeof record.seat_number === "string" ? record.seat_number : null,
+    lockerNumber: typeof record.locker_number === "string" ? record.locker_number : null,
+    startTime: typeof record.start_time === "string" ? normalizeClockTime(record.start_time) : null,
+    endTime: typeof record.end_time === "string" ? normalizeClockTime(record.end_time) : null,
+    slotHours: typeof record.slot_hours === "number" ? record.slot_hours : record.slot_hours ? Number(record.slot_hours) : null,
+    subscriptionStartDate: typeof record.subscription_start_date === "string" ? record.subscription_start_date : null,
+    subscriptionEndDate: typeof record.subscription_end_date === "string" ? record.subscription_end_date : null,
+    feeAmount: typeof record.fee_amount === "number" ? record.fee_amount : record.fee_amount ? Number(record.fee_amount) : null,
+    paidAmount: typeof record.paid_amount === "number" ? record.paid_amount : record.paid_amount ? Number(record.paid_amount) : null,
+    duesAmount: typeof record.dues_amount === "number" ? record.dues_amount : record.dues_amount ? Number(record.dues_amount) : null,
+    advanceAmount: typeof record.advance_amount === "number" ? record.advance_amount : record.advance_amount ? Number(record.advance_amount) : null,
+  };
 }
 
 function valueMatches(current: unknown, next: unknown) {
@@ -635,13 +941,7 @@ const handlers = {
     const requestKey = idempotencyKey ?? crypto.randomUUID();
 
     if (!business || amount <= 0) return fail("Business type and amount are required.");
-    const neededPermission = businessPermissions[business];
-    const permissionsResponse = await admin
-      .from("staff_permissions")
-      .select("permission")
-      .eq("profile_id", profile.id);
-    const permissions = typedDataArray<{ permission: string }>(permissionsResponse);
-    const hasAccess = isOwnerish(profile.role) || permissions.some((item) => item.permission === neededPermission);
+    const hasAccess = await hasBusinessCollectionAccess(admin, profile, business);
     if (!hasAccess) return fail("You do not have access to this collection type.");
 
     const existingPayment = await existingByClientRequest<{ id: string }>(
@@ -677,6 +977,26 @@ const handlers = {
     const skillCourseId = asString(formData, "skill_course_id");
     const referralCodeText = asString(formData, "referral_code");
     const photoPath = await uploadReceipt(admin, formData.get("photo"), "payments", requestKey);
+    let libraryStudentId: string | null = null;
+    let libraryStudentFields: LibraryStudentFormFields | null = null;
+    let libraryStudentSyncSkipped = false;
+
+    if (business === "library") {
+      const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
+      if (!parsedStudent.ok) return parsedStudent.result;
+      libraryStudentFields = parsedStudent.fields;
+      try {
+        libraryStudentId = await saveLibraryStudentRecord(admin, {
+          id: normalizeLibraryStudentId(asString(formData, "library_student_id")),
+          fields: libraryStudentFields,
+          active: true,
+        });
+      } catch (error) {
+        if (!isMissingLibraryStudentSchemaError(error)) throw error;
+        libraryStudentSyncSkipped = true;
+        libraryStudentId = null;
+      }
+    }
 
     let roomSnapshot = null;
     if (roomId) {
@@ -712,7 +1032,7 @@ const handlers = {
       incentiveAmount = calculateConfiguredAmount(referral.incentive_type, referral.incentive_value, paid ?? amount);
     }
 
-    const paymentPayload = {
+    const paymentPayload: Record<string, unknown> = {
       business_type: business,
       mode,
       amount,
@@ -747,26 +1067,43 @@ const handlers = {
       current_holder_id: cashCollection > 0 ? profile.id : null,
       client_request_id: requestKey,
     };
+    if (libraryStudentId) {
+      paymentPayload.library_student_id = libraryStudentId;
+    }
 
-    let paymentResult = await admin
-      .from("payments")
-      .insert(paymentPayload)
-      .select("id")
-      .single();
-
-    if (paymentResult.error && isMissingPaymentSplitSchemaError(paymentResult.error)) {
-      if (mode === "mixed") {
-        return fail("Mixed payments need the latest database migration before they can be saved.");
-      }
-
-      const legacyPaymentPayload: Partial<typeof paymentPayload> = { ...paymentPayload };
-      delete legacyPaymentPayload.cash_collection;
-      delete legacyPaymentPayload.online_collection;
+    const paymentPayloadForInsert = { ...paymentPayload };
+    let paymentResult: QueryResponse<unknown>;
+    while (true) {
       paymentResult = await admin
         .from("payments")
-        .insert(legacyPaymentPayload)
+        .insert(paymentPayloadForInsert)
         .select("id")
         .single();
+
+      if (!paymentResult.error) break;
+
+      if (isMissingPaymentSplitSchemaError(paymentResult.error) && "cash_collection" in paymentPayloadForInsert) {
+        if (mode === "mixed") {
+          return fail("Mixed payments need the latest database migration before they can be saved.");
+        }
+        delete paymentPayloadForInsert.cash_collection;
+        delete paymentPayloadForInsert.online_collection;
+        continue;
+      }
+
+      if (isMissingLibraryStudentSchemaError(paymentResult.error) && "library_student_id" in paymentPayloadForInsert) {
+        delete paymentPayloadForInsert.library_student_id;
+        libraryStudentSyncSkipped = true;
+        libraryStudentId = null;
+        continue;
+      }
+
+      if (isMissingClientRequestSchemaError(paymentResult.error) && "client_request_id" in paymentPayloadForInsert) {
+        delete paymentPayloadForInsert.client_request_id;
+        continue;
+      }
+
+      break;
     }
 
     const payment = typedData<{ id: string }>(paymentResult);
@@ -783,6 +1120,33 @@ const handlers = {
         if (duplicatePayment) return ok("Payment saved.");
       }
       throw new Error(paymentResult.error?.message ?? "Could not save payment.");
+    }
+
+    if (libraryStudentId && libraryStudentFields && !libraryStudentSyncSkipped) {
+      try {
+        await saveLibraryStudentRecord(admin, {
+          id: libraryStudentId,
+          fields: libraryStudentFields,
+          active: true,
+          lastPaymentId: payment.id,
+          lastPaymentDate: paymentDate,
+        });
+        await upsertLibraryStudentEvent(admin, {
+          studentId: libraryStudentId,
+          paymentId: payment.id,
+          eventKey: `library-payment-renewal:${payment.id}`,
+          eventType: "payment_renewal",
+          eventDate: paymentDate,
+          source: "library_payment",
+          fields: libraryStudentFields,
+          active: true,
+          createdBy: profile.id,
+          metadata: { amount, mode },
+        });
+      } catch (error) {
+        if (!isMissingLibraryStudentSchemaError(error)) throw error;
+        libraryStudentSyncSkipped = true;
+      }
     }
 
     await createNotifications(admin, {
@@ -809,7 +1173,76 @@ const handlers = {
       });
     }
 
-    return ok("Payment saved.");
+    return ok(
+      libraryStudentSyncSkipped
+        ? "Payment saved. Apply the library student migration to update student records automatically."
+        : "Payment saved.",
+    );
+  }),
+
+  saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile, idempotencyKey }) => {
+    await requireLibraryCollectionAccess(admin, profile);
+    const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: false });
+    if (!parsedStudent.ok) return parsedStudent.result;
+
+    const active = !asBool(formData, "inactive");
+    const studentId = await saveLibraryStudentRecord(admin, {
+      id: asString(formData, "id"),
+      fields: parsedStudent.fields,
+      active,
+    });
+
+    await upsertLibraryStudentEvent(admin, {
+      studentId,
+      eventKey: `library-student-manual:${studentId}:${idempotencyKey ?? crypto.randomUUID()}`,
+      eventType: "manual_update",
+      eventDate: new Date().toISOString().slice(0, 10),
+      source: "student_form",
+      fields: parsedStudent.fields,
+      active,
+      createdBy: profile.id,
+    });
+
+    return ok(active ? "Library student saved." : "Library student moved to inactive.");
+  }),
+
+  setLibraryStudentStatus: withErrors("Could not update library student status.", async (formData, { admin, profile, idempotencyKey }) => {
+    await requireLibraryCollectionAccess(admin, profile);
+    const id = asString(formData, "id");
+    const active = asBool(formData, "active");
+    if (!id) return fail("Choose a library student.");
+
+    const response = await admin.from("library_students").select("*").eq("id", id).single();
+    const student = typedData<Record<string, string | number | boolean | null>>(response);
+    if (isMissingLibraryStudentSchemaError(response.error)) {
+      return fail("Apply the library student migration before updating student status.");
+    }
+    if (response.error || !student) throw new Error(response.error?.message ?? "Library student not found.");
+
+    const updateResponse = await admin
+      .from("library_students")
+      .update({ active, placeholder: active ? false : Boolean(student.placeholder) })
+      .eq("id", id)
+      .select("*")
+      .single();
+    const updated = typedData<Record<string, string | number | boolean | null>>(updateResponse);
+    if (isMissingLibraryStudentSchemaError(updateResponse.error)) {
+      return fail("Apply the library student migration before updating student status.");
+    }
+    if (updateResponse.error || !updated) throw new Error(updateResponse.error?.message ?? "Could not update student status.");
+
+    await upsertLibraryStudentEvent(admin, {
+      studentId: id,
+      eventKey: `library-student-status:${id}:${idempotencyKey ?? crypto.randomUUID()}`,
+      eventType: "status_change",
+      eventDate: new Date().toISOString().slice(0, 10),
+      source: "student_status",
+      fields: fieldsFromLibraryStudentRecord(updated),
+      active,
+      createdBy: profile.id,
+    });
+
+    return ok(active ? "Library student reactivated." : "Library student moved to inactive.");
   }),
 
   createExpense: withErrors("Could not save expense.", async (formData, { admin, profile, idempotencyKey }) => {

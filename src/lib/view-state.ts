@@ -1,6 +1,6 @@
 import { todayIso } from "@/lib/constants";
 
-export type AppTab = "home" | "payments" | "closing" | "settings";
+export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
 export type TransactionFilter = "all" | "collections" | "expenses" | "settlements";
 
@@ -19,7 +19,7 @@ export type AppViewState = {
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
-const appTabs = ["home", "payments", "closing", "settings"] as const;
+const appTabs = ["home", "payments", "library_students", "closing", "settings"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
 const transactionFilters = ["all", "collections", "expenses", "settlements"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;

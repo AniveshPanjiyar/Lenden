@@ -352,6 +352,17 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   grid-column: 1 / -1;
 }
 
+.input-with-icon {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-icon input {
+  width: 100%;
+}
+
 /* ── Buttons ── */
 .primary-button,
 .ghost-button,
@@ -381,6 +392,28 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
 .primary-button:hover {
   box-shadow: 0 16px 30px rgba(47, 111, 94, 0.26);
   transform: translateY(-1px);
+}
+
+.secondary-button,
+.filter-chip {
+  min-height: 40px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--foreground);
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.filter-chip.active {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
 }
 
 .ghost-button,
@@ -3483,8 +3516,9 @@ summary::-webkit-details-marker {
 
   .transaction-history-view {
     border-radius: 0;
-    margin: -24px -16px 0;
-    padding: 16px 16px 24px;
+    margin: 0;
+    padding: 0 0 24px;
+    background: transparent;
   }
 
   .business-status-panel {
@@ -3511,19 +3545,35 @@ summary::-webkit-details-marker {
   }
 
   .history-filter-row {
-    flex-wrap: nowrap;
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .history-filter-chip {
     min-width: 0;
-    flex: 1 1 0;
+    width: 100%;
     padding: 0 12px;
-    justify-content: center;
+    justify-content: flex-start;
   }
 
   .history-user-select select {
     min-width: 0;
     width: 100%;
+    max-width: none;
+  }
+
+  .history-tab-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .history-tab {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+    white-space: normal;
   }
 
   .history-card {
@@ -3549,9 +3599,24 @@ summary::-webkit-details-marker {
   }
 
   .history-actions-menu .details-menu {
-    left: 0;
-    right: auto;
-    width: min(280px, calc(100vw - 96px));
+    position: static;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-top: 8px;
+  }
+
+  .history-actions-menu[open] {
+    width: 100%;
+  }
+
+  .history-card-side:has(.history-actions-menu[open]) {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .transaction-options-menu {
+    min-width: 0;
   }
 
   .history-card-side > strong {
@@ -4338,7 +4403,7 @@ option {
 
 @media (max-width: 720px) {
   .app-root {
-    padding-bottom: calc(150px + env(safe-area-inset-bottom));
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
   }
 
   .app-header {
@@ -4425,13 +4490,16 @@ option {
   }
 
   .quick-actions {
-    left: 12px;
-    right: 12px;
-    bottom: calc(82px + env(safe-area-inset-bottom));
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
-    z-index: 50;
+    z-index: auto;
+    width: 100%;
+    filter: none;
   }
 
   .quick-action-button {
@@ -4445,6 +4513,14 @@ option {
 
   .quick-action-label {
     font-size: 12px;
+  }
+
+  .action-sheet {
+    width: calc(100vw - 24px);
+    max-height: min(82dvh, 720px);
+    justify-self: center;
+    margin: 0 12px calc(12px + env(safe-area-inset-bottom));
+    border-radius: 16px;
   }
 
   .history-filter-row {

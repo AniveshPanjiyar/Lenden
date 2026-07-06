@@ -72,6 +72,7 @@ export type Payment = {
   start_time: string | null;
   end_time: string | null;
   slot_hours: number | null;
+  library_student_id: string | null;
   course_id: string | null;
   skill_course_id: string | null;
   referral_code_id: string | null;
@@ -88,6 +89,56 @@ export type Payment = {
   approval_status: ApprovalStatus;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
+  created_at: string;
+};
+
+export type LibraryStudent = {
+  id: string;
+  roll_number: string;
+  phone_number: string | null;
+  student_name: string | null;
+  seat_number: string | null;
+  locker_number: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  slot_hours: number | null;
+  subscription_start_date: string | null;
+  subscription_end_date: string | null;
+  fee_amount: number | null;
+  paid_amount: number | null;
+  dues_amount: number | null;
+  advance_amount: number | null;
+  active: boolean;
+  placeholder: boolean;
+  status_note: string | null;
+  last_payment_id: string | null;
+  last_payment_date: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LibraryStudentSubscriptionEvent = {
+  id: string;
+  library_student_id: string;
+  payment_id: string | null;
+  event_key: string;
+  event_type: "import_row" | "payment_renewal" | "manual_update" | "status_change";
+  event_date: string;
+  source: string | null;
+  subscription_start_date: string | null;
+  subscription_end_date: string | null;
+  fee_amount: number | null;
+  paid_amount: number | null;
+  dues_amount: number | null;
+  advance_amount: number | null;
+  seat_number: string | null;
+  locker_number: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  active: boolean | null;
+  created_by: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
 };
 
@@ -200,6 +251,7 @@ export type AppData = {
   rooms: Room[];
   courses: Course[];
   referrals: ReferralCode[];
+  libraryStudents: LibraryStudent[];
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
@@ -217,6 +269,7 @@ export type BootstrapPayload = Pick<
 
 export type DashboardPayload = Pick<
   AppData,
+  | "libraryStudents"
   | "payments"
   | "expenses"
   | "movements"

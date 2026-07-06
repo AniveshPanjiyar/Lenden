@@ -28,11 +28,14 @@ import {
   MoreHorizontal,
   Plus,
   ReceiptText,
+  Search,
   Settings,
   Share2,
   ShieldCheck,
   Trash2,
+  UserCheck,
   UserPlus,
+  UserX,
   WalletCards,
   X,
 } from "lucide-react";
@@ -50,10 +53,12 @@ import {
   markNotificationsReadAction,
   reviewChangeRequestAction,
   requestPaymentTransferAction,
+  saveLibraryStudentAction,
   saveCourseAction,
   saveReferralAction,
   saveRoomAction,
   saveStaffPermissionsAction,
+  setLibraryStudentStatusAction,
   respondPaymentTransferAction,
   settleCashAction,
   updateRecordAction,
@@ -61,7 +66,7 @@ import {
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { addMonthsIso, businessLabels, businessPermissions, formatMoney, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
-import type { AgentSettlement, AppData, AppNotification, AppRole, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
+import type { AgentSettlement, AppData, AppNotification, AppRole, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
 type Tab = AppTab;
@@ -127,6 +132,8 @@ function getTabIcon(id: Tab) {
       return <Landmark size={21} />;
     case "payments":
       return <ReceiptText size={21} />;
+    case "library_students":
+      return <BookOpen size={21} />;
     case "closing":
       return <ClipboardList size={21} />;
     case "settings":
@@ -137,6 +144,7 @@ function getTabIcon(id: Tab) {
 const tabItems: { id: Tab; labelKey: string; icon: ReactNode }[] = [
   { id: "home", labelKey: "dashboard", icon: <Landmark size={17} /> },
   { id: "payments", labelKey: "transactions", icon: <ReceiptText size={17} /> },
+  { id: "library_students", labelKey: "libraryStudents", icon: <BookOpen size={17} /> },
   { id: "closing", labelKey: "closing", icon: <ClipboardList size={17} /> },
   { id: "settings", labelKey: "settings", icon: <Settings size={17} /> },
 ];
@@ -260,6 +268,24 @@ const messages: Record<Language, Record<string, string>> = {
     ledger: "Ledger",
     ledgerEntry: "Ledger entry",
     library: "Library",
+    libraryStudent: "Library student",
+    libraryStudents: "Library Students",
+    studentDetails: "Student details",
+    studentRecords: "Student records",
+    studentSearch: "Search student",
+    activeStudents: "Active students",
+    inactiveStudents: "Inactive students",
+    expiredSubscription: "Expired subscription",
+    expiresOn: "Expires on",
+    lastPayment: "Last payment",
+    lockerNumber: "Locker number",
+    markInactive: "Mark inactive",
+    reactivate: "Reactivate",
+    newStudent: "New student",
+    selectStudent: "Select student",
+    subscription: "Subscription",
+    subscriptionPeriod: "Subscription",
+    timing: "Timing",
     logout: "Logout",
     main: "Main",
     markSettled: "Mark settled",
@@ -305,6 +331,7 @@ const messages: Record<Language, Record<string, string>> = {
     pendingPayout: "Pending payout",
     pendingReview: "Pending review",
     photo: "Photo",
+    phone: "Phone",
     quickActions: "Quick actions",
     rangeTo: "to",
     reasonOptional: "Reason optional",
@@ -401,6 +428,7 @@ const messages: Record<Language, Record<string, string>> = {
     transactionReview: "Transactions review",
     transactions: "Transactions",
     thisMonth: "This month",
+    until: "Until",
     unknown: "Unknown",
     neutralized: "Neutralized",
     unreadNotifications: "Unread notifications",
@@ -522,6 +550,24 @@ const messages: Record<Language, Record<string, string>> = {
     ledger: "हिसाब",
     ledgerEntry: "हिसाब एंट्री",
     library: "लाइब्रेरी",
+    libraryStudent: "लाइब्रेरी छात्र",
+    libraryStudents: "लाइब्रेरी छात्र",
+    studentDetails: "छात्र जानकारी",
+    studentRecords: "छात्र रिकॉर्ड",
+    studentSearch: "छात्र खोजें",
+    activeStudents: "चालू छात्र",
+    inactiveStudents: "बंद छात्र",
+    expiredSubscription: "सब्सक्रिप्शन खत्म",
+    expiresOn: "खत्म तारीख",
+    lastPayment: "आखिरी भुगतान",
+    lockerNumber: "लॉकर नंबर",
+    markInactive: "बंद करें",
+    reactivate: "फिर चालू करें",
+    newStudent: "नया छात्र",
+    selectStudent: "छात्र चुनें",
+    subscription: "सब्सक्रिप्शन",
+    subscriptionPeriod: "सब्सक्रिप्शन",
+    timing: "समय",
     logout: "लॉग आउट",
     main: "मुख्य",
     markSettled: "जमा हो गया",
@@ -567,6 +613,7 @@ const messages: Record<Language, Record<string, string>> = {
     pendingPayout: "बाकी भुगतान",
     pendingReview: "बाकी जांच",
     photo: "फोटो",
+    phone: "फोन",
     quickActions: "जल्दी काम",
     rangeTo: "से",
     reasonOptional: "कारण जरूरी नहीं",
@@ -663,6 +710,7 @@ const messages: Record<Language, Record<string, string>> = {
     transactionReview: "लेनदेन जांच",
     transactions: "लेनदेन",
     thisMonth: "इस महीने",
+    until: "तक",
     unknown: "पता नहीं",
     neutralized: "क्लियर",
     unreadNotifications: "नई सूचनाएं",
@@ -1023,6 +1071,7 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
 
 function dashboardFromAppData(data: AppData): DashboardPayload {
   return {
+    libraryStudents: data.libraryStudents,
     payments: data.payments,
     expenses: data.expenses,
     movements: data.movements,
@@ -1041,22 +1090,9 @@ function mergeCachedAppData(bootstrap: BootstrapPayload, dashboard: DashboardPay
   };
 }
 
-function dashboardSearchParams({
-  tab,
-  dateRange,
-  transactionProfileId,
-  transactionFilter,
-}: {
-  tab: Tab;
-  dateRange: DateRangeState;
-  transactionProfileId: string;
-  transactionFilter: TransactionFilter;
-}) {
+function dashboardDataSearchParams(dateRange: DateRangeState) {
   const params = new URLSearchParams();
-  params.set("tab", tab);
   params.set("range", dateRange.preset);
-  params.set("txUser", transactionProfileId);
-  params.set("txFilter", transactionFilter);
   if (dateRange.preset === "custom") {
     params.set("from", dateRange.from);
     params.set("to", dateRange.to);
@@ -1092,7 +1128,7 @@ function LogoutButton({ label }: { label: string }) {
 
 export function AppShell({ data, initialViewState }: { data: AppData; initialViewState: AppViewState }) {
   const initialUserIsSalesAgent = isSalesAgent(data.profile.role);
-  const initialTab = initialUserIsSalesAgent && (initialViewState.tab === "closing" || initialViewState.tab === "settings")
+  const initialTab = initialUserIsSalesAgent && (initialViewState.tab === "closing" || initialViewState.tab === "settings" || initialViewState.tab === "library_students")
     ? "home"
     : initialViewState.tab;
   const initialTransactionProfileId = initialViewState.transactionProfileId === "all"
@@ -1117,15 +1153,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [selectedNegative, setSelectedNegative] = useState<NegativeFlow | null>(null);
   const [pending, startTransition] = useTransition();
   const queryClient = useQueryClient();
+  const initialDashboardData = useMemo(() => dashboardFromAppData(data), [data]);
+  const initialDashboardParams = useMemo(
+    () => dashboardDataSearchParams(initialViewState.dateRange).toString(),
+    [initialViewState.dateRange],
+  );
   const dashboardParams = useMemo(
-    () =>
-      dashboardSearchParams({
-        tab,
-        dateRange,
-        transactionProfileId,
-        transactionFilter,
-      }),
-    [dateRange, tab, transactionFilter, transactionProfileId],
+    () => dashboardDataSearchParams(dateRange).toString(),
+    [dateRange],
   );
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap"],
@@ -1133,21 +1168,25 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     initialData: () => bootstrapFromAppData(data),
   });
   const dashboardQuery = useQuery({
-    queryKey: ["dashboard", dashboardParams.toString()],
-    queryFn: () => fetchJson<DashboardPayload>(`/api/app/dashboard?${dashboardParams.toString()}`),
-    initialData: () => dashboardFromAppData(data),
+    queryKey: ["dashboard", dashboardParams],
+    queryFn: () => fetchJson<DashboardPayload>(`/api/app/dashboard?${dashboardParams}`),
+    initialData: dashboardParams === initialDashboardParams ? () => initialDashboardData : undefined,
+    placeholderData: (previousDashboard) => previousDashboard,
   });
   const appData = useMemo(
-    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data),
-    [bootstrapQuery.data, dashboardQuery.data],
+    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? initialDashboardData),
+    [bootstrapQuery.data, dashboardQuery.data, initialDashboardData],
   );
   const t = useMemo(() => (key: string) => messages[language][key] ?? messages.en[key] ?? key, [language]);
   const notifications = notificationOverrides ?? appData.notifications;
   const unreadNotifications = notifications.filter((notification) => !notification.read_at).length;
   const currentUserIsSalesAgent = isSalesAgent(appData.profile.role);
+  const owner = isOwnerish(appData.profile.role);
+  const permissions = activePermissions(appData.profile.role, appData.permissions);
+  const canViewLibraryStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_library"));
   const visibleTabItems = currentUserIsSalesAgent
     ? tabItems.filter((item) => item.id === "home" || item.id === "payments")
-    : tabItems;
+    : tabItems.filter((item) => item.id !== "library_students" || canViewLibraryStudents);
   const bottomTabItems = visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing");
 
   const pushNotice = useCallback((notice: ActionResult | null) => {
@@ -1170,6 +1209,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     function refreshCachedData() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      void queryClient.invalidateQueries({ queryKey: ["library-student-history"] });
     }
 
     window.addEventListener("lenden:mutation-success", refreshCachedData);
@@ -1259,8 +1299,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     });
   }
 
-  const owner = isOwnerish(appData.profile.role);
-  const permissions = activePermissions(appData.profile.role, appData.permissions);
   const agentReferralCodes = appData.referrals.filter(
     (referral) => referral.active && referral.agent_id === appData.profile.id,
   );
@@ -1426,7 +1464,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   function changeTab(nextTab: Tab) {
-    setTab(currentUserIsSalesAgent && (nextTab === "closing" || nextTab === "settings") ? "home" : nextTab);
+    if (currentUserIsSalesAgent && (nextTab === "closing" || nextTab === "settings" || nextTab === "library_students")) {
+      setTab("home");
+    } else if (nextTab === "library_students" && !canViewLibraryStudents) {
+      setTab("home");
+    } else {
+      setTab(nextTab);
+    }
     setSidebarOpen(false);
   }
 
@@ -1579,6 +1623,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               </div>
             </div>
 
+            {!currentUserIsSalesAgent ? (
+              <BottomActions
+                canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || moneyMovementProfiles.length > 0}
+                canAddNegative={canUsePayment("expense") || moneyMovementProfiles.length > 0 || (owner && staffProfiles.length > 0)}
+                onPositive={() => openAction("positive")}
+                onNegative={() => openAction("negative")}
+              />
+            ) : null}
+
             <ToastStack toasts={toasts} pending={pending} savingLabel={t("saving")} dismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
             {pending ? <div className="action-lock" aria-hidden="true" /> : null}
             {notificationsOpen ? (
@@ -1622,6 +1675,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
                 permissionsByProfile={permissionsByProfile}
+                setNotice={pushNotice}
+                startTransition={startTransition}
+              />
+            ) : null}
+
+            {tab === "library_students" && canViewLibraryStudents ? (
+              <LibraryStudentsView
+                students={appData.libraryStudents}
+                payments={appData.payments}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -1680,15 +1742,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         ))}
       </nav>
 
-      {!currentUserIsSalesAgent ? (
-        <BottomActions
-          canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || moneyMovementProfiles.length > 0}
-          canAddNegative={canUsePayment("expense") || moneyMovementProfiles.length > 0 || (owner && staffProfiles.length > 0)}
-          onPositive={() => openAction("positive")}
-          onNegative={() => openAction("negative")}
-        />
-      ) : null}
-
       {actionModal && !currentUserIsSalesAgent ? (
         <ActionSheet
           actionModal={actionModal}
@@ -1702,6 +1755,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
+          libraryStudents={appData.libraryStudents}
           moneyMovementProfiles={moneyMovementProfiles}
           settlementDate={closingDate}
           agentIncentiveBalances={agentIncentiveBalances}
@@ -2881,6 +2935,360 @@ function BottomActions({
 }
 
 
+type LibraryStudentHistory = {
+  payments: Payment[];
+  events: LibraryStudentSubscriptionEvent[];
+};
+
+function displayTime(value: string | null) {
+  return value ? value.slice(0, 5) : "";
+}
+
+function displayDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const [year, month, day] = value.slice(0, 10).split("-");
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
+function displayDateRange(startDate: string | null | undefined, endDate: string | null | undefined, t: (key: string) => string) {
+  if (startDate && endDate) return `${displayDate(startDate)} - ${displayDate(endDate)}`;
+  if (endDate) return `${t("until")} ${displayDate(endDate)}`;
+  if (startDate) return `${t("from")} ${displayDate(startDate)}`;
+  return "-";
+}
+
+function displayTimeRange(startTime: string | null, endTime: string | null) {
+  const start = displayTime(startTime);
+  const end = displayTime(endTime);
+  if (start && end) return `${start}-${end}`;
+  return start || end || "-";
+}
+
+function rollSortValue(value: string | null | undefined) {
+  const normalized = normalizeLibraryRollNumberForView(value);
+  if (!normalized) return { numeric: null, text: "" };
+  return /^\d+$/.test(normalized)
+    ? { numeric: Number(normalized), text: normalized.padStart(12, "0") }
+    : { numeric: null, text: normalized.toLowerCase() };
+}
+
+function compareLibraryRollNumbers(a: string | null | undefined, b: string | null | undefined) {
+  const left = rollSortValue(a);
+  const right = rollSortValue(b);
+  if (left.numeric !== null && right.numeric !== null && left.numeric !== right.numeric) {
+    return left.numeric - right.numeric;
+  }
+  if (left.numeric !== null && right.numeric === null) return -1;
+  if (left.numeric === null && right.numeric !== null) return 1;
+  return left.text.localeCompare(right.text, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function isExpiredLibraryStudent(student: LibraryStudent, today: string) {
+  return student.active && !student.placeholder && Boolean(student.subscription_end_date && student.subscription_end_date < today);
+}
+
+function studentDisplayName(student: LibraryStudent, t: (key: string) => string) {
+  if (studentHasSwappedRollAndName(student)) return student.roll_number;
+  return student.student_name || `${t("roll")} ${student.roll_number}`;
+}
+
+function normalizeLibraryRollNumberForView(value: string | null | undefined) {
+  const normalized = value?.trim().replace(/\.0+$/, "");
+  return normalized || null;
+}
+
+function isNumericLibraryRoll(value: string | null | undefined) {
+  const normalized = normalizeLibraryRollNumberForView(value);
+  return Boolean(normalized && /^\d+$/.test(normalized));
+}
+
+function studentHasSwappedRollAndName(student: LibraryStudent) {
+  const rollNumber = normalizeLibraryRollNumberForView(student.roll_number);
+  const studentName = student.student_name?.trim() ?? "";
+  return Boolean(rollNumber && studentName && !isNumericLibraryRoll(rollNumber) && isNumericLibraryRoll(studentName) && /[a-z]/i.test(rollNumber));
+}
+
+function studentDisplayRollNumber(student: LibraryStudent) {
+  return studentHasSwappedRollAndName(student) ? student.student_name?.trim() ?? student.roll_number : student.roll_number;
+}
+
+function studentNameInputValue(student: LibraryStudent) {
+  return studentHasSwappedRollAndName(student) ? student.roll_number : student.student_name ?? "";
+}
+
+function isRealLibraryStudentId(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function paymentMatchesLibraryStudent(payment: Payment, student: LibraryStudent) {
+  if (payment.library_student_id === student.id) return true;
+  const paymentRollNumber = normalizeLibraryRollNumberForView(payment.roll_number);
+  const studentRollNumber = normalizeLibraryRollNumberForView(student.roll_number);
+  return Boolean(paymentRollNumber && studentRollNumber && paymentRollNumber === studentRollNumber);
+}
+
+function mergePaymentHistory(...groups: Payment[][]) {
+  const rows = new Map<string, Payment>();
+  groups.flat().forEach((payment) => rows.set(payment.id, payment));
+
+  return [...rows.values()].sort((a, b) =>
+    `${b.payment_date}-${b.created_at}-${b.id}`.localeCompare(`${a.payment_date}-${a.created_at}-${a.id}`),
+  );
+}
+
+function LibraryStudentsView({
+  students,
+  payments,
+  setNotice,
+  startTransition,
+}: {
+  students: LibraryStudent[];
+  payments: Payment[];
+  setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
+}) {
+  const { t } = useLanguage();
+  const [query, setQuery] = useState("");
+  const [listMode, setListMode] = useState<"active" | "inactive">("active");
+  const [selectedId, setSelectedId] = useState("");
+  const today = todayIso();
+  const activeStudents = students.filter((student) => student.active && !student.placeholder);
+  const inactiveStudents = students.filter((student) => !student.active && !student.placeholder);
+  const expired = (student: LibraryStudent) => isExpiredLibraryStudent(student, today);
+  const sourceStudents = listMode === "active" ? activeStudents : inactiveStudents;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleStudents = sourceStudents
+    .filter((student) => {
+      if (!normalizedQuery) return true;
+      return [studentDisplayRollNumber(student), studentDisplayName(student, t), student.phone_number, student.seat_number, student.locker_number]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+    })
+    .sort((a, b) => {
+      const aExpired = isExpiredLibraryStudent(a, today);
+      const bExpired = isExpiredLibraryStudent(b, today);
+      if (listMode === "active" && aExpired !== bExpired) return aExpired ? -1 : 1;
+      return (
+        compareLibraryRollNumbers(studentDisplayRollNumber(a), studentDisplayRollNumber(b)) ||
+        studentDisplayName(a, t).localeCompare(studentDisplayName(b, t), undefined, { sensitivity: "base" })
+      );
+    });
+  const selectedStudent = students.find((student) => student.id === selectedId) ?? null;
+  const historyQuery = useQuery({
+    queryKey: ["library-student-history", selectedStudent?.id ?? ""],
+    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/app/library-students/${encodeURIComponent(selectedStudent?.id ?? "")}/payments`),
+    enabled: Boolean(selectedStudent?.id),
+    placeholderData: (previousHistory) => previousHistory,
+  });
+  const localHistoryPayments = useMemo(
+    () => selectedStudent ? payments.filter((payment) => paymentMatchesLibraryStudent(payment, selectedStudent)) : [],
+    [payments, selectedStudent],
+  );
+  const historyPayments = useMemo(
+    () => mergePaymentHistory(historyQuery.data?.payments ?? [], localHistoryPayments),
+    [historyQuery.data?.payments, localHistoryPayments],
+  );
+  return (
+    <section className="space-y-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="eyebrow">{t("library")}</p>
+          <h2 className="font-headline text-2xl font-bold text-on-surface">{t("studentRecords")}</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`filter-chip ${listMode === "active" ? "active" : ""}`}
+            onClick={() => setListMode("active")}
+          >
+            {t("activeStudents")} · {activeStudents.length}
+          </button>
+          <button
+            type="button"
+            className={`filter-chip ${listMode === "inactive" ? "active" : ""}`}
+            onClick={() => setListMode("inactive")}
+          >
+            {t("inactiveStudents")} · {inactiveStudents.length}
+          </button>
+        </div>
+      </div>
+
+      <section className="rounded-lg border border-outline-variant/30 bg-surface-container-low p-4">
+        <label className="form-grid block">
+          <span className="mb-2 block text-sm font-bold text-on-surface-variant">{t("studentSearch")}</span>
+          <span className="input-with-icon">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`${t("rollNumber")} / ${t("name")}`} />
+          </span>
+        </label>
+        <div className="mt-4 max-h-[68vh] space-y-2 overflow-y-auto pr-1">
+          {visibleStudents.map((student) => (
+            <button
+              key={student.id}
+              type="button"
+              onClick={() => setSelectedId(student.id)}
+              className={`group w-full rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                selectedStudent?.id === student.id ? "border-primary bg-primary-container/60" : "border-outline-variant/25 bg-surface"
+              } ${expired(student) ? "border-yellow-400 bg-yellow-50" : ""}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="inline-flex rounded-full bg-surface-container-high px-2 py-0.5 text-xs font-bold text-on-surface-variant">
+                    #{studentDisplayRollNumber(student)}
+                  </span>
+                  <strong className="mt-2 block truncate text-base text-on-surface">{studentDisplayName(student, t)}</strong>
+                </div>
+                <span className={`status-chip ${expired(student) ? "status-pending" : student.active ? "status-approved" : "status-rejected"}`}>
+                  {expired(student) ? t("expiredSubscription") : student.active ? t("active") : t("inactiveStudents")}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2 text-xs text-on-surface-variant sm:grid-cols-2">
+                <span className="rounded-lg bg-surface-container-low px-3 py-2">
+                  <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("timing")}</strong>
+                  <span className="text-sm font-semibold text-on-surface">{displayTimeRange(student.start_time, student.end_time)}</span>
+                </span>
+                <span className="rounded-lg bg-surface-container-low px-3 py-2">
+                  <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("subscriptionPeriod")}</strong>
+                  <span className="text-sm font-semibold text-on-surface">{displayDateRange(student.subscription_start_date, student.subscription_end_date, t)}</span>
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-on-surface-variant">
+                <span>{student.phone_number ?? t("unknown")}</span>
+                <span>·</span>
+                <span>{t("seat")} {student.seat_number ?? "-"}</span>
+                {student.locker_number ? (
+                  <>
+                    <span>·</span>
+                    <span>{t("lockerNumber")} {student.locker_number}</span>
+                  </>
+                ) : null}
+              </div>
+            </button>
+          ))}
+          {visibleStudents.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
+        </div>
+      </section>
+
+      {selectedStudent ? (
+        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={studentDisplayName(selectedStudent, t)}>
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setSelectedId("")} />
+          <section className="action-sheet library-student-sheet">
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{t("studentDetails")}</p>
+                <h2>{studentDisplayName(selectedStudent, t)}</h2>
+                <p className="text-sm text-on-surface-variant">
+                  {t("rollNumber")} {studentDisplayRollNumber(selectedStudent)} · {t("expiresOn")} {displayDate(selectedStudent.subscription_end_date)}
+                </p>
+                <p className="text-sm text-on-surface-variant">
+                  {t("timing")} {displayTimeRange(selectedStudent.start_time, selectedStudent.end_time)} · {t("subscriptionPeriod")} {displayDateRange(selectedStudent.subscription_start_date, selectedStudent.subscription_end_date, t)}
+                </p>
+              </div>
+              <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={() => setSelectedId("")}>
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className="space-y-5">
+              {isRealLibraryStudentId(selectedStudent.id) ? (
+                <div className="flex justify-end">
+                  <form onSubmit={(event) => submitWith(event, setLibraryStudentStatusAction, setNotice, startTransition, false)}>
+                    <input type="hidden" name="id" value={selectedStudent.id} />
+                    <input type="hidden" name="active" value={selectedStudent.active ? "false" : "true"} />
+                    <button className="secondary-button" type="submit">
+                      {selectedStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
+                      {selectedStudent.active ? t("markInactive") : t("reactivate")}
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+
+              <form
+                key={selectedStudent.id}
+                className="form-grid two"
+                onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false)}
+              >
+                <input type="hidden" name="id" value={selectedStudent.id} />
+                <label>
+                  {t("name")}
+                  <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
+                </label>
+                <label>
+                  {t("rollNumber")}
+                  <input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required />
+                </label>
+                <label>
+                  {t("phone")}
+                  <input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" />
+                </label>
+                <label>
+                  {t("seatNumber")}
+                  <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
+                </label>
+                <label>
+                  {t("lockerNumber")}
+                  <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
+                </label>
+                <label>
+                  {t("startDate")}
+                  <input name="start_date" type="date" defaultValue={selectedStudent.subscription_start_date ?? todayIso()} required />
+                </label>
+                <label>
+                  {t("endDate")}
+                  <input name="end_date" type="date" defaultValue={selectedStudent.subscription_end_date ?? addMonthsIso()} required />
+                </label>
+                <label>
+                  {t("startTime")}
+                  <input name="start_time" type="time" min="06:00" max="22:00" step="3600" defaultValue={displayTime(selectedStudent.start_time) || "06:00"} required />
+                </label>
+                <label>
+                  {t("endTime")}
+                  <input name="end_time" type="time" min="06:00" max="22:00" step="3600" defaultValue={displayTime(selectedStudent.end_time) || "07:00"} required />
+                </label>
+                <label>
+                  {t("fee")}
+                  <input name="fee_amount" type="number" min="0" step="1" defaultValue={selectedStudent.fee_amount ?? ""} />
+                </label>
+                <label>
+                  {t("paid")}
+                  <input name="paid_amount" type="number" min="0" step="1" defaultValue={selectedStudent.paid_amount ?? ""} />
+                </label>
+                <label className="flex-row items-center gap-2">
+                  <input name="inactive" type="checkbox" defaultChecked={!selectedStudent.active} />
+                  <span>{t("inactiveStudents")}</span>
+                </label>
+                <button className="primary-button full-span" type="submit">
+                  {t("save")}
+                </button>
+              </form>
+
+              <div className="rounded-lg bg-surface-container-low p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="font-headline text-base font-bold">{t("paymentHistory")}</h4>
+                  <span className="text-xs text-on-surface-variant">{historyQuery.isFetching ? t("saving") : `${historyPayments.length}`}</span>
+                </div>
+                <div className="space-y-2">
+                  {historyQuery.error ? <p className="text-sm text-error">{historyQuery.error instanceof Error ? historyQuery.error.message : "Could not load history."}</p> : null}
+                  {historyPayments.slice(0, 8).map((payment) => (
+                    <div key={payment.id} className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
+                      <div>
+                        <strong className="text-sm">{payment.payment_date}</strong>
+                        <p className="text-xs text-on-surface-variant">{paymentModeLabel(payment, t)} · {labelForStatus(payment.approval_status, t)}</p>
+                      </div>
+                      <strong className="text-sm">{formatMoney(payment.amount)}</strong>
+                    </div>
+                  ))}
+                  {historyPayments.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ActionSheet({
   actionModal,
   selectedPositive,
@@ -2893,6 +3301,7 @@ function ActionSheet({
   mainCourses,
   skillCourses,
   referrals,
+  libraryStudents,
   moneyMovementProfiles,
   settlementDate,
   agentIncentiveBalances,
@@ -2911,6 +3320,7 @@ function ActionSheet({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
+  libraryStudents: LibraryStudent[];
   moneyMovementProfiles: Profile[];
   settlementDate: string;
   agentIncentiveBalances: AgentIncentiveBalance[];
@@ -2983,6 +3393,7 @@ function ActionSheet({
               mainCourses={mainCourses}
               skillCourses={skillCourses}
               referrals={referrals}
+              libraryStudents={libraryStudents}
               setNotice={setNotice}
               startTransition={startTransition}
               onSuccess={closeAction}
@@ -3055,6 +3466,7 @@ function PaymentForm({
   mainCourses,
   skillCourses,
   referrals,
+  libraryStudents,
   setNotice,
   startTransition,
   onSuccess,
@@ -3064,6 +3476,7 @@ function PaymentForm({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
+  libraryStudents: LibraryStudent[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
   onSuccess?: () => void;
@@ -3078,6 +3491,15 @@ function PaymentForm({
   const [startTime, setStartTime] = useState("06:00");
   const [endTime, setEndTime] = useState("07:00");
   const [courseName, setCourseName] = useState("");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [rollNumber, setRollNumber] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [seatNumber, setSeatNumber] = useState("");
+  const [lockerNumber, setLockerNumber] = useState("");
+  const [subscriptionStartDate, setSubscriptionStartDate] = useState(todayIso());
+  const [subscriptionEndDate, setSubscriptionEndDate] = useState(addMonthsIso());
   const feeNumber = Number(fee || 0);
   const paidNumber = Number(paid || 0);
   const amountNumber = Number(amount || 0);
@@ -3088,6 +3510,45 @@ function PaymentForm({
   const dues = Math.max(feeNumber - collectedNumber, 0);
   const advance = Math.max(collectedNumber - feeNumber, 0);
   const slotHours = Math.max((Number(endTime.slice(0, 2)) || 0) - (Number(startTime.slice(0, 2)) || 0), 0);
+  const searchableLibraryStudents = useMemo(() => {
+    if (type !== "library") return [];
+    const query = librarySearch.trim().toLowerCase();
+    return libraryStudents
+      .filter((student) => {
+        if (student.placeholder) return false;
+        if (!query) return !student.placeholder;
+        return [student.roll_number, student.student_name, student.phone_number, student.seat_number]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+      })
+      .slice(0, 40);
+  }, [librarySearch, libraryStudents, type]);
+
+  function selectLibraryStudent(studentId: string) {
+    setSelectedLibraryStudentId(studentId);
+    const student = libraryStudents.find((item) => item.id === studentId);
+    if (!student) {
+      setStudentName("");
+      setRollNumber("");
+      setPhoneNumber("");
+      setSeatNumber("");
+      setLockerNumber("");
+      setStartTime("06:00");
+      setEndTime("07:00");
+      setFee("");
+      setLibrarySearch("");
+      return;
+    }
+    setStudentName(student.student_name ?? "");
+    setRollNumber(student.roll_number);
+    setPhoneNumber(student.phone_number ?? "");
+    setSeatNumber(student.seat_number ?? "");
+    setLockerNumber(student.locker_number ?? "");
+    setStartTime((student.start_time ?? "06:00").slice(0, 5));
+    setEndTime((student.end_time ?? "07:00").slice(0, 5));
+    setFee(student.fee_amount ? String(student.fee_amount) : "");
+    setLibrarySearch(`${student.roll_number} · ${student.student_name ?? t("unknown")}`);
+  }
 
   return (
     <form
@@ -3120,7 +3581,112 @@ function PaymentForm({
         </>
       ) : null}
 
-      {type === "library" || type === "course" ? (
+      {type === "library" ? (
+        <>
+          <label className="full-span">
+            {t("studentSearch")}
+            <span className="input-with-icon">
+              <Search size={16} />
+              <input
+                type="search"
+                value={librarySearch}
+                onChange={(event) => setLibrarySearch(event.target.value)}
+                placeholder={`${t("rollNumber")} / ${t("name")}`}
+              />
+            </span>
+          </label>
+          <label className="full-span">
+            {t("selectStudent")}
+            <select value={selectedLibraryStudentId} onChange={(event) => selectLibraryStudent(event.target.value)}>
+              <option value="">{t("newStudent")}</option>
+              {searchableLibraryStudents.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.roll_number} · {student.student_name ?? t("unknown")}
+                  {student.subscription_end_date ? ` · ${student.subscription_end_date}` : ""}
+                  {!student.active ? ` · ${t("inactiveStudents")}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
+          <label>
+            {t("name")}
+            <input name="customer_name" value={studentName} onChange={(event) => setStudentName(event.target.value)} required />
+          </label>
+          <label>
+            {t("rollNumber")}
+            <input name="roll_number" value={rollNumber} onChange={(event) => setRollNumber(event.target.value)} required />
+          </label>
+          <label>
+            {t("phone")}
+            <input name="phone_number" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="tel" />
+          </label>
+          <label>
+            {t("paymentDate")}
+            <input name="payment_date" type="date" defaultValue={todayIso()} required />
+          </label>
+          <label>
+            {t("startDate")}
+            <input
+              name="start_date"
+              type="date"
+              value={subscriptionStartDate}
+              onChange={(event) => setSubscriptionStartDate(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("endDate")}
+            <input
+              name="end_date"
+              type="date"
+              value={subscriptionEndDate}
+              onChange={(event) => setSubscriptionEndDate(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("seatNumber")}
+            <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
+          </label>
+          <label>
+            {t("lockerNumber")}
+            <input name="locker_number" value={lockerNumber} onChange={(event) => setLockerNumber(event.target.value)} />
+          </label>
+          <label>
+            {t("startTime")}
+            <input
+              name="start_time"
+              type="time"
+              min="06:00"
+              max="22:00"
+              step="3600"
+              value={startTime}
+              onChange={(event) => setStartTime(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("endTime")}
+            <input
+              name="end_time"
+              type="time"
+              min="06:00"
+              max="22:00"
+              step="3600"
+              value={endTime}
+              onChange={(event) => setEndTime(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("slotHours")}
+            <input name="slot_hours" value={slotHours} readOnly />
+          </label>
+        </>
+      ) : null}
+
+      {type === "course" ? (
         <>
           <label>
             {t("name")}
@@ -3169,49 +3735,50 @@ function PaymentForm({
             {t("slotHours")}
             <input name="slot_hours" value={slotHours} readOnly />
           </label>
-          {type === "course" ? (
-            <>
-              <label>
-                {t("course")}
-                <select
-                  name="course_id"
-                  required
-                  onChange={(event) =>
-                    setCourseName(mainCourses.find((course) => course.id === event.target.value)?.name ?? "")
-                  }
-                >
-                  <option value="">{t("selectCourse")}</option>
-                  {mainCourses.map((course) => (
-                    <option key={course.id} value={course.id}>
-                      {course.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {courseName === "Skills" ? (
-                <label>
-                  {t("skill")}
-                  <select name="skill_course_id" required>
-                    <option value="">{t("selectSkill")}</option>
-                    {skillCourses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <label>
-                {t("referralCode")}
-                <input name="referral_code" list="referral-codes" />
-                <datalist id="referral-codes">
-                  {referrals.map((referral) => (
-                    <option key={referral.code} value={referral.code} />
-                  ))}
-                </datalist>
-              </label>
-            </>
+          <label>
+            {t("course")}
+            <select
+              name="course_id"
+              required
+              onChange={(event) =>
+                setCourseName(mainCourses.find((course) => course.id === event.target.value)?.name ?? "")
+              }
+            >
+              <option value="">{t("selectCourse")}</option>
+              {mainCourses.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {courseName === "Skills" ? (
+            <label>
+              {t("skill")}
+              <select name="skill_course_id" required>
+                <option value="">{t("selectSkill")}</option>
+                {skillCourses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
+          <label>
+            {t("referralCode")}
+            <input name="referral_code" list="referral-codes" />
+            <datalist id="referral-codes">
+              {referrals.map((referral) => (
+                <option key={referral.code} value={referral.code} />
+              ))}
+            </datalist>
+          </label>
+        </>
+      ) : null}
+
+      {type === "library" || type === "course" ? (
+        <>
           <label>
             {t("fee")}
             <input name="fee_amount" type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />

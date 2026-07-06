@@ -28,13 +28,13 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const persister = createSyncStoragePersister({
       storage: window.localStorage,
-      key: "lenden-query-cache-v1",
+      key: "lenden-query-cache-v2",
     });
 
     const [unsubscribe] = persistQueryClient({
       queryClient,
       persister,
-      buster: "lenden-fast-pwa-v1",
+      buster: "lenden-library-students-v1",
       dehydrateOptions: {
         shouldDehydrateQuery: (query) => persistedQueryRoots.has(String(query.queryKey[0])),
       },

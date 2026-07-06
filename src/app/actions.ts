@@ -175,6 +175,14 @@ export async function createPaymentAction(formData: FormData): Promise<ActionRes
   return invokeLendenAction("createPayment", formData);
 }
 
+export async function saveLibraryStudentAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("saveLibraryStudent", formData);
+}
+
+export async function setLibraryStudentStatusAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setLibraryStudentStatus", formData);
+}
+
 export async function createExpenseAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("createExpense", formData);
 }
