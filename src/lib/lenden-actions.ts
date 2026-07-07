@@ -199,6 +199,7 @@ function isMissingLibraryStudentSchemaError(error: unknown) {
   const { message } = errorCodeAndMessage(error);
   if (message.includes("library student migration")) return true;
   return isMissingDbSchemaError(error, [
+    "address",
     "library_student_id",
     "library_students",
     "library_student_subscription_events",
@@ -584,6 +585,7 @@ type LibraryStudentFormFields = {
   rollNumber: string;
   studentName: string;
   phoneNumber: string | null;
+  address: string | null;
   seatNumber: string | null;
   lockerNumber: string | null;
   startTime: string | null;
@@ -604,6 +606,7 @@ function readLibraryStudentFields(
   const rollNumber = normalizeLibraryRollNumber(asString(formData, "roll_number"));
   const studentName = asString(formData, "customer_name") ?? asString(formData, "student_name");
   const phoneNumber = normalizePhoneNumber(asString(formData, "phone_number"));
+  const address = asString(formData, "address");
   const startDate = asString(formData, "start_date");
   const endDate = asString(formData, "end_date");
   const startTime = normalizeClockTime(asString(formData, "start_time"));
@@ -611,6 +614,7 @@ function readLibraryStudentFields(
   const feeAmount = asNumber(formData, "fee_amount");
   const paidAmount = asNumber(formData, "paid_amount") ?? asNumber(formData, "amount");
   const slotHours = slotHoursBetween(startTime, endTime);
+  const hasSubscriptionDetails = Boolean(startDate || endDate || startTime || endTime || feeAmount !== null || paidAmount !== null);
 
   if (!rollNumber || !studentName) {
     return { ok: false, result: fail("Roll number and student name are required.") };
@@ -621,7 +625,7 @@ function readLibraryStudentFields(
   if ((startDate && !isIsoDate(startDate)) || (endDate && !isIsoDate(endDate)) || (startDate && endDate && endDate < startDate)) {
     return { ok: false, result: fail("Enter a valid subscription date range.") };
   }
-  if (!startTime || !endTime || slotHours === null) {
+  if ((options.requireSubscription || hasSubscriptionDetails) && (!startTime || !endTime || slotHours === null)) {
     return { ok: false, result: fail("Enter a valid library time slot.") };
   }
   if (options.requirePayment && (!paidAmount || paidAmount <= 0)) {
@@ -637,6 +641,7 @@ function readLibraryStudentFields(
       rollNumber,
       studentName,
       phoneNumber,
+      address,
       seatNumber: asString(formData, "seat_number"),
       lockerNumber: asString(formData, "locker_number"),
       startTime,
@@ -656,6 +661,7 @@ function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean
   return {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
+    address: fields.address,
     student_name: fields.studentName,
     seat_number: fields.seatNumber,
     locker_number: fields.lockerNumber,
@@ -668,6 +674,19 @@ function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean
     paid_amount: fields.paidAmount,
     dues_amount: fields.duesAmount,
     advance_amount: fields.advanceAmount,
+    active,
+    placeholder: false,
+  };
+}
+
+function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean) {
+  return {
+    roll_number: fields.rollNumber,
+    phone_number: fields.phoneNumber,
+    address: fields.address,
+    student_name: fields.studentName,
+    seat_number: fields.seatNumber,
+    locker_number: fields.lockerNumber,
     active,
     placeholder: false,
   };
@@ -750,11 +769,42 @@ async function saveLibraryStudentRecord(
   return student.id;
 }
 
+async function saveLibraryStudentIdentityRecord(
+  admin: SupabaseAdminClient,
+  params: {
+    id: string | null;
+    fields: LibraryStudentFormFields;
+    active: boolean;
+  },
+) {
+  const payload: Record<string, unknown> = {
+    ...libraryStudentIdentityPayload(params.fields, params.active),
+  };
+
+  const studentId = normalizeLibraryStudentId(params.id);
+  const query = studentId
+    ? admin.from("library_students").update(payload).eq("id", studentId)
+    : admin.from("library_students").upsert(payload, { onConflict: "roll_number" });
+  const response = await query.select("id").single();
+  const student = typedData<{ id: string }>(response);
+  if (response.error || !student) {
+    if (isMissingLibraryStudentSchemaError(response.error)) {
+      throw new Error("Apply the library student migration before saving student records.");
+    }
+    if (isDuplicateError(response.error)) {
+      throw new Error("This roll number is already linked to another student.");
+    }
+    throw new Error(response.error?.message ?? "Could not save library student.");
+  }
+  return student.id;
+}
+
 function fieldsFromLibraryStudentRecord(record: Record<string, string | number | boolean | null>): LibraryStudentFormFields {
   return {
     rollNumber: String(record.roll_number ?? ""),
     studentName: String(record.student_name ?? ""),
     phoneNumber: typeof record.phone_number === "string" ? record.phone_number : null,
+    address: typeof record.address === "string" ? record.address : null,
     seatNumber: typeof record.seat_number === "string" ? record.seat_number : null,
     lockerNumber: typeof record.locker_number === "string" ? record.locker_number : null,
     startTime: typeof record.start_time === "string" ? normalizeClockTime(record.start_time) : null,
@@ -1180,27 +1230,16 @@ const handlers = {
     );
   }),
 
-  saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile, idempotencyKey }) => {
+  saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile }) => {
     await requireLibraryCollectionAccess(admin, profile);
-    const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: false });
+    const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: false, requirePayment: false });
     if (!parsedStudent.ok) return parsedStudent.result;
 
     const active = !asBool(formData, "inactive");
-    const studentId = await saveLibraryStudentRecord(admin, {
+    await saveLibraryStudentIdentityRecord(admin, {
       id: asString(formData, "id"),
       fields: parsedStudent.fields,
       active,
-    });
-
-    await upsertLibraryStudentEvent(admin, {
-      studentId,
-      eventKey: `library-student-manual:${studentId}:${idempotencyKey ?? crypto.randomUUID()}`,
-      eventType: "manual_update",
-      eventDate: new Date().toISOString().slice(0, 10),
-      source: "student_form",
-      fields: parsedStudent.fields,
-      active,
-      createdBy: profile.id,
     });
 
     return ok(active ? "Library student saved." : "Library student moved to inactive.");

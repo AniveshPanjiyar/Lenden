@@ -77,6 +77,7 @@ function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: 
         id: virtualLibraryStudentId(rollNumber),
         roll_number: rollNumber,
         phone_number: null,
+        address: null,
         student_name: payment.customer_name,
         seat_number: payment.seat_number,
         locker_number: null,

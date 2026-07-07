@@ -14,8 +14,21 @@ export function PwaClient() {
       setOnline(false);
     }
 
+    function preventPageZoom(event: Event) {
+      event.preventDefault();
+    }
+
+    function preventMultiTouchZoom(event: TouchEvent) {
+      if (event.touches.length > 1) {
+        event.preventDefault();
+      }
+    }
+
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    window.addEventListener("gesturestart", preventPageZoom, { passive: false });
+    window.addEventListener("gesturechange", preventPageZoom, { passive: false });
+    window.addEventListener("touchmove", preventMultiTouchZoom, { passive: false });
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
@@ -29,6 +42,9 @@ export function PwaClient() {
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("gesturestart", preventPageZoom);
+      window.removeEventListener("gesturechange", preventPageZoom);
+      window.removeEventListener("touchmove", preventMultiTouchZoom);
     };
   }, []);
 

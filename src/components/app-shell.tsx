@@ -26,6 +26,7 @@ import {
   Menu,
   Minus,
   MoreHorizontal,
+  Pencil,
   Plus,
   ReceiptText,
   Search,
@@ -169,6 +170,8 @@ const messages: Record<Language, Record<string, string>> = {
     accept: "Accept",
     acceptTransfer: "Accept transfer",
     active: "Active",
+    address: "Address",
+    addSubscription: "Add subscription",
     addCourse: "Add course",
     addExpense: "Add expense",
     addExpenseOrSettlement: "Add expense or settlement",
@@ -188,11 +191,13 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayout: "Agent Incentive",
     agentPayoutLower: "Agent incentive",
     amount: "Amount",
+    amountReceived: "Amount received",
     approve: "Approve",
     back: "Back",
     backlog: "Backlog",
     balanceIncentive: "Yet to settle",
     business: "Business",
+    cancel: "Cancel",
     cancelWrongEntry: "Cancel wrong entry",
     cash: "Cash",
     cashAndOnline: "Cash and online",
@@ -222,6 +227,7 @@ const messages: Record<Language, Record<string, string>> = {
     businessStatus: "Business status",
     businessStatusHelp: "Collection, expenses, settlement, and pending review by business.",
     cashImpact: "Cash impact",
+    cashToSettle: "Cash to settle",
     course: "Course",
     courseName: "Course name",
     courses: "Courses",
@@ -283,7 +289,9 @@ const messages: Record<Language, Record<string, string>> = {
     reactivate: "Reactivate",
     newStudent: "New student",
     selectStudent: "Select student",
+    studentProfile: "Student profile",
     subscription: "Subscription",
+    subscriptionHistory: "Subscription history",
     subscriptionPeriod: "Subscription",
     timing: "Timing",
     logout: "Logout",
@@ -310,6 +318,7 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "Notifications",
     online: "Online",
     onlineCollection: "Online collection",
+    onlinePart: "Online part",
     openNavigation: "Open navigation",
     openingCash: "Opening cash",
     openingBalance: "Opening balance",
@@ -328,6 +337,7 @@ const messages: Record<Language, Record<string, string>> = {
     payments: "Payments",
     paymentsFor: "Payments for",
     paymentsOnly: "Payments only",
+    pendingCashInHand: "Pending cash in hand",
     pendingPayout: "Pending payout",
     pendingReview: "Pending review",
     photo: "Photo",
@@ -365,6 +375,7 @@ const messages: Record<Language, Record<string, string>> = {
     reviewPending: "Pending",
     reviewPendingFirst: "Review pending first",
     reviewSettlementNotice: "Only approved transactions will be locked and settled. Post-approval, only the owner can edit records. Please review carefully.",
+    settlementAmountHelp: "Enter only the cash actually received for this settlement.",
     role: "Role",
     roll: "Roll",
     rollNumber: "Roll number",
@@ -451,6 +462,8 @@ const messages: Record<Language, Record<string, string>> = {
     accept: "मान लें",
     acceptTransfer: "ट्रांसफर मान लें",
     active: "चालू",
+    address: "पता",
+    addSubscription: "सब्सक्रिप्शन जोड़ें",
     addCourse: "कोर्स जोड़ें",
     addExpense: "खर्च जोड़ें",
     addExpenseOrSettlement: "खर्च या जमा जोड़ें",
@@ -470,11 +483,13 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayout: "एजेंट कमिशन",
     agentPayoutLower: "एजेंट कमिशन",
     amount: "रकम",
+    amountReceived: "मिली रकम",
     approve: "ठीक है",
     back: "वापस",
     backlog: "बैकलॉग",
     balanceIncentive: "सेटल होना बाकी",
     business: "काम",
+    cancel: "रद्द करें",
     cancelWrongEntry: "गलत एंट्री हटाएं",
     cash: "नकद",
     cashAndOnline: "नकद और ऑनलाइन",
@@ -504,6 +519,7 @@ const messages: Record<Language, Record<string, string>> = {
     businessStatus: "काम का स्टेटस",
     businessStatusHelp: "काम के हिसाब से जमा, खर्च, सेटलमेंट और बाकी जांच।",
     cashImpact: "नकद असर",
+    cashToSettle: "जमा करने की नकद",
     course: "कोर्स",
     courseName: "कोर्स नाम",
     courses: "कोर्स",
@@ -565,7 +581,9 @@ const messages: Record<Language, Record<string, string>> = {
     reactivate: "फिर चालू करें",
     newStudent: "नया छात्र",
     selectStudent: "छात्र चुनें",
+    studentProfile: "छात्र प्रोफाइल",
     subscription: "सब्सक्रिप्शन",
+    subscriptionHistory: "सब्सक्रिप्शन हिसाब",
     subscriptionPeriod: "सब्सक्रिप्शन",
     timing: "समय",
     logout: "लॉग आउट",
@@ -592,6 +610,7 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "सूचनाएं",
     online: "ऑनलाइन",
     onlineCollection: "ऑनलाइन जमा",
+    onlinePart: "ऑनलाइन हिस्सा",
     openNavigation: "मेनू खोलें",
     openingCash: "शुरू का नकद",
     openingBalance: "शुरू हिसाब",
@@ -610,6 +629,7 @@ const messages: Record<Language, Record<string, string>> = {
     payments: "पैसा",
     paymentsFor: "इस तारीख का पैसा",
     paymentsOnly: "सिर्फ जमा पैसा",
+    pendingCashInHand: "पेंडिंग हाथ की नकद",
     pendingPayout: "बाकी भुगतान",
     pendingReview: "बाकी जांच",
     photo: "फोटो",
@@ -647,6 +667,7 @@ const messages: Record<Language, Record<string, string>> = {
     reviewPending: "बाकी",
     reviewPendingFirst: "पहले बाकी जांचें",
     reviewSettlementNotice: "सिर्फ मंजूर एंट्री लॉक और सेटल होंगी। मंजूरी के बाद सिर्फ मालिक रिकॉर्ड बदल सकता है। ध्यान से जांचें।",
+    settlementAmountHelp: "इस सेटलमेंट में जितनी नकद सच में मिली है, सिर्फ वही रकम डालें।",
     role: "काम",
     roll: "रोल",
     rollNumber: "रोल नंबर",
@@ -1487,6 +1508,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   const activeDateRangeOptions = dateRangeOptions;
+  const showSharedDateRange = tab === "home";
+  const showQuickActions = tab === "home" && !currentUserIsSalesAgent;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
@@ -1584,7 +1607,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                       }}
                     />
                   </div>
-                ) : tab !== "settings" ? (
+                ) : showSharedDateRange ? (
                   <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
                     <CalendarDays size={19} />
                     <select
@@ -1623,7 +1646,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               </div>
             </div>
 
-            {!currentUserIsSalesAgent ? (
+            {showQuickActions ? (
               <BottomActions
                 canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || moneyMovementProfiles.length > 0}
                 canAddNegative={canUsePayment("expense") || moneyMovementProfiles.length > 0 || (owner && staffProfiles.length > 0)}
@@ -1952,8 +1975,18 @@ function HomeView({
   }
 
   if (!owner) {
-    const myBalance = cashBalances.find((cb) => cb.profile.id === data.profile.id)?.balance ?? 0;
-    const myPayments = data.payments.filter((p) => p.collected_by === data.profile.id);
+    const myLedgerBalance = cashBalances.find((cb) => cb.profile.id === data.profile.id)?.balance ?? 0;
+    const myPendingCash = data.payments
+      .filter(
+        (payment) =>
+          payment.record_status === "active" &&
+          isPendingReviewStatus(payment.approval_status) &&
+          paymentCashAmount(payment) > 0 &&
+          paymentReviewProfileId(payment) === data.profile.id,
+      )
+      .reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
+    const myBalance = myLedgerBalance + myPendingCash;
+    const myPayments = data.payments.filter((p) => p.collected_by === data.profile.id || p.current_holder_id === data.profile.id);
     const myExpenses = data.expenses.filter((e) => e.spent_by === data.profile.id);
     const myPendingMovements = data.movements.filter(
       (m) => m.status === "pending" && (m.from_profile_id === data.profile.id || m.to_profile_id === data.profile.id)
@@ -1982,7 +2015,9 @@ function HomeView({
             </div>
             <div>
               <p className="font-headline text-4xl font-bold text-primary">{formatMoney(myBalance)}</p>
-              <p className="text-xs text-on-surface-variant font-medium mt-1">Cash in hand</p>
+              <p className="text-xs text-on-surface-variant font-medium mt-1">
+                {myPendingCash > 0 ? `${formatMoney(myLedgerBalance)} + ${formatMoney(myPendingCash)} ${t("pendingCashInHand")}` : "Cash in hand"}
+              </p>
             </div>
           </div>
 
@@ -2305,6 +2340,9 @@ function TransactionsView({
       date: string;
       sortAt: string;
       amount: number;
+      amountTone?: "positive" | "negative" | "neutral" | "online-approved";
+      onlineAmount?: number;
+      onlineTone?: "neutral" | "online-approved";
       title: string;
       meta: string;
       status: string;
@@ -2389,6 +2427,8 @@ function TransactionsView({
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
         const onlineOnly = onlineImpact > 0 && cashImpact === 0;
+        const staffOwnOnline = !canUseProfileFilter && payment.collected_by === profile.id && onlineImpact > 0;
+        const onlineApproved = payment.approval_status === "approved";
         const paymentStatus = collectionStatus(payment);
         const linkedTransfers = paymentTransfers(movements, payment.id);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
@@ -2397,7 +2437,16 @@ function TransactionsView({
           ? numberValue(payment.amount)
           : payment.current_holder_id === profile.id
             ? cashImpact
-            : 0;
+            : onlineOnly && staffOwnOnline
+              ? onlineImpact
+              : 0;
+        const amountTone = onlineOnly && staffOwnOnline
+          ? (onlineApproved ? "online-approved" : "neutral")
+          : shownAmount === 0
+            ? "neutral"
+            : shownAmount > 0
+              ? "positive"
+              : "negative";
         const requiredPermission = businessPermissions[payment.business_type];
         const transferRecipients = cashImpact > 0 && requiredPermission
           ? profiles.filter((item) =>
@@ -2422,6 +2471,9 @@ function TransactionsView({
           date: payment.payment_date,
           sortAt: payment.created_at,
           amount: shownAmount,
+          amountTone,
+          onlineAmount: !onlineOnly && staffOwnOnline ? onlineImpact : undefined,
+          onlineTone: onlineApproved ? "online-approved" : "neutral",
           title: paymentDisplayTitle(payment, t),
           meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!canUseProfileFilter && onlineOnly ? ` · ${t("ownerAccountCredit")}` : ""}`,
           status: paymentStatus,
@@ -2667,7 +2719,7 @@ function TransactionsView({
               <div className="history-card-list">
                 {group.records.map((record) => (
                   <article
-                    className={`history-card ${record.filter === "settlements" ? "settlement" : record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative"}`}
+                    className={`history-card ${record.filter === "settlements" ? "settlement" : record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
                     key={`${record.kind}-${record.id}`}
                   >
                     <div className="history-card-icon">{record.icon}</div>
@@ -2707,9 +2759,14 @@ function TransactionsView({
                       ) : null}
                     </div>
                     <div className="history-card-side">
-                      <strong className={record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative"}>
+                      <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
                         {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
                       </strong>
+                      {record.onlineAmount ? (
+                        <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
+                          {t("onlinePart")} {formatMoney(record.onlineAmount)}
+                        </span>
+                      ) : null}
                       {record.filter === "settlements" ? <span>{t("settlements")}</span> : null}
                       {record.recordType && (record.canEdit || record.canDelete || record.canRequestTransfer) ? (
                         <details className="history-actions-menu">
@@ -2918,7 +2975,6 @@ function BottomActions({
         onClick={onPositive}
       >
         <Plus size={19} />
-        <span className="quick-action-label">{t("collectPayment")}</span>
       </button>
       <button
         className="quick-action-button quick-action-negative flex items-center gap-2 bg-error text-on-error px-5 py-3 rounded-full shadow-soft hover:scale-105 transition-all active:scale-95 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2928,7 +2984,6 @@ function BottomActions({
         onClick={onNegative}
       >
         <Minus size={19} />
-        <span className="quick-action-label">{t("addExpense")}</span>
       </button>
     </div>
   );
@@ -2962,6 +3017,16 @@ function displayTimeRange(startTime: string | null, endTime: string | null) {
   const end = displayTime(endTime);
   if (start && end) return `${start}-${end}`;
   return start || end || "-";
+}
+
+function displayTextValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return "-";
+  const text = String(value).trim();
+  return text || "-";
+}
+
+function displayMoneyValue(value: number | null | undefined) {
+  return value === null || value === undefined ? "-" : formatMoney(value);
 }
 
 function rollSortValue(value: string | null | undefined) {
@@ -3016,6 +3081,22 @@ function studentNameInputValue(student: LibraryStudent) {
   return studentHasSwappedRollAndName(student) ? student.roll_number : student.student_name ?? "";
 }
 
+function libraryStudentPrefill(student: LibraryStudent, t: (key: string) => string) {
+  return {
+    id: student.id,
+    name: studentNameInputValue(student),
+    rollNumber: studentDisplayRollNumber(student),
+    phoneNumber: student.phone_number ?? "",
+    address: student.address ?? "",
+    seatNumber: student.seat_number ?? "",
+    lockerNumber: student.locker_number ?? "",
+    startTime: (student.start_time ?? "06:00").slice(0, 5),
+    endTime: (student.end_time ?? "07:00").slice(0, 5),
+    fee: student.fee_amount ? String(student.fee_amount) : "",
+    searchLabel: `${studentDisplayRollNumber(student)} · ${studentDisplayName(student, t)}`,
+  };
+}
+
 function isRealLibraryStudentId(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -3051,6 +3132,7 @@ function LibraryStudentsView({
   const [query, setQuery] = useState("");
   const [listMode, setListMode] = useState<"active" | "inactive">("active");
   const [selectedId, setSelectedId] = useState("");
+  const [editingStudent, setEditingStudent] = useState(false);
   const today = todayIso();
   const activeStudents = students.filter((student) => student.active && !student.placeholder);
   const inactiveStudents = students.filter((student) => !student.active && !student.placeholder);
@@ -3074,6 +3156,14 @@ function LibraryStudentsView({
       );
     });
   const selectedStudent = students.find((student) => student.id === selectedId) ?? null;
+  const openStudentDetails = (studentId: string) => {
+    setSelectedId(studentId);
+    setEditingStudent(false);
+  };
+  const closeStudentDetails = () => {
+    setSelectedId("");
+    setEditingStudent(false);
+  };
   const historyQuery = useQuery({
     queryKey: ["library-student-history", selectedStudent?.id ?? ""],
     queryFn: () => fetchJson<LibraryStudentHistory>(`/api/app/library-students/${encodeURIComponent(selectedStudent?.id ?? "")}/payments`),
@@ -3126,7 +3216,7 @@ function LibraryStudentsView({
             <button
               key={student.id}
               type="button"
-              onClick={() => setSelectedId(student.id)}
+              onClick={() => openStudentDetails(student.id)}
               className={`group w-full rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
                 selectedStudent?.id === student.id ? "border-primary bg-primary-container/60" : "border-outline-variant/25 bg-surface"
               } ${expired(student) ? "border-yellow-400 bg-yellow-50" : ""}`}
@@ -3171,25 +3261,107 @@ function LibraryStudentsView({
 
       {selectedStudent ? (
         <div className="modal-layer" role="dialog" aria-modal="true" aria-label={studentDisplayName(selectedStudent, t)}>
-          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setSelectedId("")} />
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
           <section className="action-sheet library-student-sheet">
             <header className="sheet-header">
               <div>
                 <p className="eyebrow">{t("studentDetails")}</p>
                 <h2>{studentDisplayName(selectedStudent, t)}</h2>
                 <p className="text-sm text-on-surface-variant">
-                  {t("rollNumber")} {studentDisplayRollNumber(selectedStudent)} · {t("expiresOn")} {displayDate(selectedStudent.subscription_end_date)}
-                </p>
-                <p className="text-sm text-on-surface-variant">
-                  {t("timing")} {displayTimeRange(selectedStudent.start_time, selectedStudent.end_time)} · {t("subscriptionPeriod")} {displayDateRange(selectedStudent.subscription_start_date, selectedStudent.subscription_end_date, t)}
+                  {t("rollNumber")} {studentDisplayRollNumber(selectedStudent)} · {t("phone")} {selectedStudent.phone_number ?? "-"} · {t("seat")} {selectedStudent.seat_number ?? "-"}
                 </p>
               </div>
-              <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={() => setSelectedId("")}>
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button className="secondary-button" type="button" onClick={() => setEditingStudent((value) => !value)}>
+                  {editingStudent ? <X size={16} /> : <Pencil size={16} />}
+                  {editingStudent ? t("cancel") : t("editTransaction")}
+                </button>
+                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeStudentDetails}>
+                  <X size={18} />
+                </button>
+              </div>
             </header>
 
             <div className="space-y-5">
+              {!editingStudent ? (
+                <div className="library-student-detail-view">
+                  <section className={`library-student-hero-card ${expired(selectedStudent) ? "expired" : ""}`}>
+                    <div className="min-w-0">
+                      <span className={`status-chip ${expired(selectedStudent) ? "status-pending" : selectedStudent.active ? "status-approved" : "status-rejected"}`}>
+                        {expired(selectedStudent) ? t("expiredSubscription") : selectedStudent.active ? t("active") : t("inactiveStudents")}
+                      </span>
+                      <h3>{studentDisplayName(selectedStudent, t)}</h3>
+                      <p>
+                        #{studentDisplayRollNumber(selectedStudent)} · {t("phone")} {displayTextValue(selectedStudent.phone_number)}
+                      </p>
+                    </div>
+                    <div className="library-student-hero-meta">
+                      <span>{t("lastPayment")}</span>
+                      <strong>{displayDate(selectedStudent.last_payment_date)}</strong>
+                    </div>
+                  </section>
+
+                  <section className="library-profile-panel">
+                    <div>
+                      <span>{t("name")}</span>
+                      <strong>{studentDisplayName(selectedStudent, t)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("rollNumber")}</span>
+                      <strong>{studentDisplayRollNumber(selectedStudent)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("phone")}</span>
+                      <strong>{displayTextValue(selectedStudent.phone_number)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("seatNumber")}</span>
+                      <strong>{displayTextValue(selectedStudent.seat_number)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("lockerNumber")}</span>
+                      <strong>{displayTextValue(selectedStudent.locker_number)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("address")}</span>
+                      <strong>{displayTextValue(selectedStudent.address)}</strong>
+                    </div>
+                  </section>
+
+                  <section className="library-student-detail-grid">
+                    <article className="library-detail-card">
+                      <span>{t("timing")}</span>
+                      <strong>{displayTimeRange(selectedStudent.start_time, selectedStudent.end_time)}</strong>
+                      <p>{selectedStudent.slot_hours ? `${selectedStudent.slot_hours}h` : "-"}</p>
+                    </article>
+                    <article className="library-detail-card">
+                      <span>{t("subscriptionPeriod")}</span>
+                      <strong>{displayDateRange(selectedStudent.subscription_start_date, selectedStudent.subscription_end_date, t)}</strong>
+                      <p>{t("expiresOn")} {displayDate(selectedStudent.subscription_end_date)}</p>
+                    </article>
+                  </section>
+
+                  <section className="library-student-money-grid">
+                    <div>
+                      <span>{t("fee")}</span>
+                      <strong>{displayMoneyValue(selectedStudent.fee_amount)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("paid")}</span>
+                      <strong>{displayMoneyValue(selectedStudent.paid_amount)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("dues")}</span>
+                      <strong>{displayMoneyValue(selectedStudent.dues_amount)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("advance")}</span>
+                      <strong>{displayMoneyValue(selectedStudent.advance_amount)}</strong>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
               {isRealLibraryStudentId(selectedStudent.id) ? (
                 <div className="flex justify-end">
                   <form onSubmit={(event) => submitWith(event, setLibraryStudentStatusAction, setNotice, startTransition, false)}>
@@ -3203,79 +3375,91 @@ function LibraryStudentsView({
                 </div>
               ) : null}
 
-              <form
-                key={selectedStudent.id}
-                className="form-grid two"
-                onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false)}
-              >
-                <input type="hidden" name="id" value={selectedStudent.id} />
-                <label>
-                  {t("name")}
-                  <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
-                </label>
-                <label>
-                  {t("rollNumber")}
-                  <input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required />
-                </label>
-                <label>
-                  {t("phone")}
-                  <input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" />
-                </label>
-                <label>
-                  {t("seatNumber")}
-                  <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
-                </label>
-                <label>
-                  {t("lockerNumber")}
-                  <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
-                </label>
-                <label>
-                  {t("startDate")}
-                  <input name="start_date" type="date" defaultValue={selectedStudent.subscription_start_date ?? todayIso()} required />
-                </label>
-                <label>
-                  {t("endDate")}
-                  <input name="end_date" type="date" defaultValue={selectedStudent.subscription_end_date ?? addMonthsIso()} required />
-                </label>
-                <label>
-                  {t("startTime")}
-                  <input name="start_time" type="time" min="06:00" max="22:00" step="3600" defaultValue={displayTime(selectedStudent.start_time) || "06:00"} required />
-                </label>
-                <label>
-                  {t("endTime")}
-                  <input name="end_time" type="time" min="06:00" max="22:00" step="3600" defaultValue={displayTime(selectedStudent.end_time) || "07:00"} required />
-                </label>
-                <label>
-                  {t("fee")}
-                  <input name="fee_amount" type="number" min="0" step="1" defaultValue={selectedStudent.fee_amount ?? ""} />
-                </label>
-                <label>
-                  {t("paid")}
-                  <input name="paid_amount" type="number" min="0" step="1" defaultValue={selectedStudent.paid_amount ?? ""} />
-                </label>
-                <label className="flex-row items-center gap-2">
-                  <input name="inactive" type="checkbox" defaultChecked={!selectedStudent.active} />
-                  <span>{t("inactiveStudents")}</span>
-                </label>
-                <button className="primary-button full-span" type="submit">
-                  {t("save")}
-                </button>
-              </form>
+              {editingStudent ? (
+                <form
+                  key={selectedStudent.id}
+                  className="form-grid two"
+                  onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false)}
+                >
+                  <input type="hidden" name="id" value={selectedStudent.id} />
+                  <h3 className="full-span section-title">{t("studentProfile")}</h3>
+                  <label>
+                    {t("name")}
+                    <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
+                  </label>
+                  <label>
+                    {t("rollNumber")}
+                    <input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required />
+                  </label>
+                  <label>
+                    {t("phone")}
+                    <input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" />
+                  </label>
+                  <label className="full-span">
+                    {t("address")}
+                    <input name="address" defaultValue={selectedStudent.address ?? ""} />
+                  </label>
+                  <label>
+                    {t("seatNumber")}
+                    <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
+                  </label>
+                  <label>
+                    {t("lockerNumber")}
+                    <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
+                  </label>
+                  <label className="flex-row items-center gap-2">
+                    <input name="inactive" type="checkbox" defaultChecked={!selectedStudent.active} />
+                    <span>{t("inactiveStudents")}</span>
+                  </label>
+                  <div className="full-span flex flex-wrap gap-2">
+                    <button className="primary-button" type="submit">
+                      {t("save")}
+                    </button>
+                    <button className="secondary-button" type="button" onClick={() => setEditingStudent(false)}>
+                      {t("cancel")}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              <div className="rounded-lg bg-surface-container-low p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Plus size={16} />
+                  <h4 className="font-headline text-base font-bold">{t("addSubscription")}</h4>
+                </div>
+                <PaymentForm
+                  type="library"
+                  rooms={[]}
+                  mainCourses={[]}
+                  skillCourses={[]}
+                  referrals={[]}
+                  libraryStudents={students}
+                  initialLibraryStudent={selectedStudent}
+                  setNotice={setNotice}
+                  startTransition={startTransition}
+                />
+              </div>
 
               <div className="rounded-lg bg-surface-container-low p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h4 className="font-headline text-base font-bold">{t("paymentHistory")}</h4>
+                  <h4 className="font-headline text-base font-bold">{t("subscriptionHistory")}</h4>
                   <span className="text-xs text-on-surface-variant">{historyQuery.isFetching ? t("saving") : `${historyPayments.length}`}</span>
                 </div>
                 <div className="space-y-2">
                   {historyQuery.error ? <p className="text-sm text-error">{historyQuery.error instanceof Error ? historyQuery.error.message : "Could not load history."}</p> : null}
                   {historyPayments.slice(0, 8).map((payment) => (
-                    <div key={payment.id} className="flex items-center justify-between rounded-lg bg-surface px-3 py-2">
-                      <div>
-                        <strong className="text-sm">{payment.payment_date}</strong>
-                        <p className="text-xs text-on-surface-variant">{paymentModeLabel(payment, t)} · {labelForStatus(payment.approval_status, t)}</p>
+                    <div key={payment.id} className="subscription-history-row">
+                      <div className="min-w-0">
+                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
+                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)} · {paymentModeLabel(payment, t)} · {labelForStatus(payment.approval_status, t)}</p>
+                        <p>{t("paymentDate")} {displayDate(payment.payment_date)}</p>
                       </div>
-                      <strong className="text-sm">{formatMoney(payment.amount)}</strong>
+                      <div className="subscription-amount-grid">
+                        <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
+                        <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
+                        <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
+                        <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
+                      </div>
                     </div>
                   ))}
                   {historyPayments.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
@@ -3467,6 +3651,7 @@ function PaymentForm({
   skillCourses,
   referrals,
   libraryStudents,
+  initialLibraryStudent,
   setNotice,
   startTransition,
   onSuccess,
@@ -3477,27 +3662,30 @@ function PaymentForm({
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
   libraryStudents: LibraryStudent[];
+  initialLibraryStudent?: LibraryStudent | null;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
   onSuccess?: () => void;
 }) {
   const { t } = useLanguage();
-  const [fee, setFee] = useState("");
+  const initialLibraryPrefill = type === "library" && initialLibraryStudent ? libraryStudentPrefill(initialLibraryStudent, t) : null;
+  const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? "");
   const [paid, setPaid] = useState("");
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("cash");
   const [cashCollection, setCashCollection] = useState("");
   const [onlineCollection, setOnlineCollection] = useState("");
-  const [startTime, setStartTime] = useState("06:00");
-  const [endTime, setEndTime] = useState("07:00");
+  const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? "06:00");
+  const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? "07:00");
   const [courseName, setCourseName] = useState("");
-  const [librarySearch, setLibrarySearch] = useState("");
-  const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState("");
-  const [studentName, setStudentName] = useState("");
-  const [rollNumber, setRollNumber] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [seatNumber, setSeatNumber] = useState("");
-  const [lockerNumber, setLockerNumber] = useState("");
+  const [librarySearch, setLibrarySearch] = useState(initialLibraryPrefill?.searchLabel ?? "");
+  const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState(initialLibraryPrefill?.id ?? "");
+  const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? "");
+  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? "");
+  const [phoneNumber, setPhoneNumber] = useState(initialLibraryPrefill?.phoneNumber ?? "");
+  const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
+  const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? "");
+  const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(todayIso());
   const [subscriptionEndDate, setSubscriptionEndDate] = useState(addMonthsIso());
   const feeNumber = Number(fee || 0);
@@ -3517,12 +3705,26 @@ function PaymentForm({
       .filter((student) => {
         if (student.placeholder) return false;
         if (!query) return !student.placeholder;
-        return [student.roll_number, student.student_name, student.phone_number, student.seat_number]
+        return [studentDisplayRollNumber(student), studentDisplayName(student, t), student.phone_number, student.address, student.seat_number]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(query));
       })
       .slice(0, 40);
-  }, [librarySearch, libraryStudents, type]);
+  }, [librarySearch, libraryStudents, t, type]);
+
+  function applyLibraryStudentPrefill(student: LibraryStudent) {
+    const values = libraryStudentPrefill(student, t);
+    setSelectedLibraryStudentId(values.id);
+    setStudentName(values.name);
+    setRollNumber(values.rollNumber);
+    setPhoneNumber(values.phoneNumber);
+    setAddress(values.address);
+    setSeatNumber(values.seatNumber);
+    setLockerNumber(values.lockerNumber);
+    setStartTime(values.startTime);
+    setEndTime(values.endTime);
+    setFee(values.fee);
+  }
 
   function selectLibraryStudent(studentId: string) {
     setSelectedLibraryStudentId(studentId);
@@ -3531,6 +3733,7 @@ function PaymentForm({
       setStudentName("");
       setRollNumber("");
       setPhoneNumber("");
+      setAddress("");
       setSeatNumber("");
       setLockerNumber("");
       setStartTime("06:00");
@@ -3539,15 +3742,16 @@ function PaymentForm({
       setLibrarySearch("");
       return;
     }
-    setStudentName(student.student_name ?? "");
-    setRollNumber(student.roll_number);
-    setPhoneNumber(student.phone_number ?? "");
-    setSeatNumber(student.seat_number ?? "");
-    setLockerNumber(student.locker_number ?? "");
-    setStartTime((student.start_time ?? "06:00").slice(0, 5));
-    setEndTime((student.end_time ?? "07:00").slice(0, 5));
-    setFee(student.fee_amount ? String(student.fee_amount) : "");
-    setLibrarySearch(`${student.roll_number} · ${student.student_name ?? t("unknown")}`);
+    applyLibraryStudentPrefill(student);
+    setLibrarySearch(libraryStudentPrefill(student, t).searchLabel);
+  }
+
+  function handleLibrarySearchChange(value: string) {
+    setLibrarySearch(value);
+    const selected = libraryStudents.find((student) => student.id === selectedLibraryStudentId);
+    if (selected && value !== libraryStudentPrefill(selected, t).searchLabel) {
+      setSelectedLibraryStudentId("");
+    }
   }
 
   return (
@@ -3581,7 +3785,78 @@ function PaymentForm({
         </>
       ) : null}
 
-      {type === "library" ? (
+      {type === "library" && initialLibraryStudent ? (
+        <>
+          <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
+          <input type="hidden" name="customer_name" value={studentName} />
+          <input type="hidden" name="roll_number" value={rollNumber} />
+          <input type="hidden" name="phone_number" value={phoneNumber} />
+          <input type="hidden" name="address" value={address} />
+          <input type="hidden" name="seat_number" value={seatNumber} />
+          <input type="hidden" name="locker_number" value={lockerNumber} />
+          <div className="library-selected-profile full-span">
+            <span>{t("libraryStudent")}</span>
+            <strong>{studentName || t("unknown")}</strong>
+            <small>
+              {t("rollNumber")} {rollNumber || "-"} · {t("phone")} {phoneNumber || "-"} · {t("seat")} {seatNumber || "-"}
+            </small>
+          </div>
+          <label>
+            {t("paymentDate")}
+            <input name="payment_date" type="date" defaultValue={todayIso()} required />
+          </label>
+          <label>
+            {t("startDate")}
+            <input
+              name="start_date"
+              type="date"
+              value={subscriptionStartDate}
+              onChange={(event) => setSubscriptionStartDate(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("endDate")}
+            <input
+              name="end_date"
+              type="date"
+              value={subscriptionEndDate}
+              onChange={(event) => setSubscriptionEndDate(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("startTime")}
+            <input
+              name="start_time"
+              type="time"
+              min="06:00"
+              max="22:00"
+              step="3600"
+              value={startTime}
+              onChange={(event) => setStartTime(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("endTime")}
+            <input
+              name="end_time"
+              type="time"
+              min="06:00"
+              max="22:00"
+              step="3600"
+              value={endTime}
+              onChange={(event) => setEndTime(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            {t("slotHours")}
+            <input name="slot_hours" value={slotHours} readOnly />
+          </label>
+        </>
+      ) : type === "library" ? (
         <>
           <label className="full-span">
             {t("studentSearch")}
@@ -3590,24 +3865,31 @@ function PaymentForm({
               <input
                 type="search"
                 value={librarySearch}
-                onChange={(event) => setLibrarySearch(event.target.value)}
+                onChange={(event) => handleLibrarySearchChange(event.target.value)}
                 placeholder={`${t("rollNumber")} / ${t("name")}`}
               />
             </span>
           </label>
-          <label className="full-span">
-            {t("selectStudent")}
-            <select value={selectedLibraryStudentId} onChange={(event) => selectLibraryStudent(event.target.value)}>
-              <option value="">{t("newStudent")}</option>
-              {searchableLibraryStudents.map((student) => (
-                <option key={student.id} value={student.id}>
-                  {student.roll_number} · {student.student_name ?? t("unknown")}
-                  {student.subscription_end_date ? ` · ${student.subscription_end_date}` : ""}
-                  {!student.active ? ` · ${t("inactiveStudents")}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
+            {searchableLibraryStudents.slice(0, 8).map((student) => (
+              <button
+                key={student.id}
+                type="button"
+                className={selectedLibraryStudentId === student.id ? "selected" : ""}
+                onClick={() => selectLibraryStudent(student.id)}
+              >
+                <span>
+                  <strong>{studentDisplayRollNumber(student)} · {studentDisplayName(student, t)}</strong>
+                  <small>
+                    {student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}
+                    {student.subscription_end_date ? ` · ${t("expiresOn")} ${displayDate(student.subscription_end_date)}` : ""}
+                  </small>
+                </span>
+                {!student.active ? <em>{t("inactiveStudents")}</em> : null}
+              </button>
+            ))}
+            {librarySearch.trim() && searchableLibraryStudents.length === 0 ? <p>{t("newStudent")}</p> : null}
+          </div>
           <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
           <label>
             {t("name")}
@@ -3620,6 +3902,10 @@ function PaymentForm({
           <label>
             {t("phone")}
             <input name="phone_number" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="tel" />
+          </label>
+          <label className="full-span">
+            {t("address")}
+            <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
           </label>
           <label>
             {t("paymentDate")}
@@ -4203,6 +4489,7 @@ function ClosingView({
   if (selectedReviewSummary && owner) {
     return (
       <ClosingReviewDetail
+        key={`${selectedReviewSummary.profile.id}-${date}`}
         summary={selectedReviewSummary}
         date={date}
         payments={payments}
@@ -4373,7 +4660,9 @@ function ClosingReviewDetail({
   const actionableRecords = pendingRecords;
   const settlementAmount = Math.abs(summary.closing);
   const settlementDirection: SettlementDirection = summary.closing >= 0 ? "received_from_user" : "sent_to_user";
-  const canFinalize = actionableRecords.length === 0 && settlementAmount > 0;
+  const [settlementEntryAmount, setSettlementEntryAmount] = useState("");
+  const settlementEntryNumber = numberValue(settlementEntryAmount);
+  const canFinalize = actionableRecords.length === 0 && settlementAmount > 0 && settlementEntryNumber > 0 && settlementEntryNumber <= settlementAmount;
   const createdTime = (createdAt: string) => createdAt.slice(11, 16);
 
   return (
@@ -4501,10 +4790,25 @@ function ClosingReviewDetail({
         <input type="hidden" name="settlement_direction" value={settlementDirection} />
         <input type="hidden" name="profile_id" value={summary.profile.id} />
         <input type="hidden" name="settlement_date" value={date} />
-        <input type="hidden" name="amount" value={settlementAmount} />
+        <label className="review-settle-amount">
+          <span>{settlementDirection === "received_from_user" ? t("amountReceived") : t("amount")}</span>
+          <input
+            name="amount"
+            type="number"
+            min="1"
+            max={settlementAmount}
+            step="0.01"
+            value={settlementEntryAmount}
+            onChange={(event) => setSettlementEntryAmount(event.target.value)}
+            placeholder={settlementAmount ? String(settlementAmount) : ""}
+            disabled={actionableRecords.length > 0 || settlementAmount <= 0}
+            required
+          />
+          <small>{t("cashToSettle")}: {formatMoney(settlementAmount)} · {t("settlementAmountHelp")}</small>
+        </label>
         <button type="submit" disabled={!canFinalize}>
           <ShieldCheck size={18} />
-          {canFinalize ? t("finalizeAndSettle") : t("reviewPendingFirst")}
+          {actionableRecords.length > 0 ? t("reviewPendingFirst") : t("finalizeAndSettle")}
         </button>
       </form>
     </div>
