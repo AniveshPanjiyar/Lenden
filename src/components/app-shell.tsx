@@ -47,9 +47,11 @@ import {
   createExpenseAction,
   createPaymentAction,
   createStaffAction,
+  changeUserPasswordAction,
   deleteCourseAction,
   deleteReferralAction,
   deleteRoomAction,
+  deleteUserAction,
   logoutAction,
   markNotificationsReadAction,
   reviewChangeRequestAction,
@@ -182,6 +184,7 @@ const messages: Record<Language, Record<string, string>> = {
     admin: "Admin",
     adminOnlySettings: "Settings are available to admin and owner only.",
     all: "All",
+    allAccounts: "All accounts",
     allStaff: "All Staff",
     allTypes: "All types",
     advance: "Advance",
@@ -210,6 +213,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashWithStaff: "Cash with staff",
     currentHolder: "Current holder",
     changeRequests: "Change requests",
+    changePassword: "Change password",
     closing: "Closing",
     closingBalance: "Closing balance",
     closingCash: "Closing cash",
@@ -238,6 +242,7 @@ const messages: Record<Language, Record<string, string>> = {
     dashboard: "Dashboard",
     dateRange: "Date range",
     deleteTransaction: "Delete",
+    deleteUser: "Delete user",
     deleted: "Deleted",
     description: "Description",
     direction: "Direction",
@@ -267,6 +272,7 @@ const messages: Record<Language, Record<string, string>> = {
     incentiveEarned: "Incentive earned",
     incentivePercent: "Incentive %",
     incentiveType: "Incentive type",
+    inactive: "Inactive",
     label: "Label",
     language: "Language",
     languageHelp: "Choose the language used in this app.",
@@ -288,6 +294,7 @@ const messages: Record<Language, Record<string, string>> = {
     markInactive: "Mark inactive",
     reactivate: "Reactivate",
     newStudent: "New student",
+    newPassword: "New password",
     selectStudent: "Select student",
     studentProfile: "Student profile",
     subscription: "Subscription",
@@ -474,6 +481,7 @@ const messages: Record<Language, Record<string, string>> = {
     admin: "एडमिन",
     adminOnlySettings: "सेटिंग सिर्फ मालिक और एडमिन के लिए है।",
     all: "सब",
+    allAccounts: "सारे अकाउंट",
     allStaff: "सारा स्टाफ",
     allTypes: "सब तरह",
     advance: "अधिक जमा",
@@ -502,6 +510,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashWithStaff: "स्टाफ के पास नकद",
     currentHolder: "मौजूदा होल्डर",
     changeRequests: "बदलाव की मांग",
+    changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     closingBalance: "बंद हिसाब",
     closingCash: "दिन के अंत का नकद",
@@ -530,6 +539,7 @@ const messages: Record<Language, Record<string, string>> = {
     dashboard: "मुख्य पेज",
     dateRange: "तारीख रेंज",
     deleteTransaction: "हटाएं",
+    deleteUser: "यूजर हटाएं",
     deleted: "हटाए गए",
     description: "जानकारी",
     direction: "किस तरफ",
@@ -559,6 +569,7 @@ const messages: Record<Language, Record<string, string>> = {
     incentiveEarned: "बना कमिशन",
     incentivePercent: "कमिशन %",
     incentiveType: "कमिशन प्रकार",
+    inactive: "बंद",
     label: "लेबल",
     language: "भाषा",
     languageHelp: "ऐप में कौन सी भाषा दिखेगी।",
@@ -580,6 +591,7 @@ const messages: Record<Language, Record<string, string>> = {
     markInactive: "बंद करें",
     reactivate: "फिर चालू करें",
     newStudent: "नया छात्र",
+    newPassword: "नया पासवर्ड",
     selectStudent: "छात्र चुनें",
     studentProfile: "छात्र प्रोफाइल",
     subscription: "सब्सक्रिप्शन",
@@ -5261,6 +5273,76 @@ function SettingsView({
                 {t("createAccount")}
               </button>
             </form>
+          </section>
+
+          <section>
+            <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("allAccounts")}</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {profiles.map((item) => (
+                <article
+                  className="p-4 bg-surface rounded-xl border border-outline-variant/30 flex flex-col gap-4"
+                  key={item.id}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <strong className="text-on-surface text-base block truncate">{item.full_name}</strong>
+                      <span className="text-xs text-on-surface-variant block truncate">{item.email}</span>
+                      <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">
+                        {t(roleLabelKeys[item.role] ?? item.role)}
+                      </span>
+                    </div>
+                    <span className={`status-chip ${item.active ? "status-approved" : "status-rejected"} shrink-0`}>
+                      {item.active ? t("active") : t("inactive")}
+                    </span>
+                  </div>
+
+                  <form
+                    className="grid gap-2"
+                    onSubmit={(event) => submitWith(event, changeUserPasswordAction, setNotice, startTransition)}
+                  >
+                    <input type="hidden" name="profile_id" value={item.id} />
+                    <label className="text-xs text-on-surface-variant font-bold">
+                      {t("newPassword")}
+                      <input
+                        name="new_password"
+                        type="password"
+                        minLength={8}
+                        required
+                        disabled={!item.active}
+                        className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={!item.active}
+                      className="py-2 bg-primary-container text-on-primary-container font-bold rounded-lg hover:bg-primary-container/80 transition-colors border-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 text-sm"
+                    >
+                      {t("changePassword")}
+                    </button>
+                  </form>
+
+                  <form
+                    onSubmit={(event) => {
+                      if (!window.confirm(`Delete ${item.full_name}? This will deactivate the account when history must be preserved.`)) {
+                        event.preventDefault();
+                        return;
+                      }
+                      submitWith(event, deleteUserAction, setNotice, startTransition, false);
+                    }}
+                  >
+                    <input type="hidden" name="profile_id" value={item.id} />
+                    <button
+                      type="submit"
+                      disabled={item.id === profile.id}
+                      className="w-full py-2 border border-error/30 bg-transparent text-error font-bold rounded-lg hover:bg-error-container/50 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+                    >
+                      <Trash2 size={16} />
+                      {t("deleteUser")}
+                    </button>
+                  </form>
+                </article>
+              ))}
+            </div>
           </section>
 
           <section>

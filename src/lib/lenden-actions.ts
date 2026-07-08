@@ -30,6 +30,14 @@ type SupabaseAdminClient = {
         email_confirm: boolean;
         user_metadata: Record<string, unknown>;
       }) => Promise<{ data: { user: { id: string } | null }; error: { message: string } | null }>;
+      updateUserById: (
+        id: string,
+        attributes: { password?: string; ban_duration?: string },
+      ) => Promise<{ data: { user: { id: string } | null }; error: { message: string } | null }>;
+      deleteUser: (
+        id: string,
+        shouldSoftDelete?: boolean,
+      ) => Promise<{ data: { user: { id: string } | null }; error: { message: string } | null }>;
     };
   };
   from: (table: string) => QueryBuilder;
@@ -253,6 +261,35 @@ async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: 
   if (isSalesAgent(profile.role)) return false;
   const permissions = await userPermissions(admin, profile.id);
   return permissions.includes(businessPermissions[business]);
+}
+
+async function countRows(admin: SupabaseAdminClient, table: string, column: string, value: string) {
+  const response = await admin
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq(column, value);
+  if (response.error) throw new Error(response.error.message);
+  return response.count ?? 0;
+}
+
+async function profileHasFinancialReferences(admin: SupabaseAdminClient, profileId: string) {
+  const counts = await Promise.all([
+    countRows(admin, "payments", "collected_by", profileId),
+    countRows(admin, "payments", "current_holder_id", profileId),
+    countRows(admin, "expenses", "spent_by", profileId),
+    countRows(admin, "money_movements", "from_profile_id", profileId),
+    countRows(admin, "money_movements", "to_profile_id", profileId),
+    countRows(admin, "money_movements", "requested_by", profileId),
+    countRows(admin, "money_movements", "responded_by", profileId),
+    countRows(admin, "ledger_entries", "account_profile_id", profileId),
+    countRows(admin, "ledger_entries", "created_by", profileId),
+    countRows(admin, "record_change_requests", "requested_by", profileId),
+    countRows(admin, "record_change_requests", "reviewed_by", profileId),
+    countRows(admin, "agent_settlements", "agent_id", profileId),
+    countRows(admin, "agent_settlements", "paid_by", profileId),
+    countRows(admin, "agent_settlements", "responded_by", profileId),
+  ]);
+  return counts.some((count) => count > 0);
 }
 
 async function requireLibraryCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile) {
@@ -977,6 +1014,91 @@ const handlers = {
     });
 
     return ok(targetProfile.role === "sales_agent" ? "Sales agents are read-only; permissions cleared." : "Permissions saved.");
+  }),
+
+  changeUserPassword: withErrors("Could not change password.", async (formData, { admin, profile, idempotencyKey }) => {
+    requireOwnerish(profile.role);
+
+    const profileId = asString(formData, "profile_id");
+    const password = asString(formData, "new_password");
+    if (!profileId) return fail("Choose a user.");
+    if (!password || password.length < 8) return fail("Enter a password with at least 8 characters.");
+
+    const targetProfileResponse = await admin
+      .from("profiles")
+      .select("id, full_name, active")
+      .eq("id", profileId)
+      .single();
+    const targetProfile = typedData<{ id: string; full_name: string; active: boolean }>(targetProfileResponse);
+    if (targetProfileResponse.error || !targetProfile) {
+      throw new Error(targetProfileResponse.error?.message ?? "User profile not found.");
+    }
+    if (!targetProfile.active) return fail("Reactivate this user before changing their password.");
+
+    const { error } = await admin.auth.admin.updateUserById(profileId, { password });
+    if (error) throw new Error(error.message);
+
+    await createNotifications(admin, {
+      recipientIds: profileId === profile.id ? [] : [profileId],
+      actorId: profile.id,
+      title: "Password changed",
+      body: `${profile.full_name} changed your Lenden login password.`,
+      category: "settings",
+      tone: "info",
+      eventKey: `user-password:${profileId}:${idempotencyKey ?? "direct"}`,
+      metadata: {},
+    });
+
+    return ok(`Password changed for ${targetProfile.full_name}.`);
+  }),
+
+  deleteUser: withErrors("Could not delete user.", async (formData, { admin, profile }) => {
+    requireOwnerish(profile.role);
+
+    const profileId = asString(formData, "profile_id");
+    if (!profileId) return fail("Choose a user.");
+    if (profileId === profile.id) return fail("You cannot delete your own account while logged in.");
+
+    const targetProfileResponse = await admin
+      .from("profiles")
+      .select("id, full_name, role")
+      .eq("id", profileId)
+      .single();
+    const targetProfile = typedData<{ id: string; full_name: string; role: AppRole }>(targetProfileResponse);
+    if (targetProfileResponse.error || !targetProfile) {
+      throw new Error(targetProfileResponse.error?.message ?? "User profile not found.");
+    }
+
+    if (isOwnerish(targetProfile.role)) {
+      const ownerProfilesResponse = await admin
+        .from("profiles")
+        .select("id, active")
+        .in("role", ["admin", "owner"]);
+      if (ownerProfilesResponse.error) throw new Error(ownerProfilesResponse.error.message);
+      const activeOwnerProfiles = typedDataArray<{ id: string; active: boolean }>(ownerProfilesResponse)
+        .filter((item) => item.active && item.id !== profileId);
+      if (activeOwnerProfiles.length === 0) return fail("At least one active admin or owner must remain.");
+    }
+
+    await admin.from("staff_permissions").delete().eq("profile_id", profileId);
+
+    if (await profileHasFinancialReferences(admin, profileId)) {
+      const { error: profileError } = await admin
+        .from("profiles")
+        .update({ active: false })
+        .eq("id", profileId);
+      if (profileError) throw new Error(profileError.message);
+
+      const { error: authError } = await admin.auth.admin.updateUserById(profileId, { ban_duration: "876000h" });
+      if (authError) throw new Error(authError.message);
+
+      return ok(`${targetProfile.full_name} has transaction history, so the account was deactivated and login access was blocked.`);
+    }
+
+    const { error } = await admin.auth.admin.deleteUser(profileId);
+    if (error) throw new Error(error.message);
+
+    return ok(`${targetProfile.full_name} deleted.`);
   }),
 
   createPayment: withErrors("Could not save payment.", async (formData, { admin, profile, idempotencyKey }) => {

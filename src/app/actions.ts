@@ -171,6 +171,14 @@ export async function saveStaffPermissionsAction(formData: FormData): Promise<Ac
   return invokeLendenAction("saveStaffPermissions", formData);
 }
 
+export async function changeUserPasswordAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("changeUserPassword", formData);
+}
+
+export async function deleteUserAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("deleteUser", formData);
+}
+
 export async function createPaymentAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("createPayment", formData);
 }
