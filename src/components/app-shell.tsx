@@ -2799,7 +2799,7 @@ function TransactionsView({
   const { t } = useLanguage();
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  const effectiveTransactionFilter = transactionFilter;
+  const effectiveTransactionFilter = owner && transactionFilter === "pending" ? "transactions" : transactionFilter;
   const selectableProfiles = useMemo(() => {
     if (owner) return profiles.filter((item) => item.active);
 
@@ -2814,11 +2814,11 @@ function TransactionsView({
     return profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
   }, [expenses, owner, payments, profile.id, profiles, transactionProfileId]);
   const transactionRecords = useMemo(() => {
-    type CashTransactionFilter = Exclude<TransactionFilter, "all" | "pending">;
+    type HistoryRecordFilter = Exclude<TransactionFilter, "all" | "pending">;
     type HistoryRecord = {
       id: string;
       kind: "collection" | "expense" | "settlement" | "agent_payout";
-      filter: CashTransactionFilter;
+      filter: HistoryRecordFilter;
       date: string;
       sortAt: string;
       amount: number;
@@ -2867,26 +2867,26 @@ function TransactionsView({
       payment.approval_status === "approved" && paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0
         ? "approved"
         : payment.approval_status;
+    const ownerProfileIds = new Set(profiles.filter((item) => isOwnerish(item.role)).map((item) => item.id));
+    const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
+    const paymentMatchesSelectedProfile = (payment: Payment, linkedTransfers: MoneyMovement[]) => (
+      userMatches(payment.collected_by) ||
+      userMatches(payment.current_holder_id) ||
+      linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id))
+    );
 
     const paymentRows = currentUserIsSalesAgent ? [] : payments
       .filter((payment) => dateInRange(payment.payment_date, dateRange))
       .filter((payment) => payment.record_status === "active")
-      .filter((payment) => {
+      .flatMap((payment): HistoryRecord[] => {
         const linkedTransfers = paymentTransfers(movements, payment.id);
-        return (
-          userMatches(payment.collected_by) ||
-          userMatches(payment.current_holder_id) ||
-          linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id))
-        );
-      })
-      .map((payment): HistoryRecord => {
+        if (!paymentMatchesSelectedProfile(payment, linkedTransfers)) return [];
+
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
         const onlineOnly = onlineImpact > 0 && cashImpact === 0;
-        const staffOwnOnline = !canUseProfileFilter && payment.collected_by === profile.id && onlineImpact > 0;
         const onlineApproved = payment.approval_status === "approved";
         const paymentStatus = collectionStatus(payment);
-        const linkedTransfers = paymentTransfers(movements, payment.id);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
         const transferOut = !owner && linkedTransfers.some(
@@ -2899,22 +2899,6 @@ function TransactionsView({
             (movement.status === "accepted" || movement.status === "pending") &&
             movement.to_profile_id === profile.id,
         );
-        const rowCashAmount = canUseProfileFilter
-          ? cashImpact
-          : transferOut
-            ? cashImpact
-            : payment.current_holder_id === profile.id || transferIn
-              ? cashImpact
-              : 0;
-        const rowOnlineAmount = !transferOut && (canUseProfileFilter || (staffOwnOnline && !transferIn)) ? onlineImpact : 0;
-        const shownAmount = transferOut ? -rowCashAmount : rowCashAmount + rowOnlineAmount;
-        const amountTone = onlineOnly && staffOwnOnline
-          ? (onlineApproved ? "online-approved" : "neutral")
-          : shownAmount === 0
-            ? "neutral"
-            : shownAmount > 0
-              ? "positive"
-              : "negative";
         const requiredPermission = businessPermissions[payment.business_type];
         const transferRecipients = cashImpact > 0 && requiredPermission
           ? profiles.filter((item) =>
@@ -2931,20 +2915,11 @@ function TransactionsView({
           !pendingTransfer &&
           transferRecipients.length > 0;
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
-
-        return {
+        const baseRecord = {
           id: payment.id,
-          kind: "collection",
-          filter: transferOut ? "cash_out" : "cash_in",
           date: payment.payment_date,
           sortAt: payment.created_at,
-          amount: shownAmount,
-          cashAmount: rowCashAmount,
-          onlineAmount: rowOnlineAmount,
-          amountTone,
-          onlineTone: onlineApproved ? "online-approved" : "neutral",
           title: paymentDisplayTitle(payment, t),
-          meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!canUseProfileFilter && onlineOnly ? ` · ${t("ownerAccountCredit")}` : ""}`,
           status: paymentStatus,
           statusTone: collectionStatusTone(payment),
           modeLabel: paymentModeLabel(payment, t),
@@ -2953,7 +2928,7 @@ function TransactionsView({
           description: payment.description ?? "",
           remark: payment.remark ?? "",
           reason: payment.cancel_reason,
-          recordType: "payment",
+          recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
           canEdit: payment.collected_by === profile.id && isPendingReviewStatus(payment.approval_status) && !activeTransfer,
@@ -2971,38 +2946,161 @@ function TransactionsView({
                 ? <GraduationCap size={24} />
                 : <WalletCards size={24} />,
         };
+
+        if (owner) {
+          const collectedByOwner = isOwnerProfile(payment.collected_by);
+          const currentHolderIsOwner = isOwnerProfile(payment.current_holder_id);
+          const rows: HistoryRecord[] = [];
+
+          if (!collectedByOwner || isPendingReviewStatus(payment.approval_status) || pendingTransfer) {
+            rows.push({
+              ...baseRecord,
+              kind: "collection",
+              filter: "transactions",
+              amount: numberValue(payment.amount),
+              cashAmount: cashImpact,
+              onlineAmount: onlineImpact,
+              amountTone: "neutral",
+              onlineTone: onlineApproved ? "online-approved" : "neutral",
+              meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            });
+          }
+
+          if (onlineApproved) {
+            const ownerCashAmount = collectedByOwner || currentHolderIsOwner ? cashImpact : 0;
+            const ownerOnlineAmount = onlineImpact;
+            const ownerFinancialAmount = ownerCashAmount + ownerOnlineAmount;
+            if (ownerFinancialAmount > 0) {
+              rows.push({
+                ...baseRecord,
+                kind: "collection",
+                filter: "cash_in",
+                amount: ownerFinancialAmount,
+                cashAmount: ownerCashAmount,
+                onlineAmount: ownerOnlineAmount,
+                amountTone: ownerOnlineAmount > 0 && ownerCashAmount === 0 ? "online-approved" : "positive",
+                onlineTone: ownerOnlineAmount > 0 ? "online-approved" : "neutral",
+                meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
+                recordType: collectedByOwner ? "payment" : undefined,
+                canDelete: collectedByOwner,
+                transferLines: [],
+                transferRecipients: [],
+                canRequestTransfer: false,
+                incomingTransferId: null,
+                pendingApproval: false,
+              });
+            }
+          }
+
+          return rows;
+        }
+
+        const rows: HistoryRecord[] = [];
+        const personalStaffView = !canUseProfileFilter;
+        const staffOwnOnline = personalStaffView && payment.collected_by === profile.id && onlineImpact > 0;
+        const rowCashAmount = canUseProfileFilter
+          ? cashImpact
+          : transferOut
+            ? cashImpact
+            : payment.current_holder_id === profile.id || transferIn
+              ? cashImpact
+              : 0;
+
+        if (rowCashAmount > 0 || (canUseProfileFilter && onlineImpact > 0)) {
+          const rowOnlineAmount = canUseProfileFilter ? onlineImpact : 0;
+          const shownAmount = transferOut ? -rowCashAmount : rowCashAmount + rowOnlineAmount;
+          rows.push({
+            ...baseRecord,
+            kind: "collection",
+            filter: transferOut ? "cash_out" : "cash_in",
+            amount: shownAmount,
+            cashAmount: rowCashAmount,
+            onlineAmount: rowOnlineAmount,
+            amountTone: shownAmount === 0 ? "neutral" : shownAmount > 0 ? "positive" : "negative",
+            onlineTone: onlineApproved ? "online-approved" : "neutral",
+            meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
+          });
+        }
+
+        if (staffOwnOnline && !transferOut && !transferIn) {
+          const onlineAmount = onlineImpact;
+          rows.push({
+            ...baseRecord,
+            id: onlineOnly ? payment.id : `${payment.id}-online`,
+            kind: "settlement",
+            filter: "cash_out",
+            amount: -onlineAmount,
+            cashAmount: 0,
+            onlineAmount,
+            amountTone: onlineApproved ? "online-approved" : "neutral",
+            onlineTone: onlineApproved ? "online-approved" : "neutral",
+            title: t("ownerAccountCredit"),
+            meta: `${paymentDisplayTitle(payment, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            modeLabel: t("online"),
+            recordType: onlineOnly ? "payment" : undefined,
+            canEdit: onlineOnly ? baseRecord.canEdit : false,
+            canDelete: false,
+            transferLines: [],
+            transferRecipients: [],
+            canRequestTransfer: false,
+            incomingTransferId: null,
+          });
+        }
+
+        return rows;
       });
     const expenseRows = currentUserIsSalesAgent ? [] : expenses
       .filter((expense) => dateInRange(expense.expense_date, dateRange))
       .filter((expense) => expense.record_status === "active")
       .filter((expense) => userMatches(expense.spent_by))
-      .map((expense): HistoryRecord => ({
-        id: expense.id,
-        kind: "expense" as const,
-        filter: "cash_out",
-        date: expense.expense_date,
-        sortAt: expense.created_at,
-        amount: -numberValue(expense.amount),
-        cashAmount: numberValue(expense.amount),
-        onlineAmount: 0,
-        title: expenseDisplayTitle(expense),
-        meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
-        status: labelForStatus(expense.approval_status, t),
-        statusTone: expense.approval_status,
-        modeLabel: t("cash"),
-        recordStatus: expense.record_status,
-        ownerId: expense.spent_by,
-        description: expense.description,
-        remark: expense.remark ?? "",
-        reason: expense.cancel_reason,
-        recordType: "expense",
-        editDate: expense.expense_date,
-        editAmount: numberValue(expense.amount),
-        canEdit: expense.spent_by === profile.id && isPendingReviewStatus(expense.approval_status),
-        canDelete: owner,
-        pendingApproval: isPendingReviewStatus(expense.approval_status),
-        icon: <ReceiptText size={24} />,
-      }));
+      .flatMap((expense): HistoryRecord[] => {
+        const spentByOwner = isOwnerProfile(expense.spent_by);
+        const pendingApproval = isPendingReviewStatus(expense.approval_status);
+        const baseRecord = {
+          id: expense.id,
+          kind: "expense" as const,
+          date: expense.expense_date,
+          sortAt: expense.created_at,
+          amount: -numberValue(expense.amount),
+          cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
+          onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
+          title: expenseDisplayTitle(expense),
+          meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
+          status: labelForStatus(expense.approval_status, t),
+          statusTone: expense.approval_status,
+          modeLabel: labelForMode(expense.mode, t),
+          recordStatus: expense.record_status,
+          ownerId: expense.spent_by,
+          description: expense.description,
+          remark: expense.remark ?? "",
+          reason: expense.cancel_reason,
+          recordType: "expense" as const,
+          editDate: expense.expense_date,
+          editAmount: numberValue(expense.amount),
+          canEdit: expense.spent_by === profile.id && pendingApproval,
+          canDelete: owner,
+          pendingApproval,
+          icon: <ReceiptText size={24} />,
+        };
+
+        if (!owner) {
+          return [{ ...baseRecord, filter: "cash_out" }];
+        }
+
+        if (spentByOwner && expense.approval_status === "approved") {
+          return [{ ...baseRecord, filter: "cash_out", pendingApproval: false }];
+        }
+
+        if (!spentByOwner || pendingApproval) {
+          return [{
+            ...baseRecord,
+            filter: "transactions",
+            amountTone: "neutral",
+          }];
+        }
+
+        return [];
+      });
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
       if ((movement.status !== "accepted" && movement.status !== "pending") || movement.payment_id) return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
@@ -3117,7 +3215,8 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
       .filter((record) => {
-        if (effectiveTransactionFilter === "all") return true;
+        if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
+        if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
         if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
         return record.filter === effectiveTransactionFilter && !record.pendingApproval;
       })
@@ -3130,9 +3229,13 @@ function TransactionsView({
     .filter((record) => numberValue(record.amount) > 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const positiveTotal = inCashTotal + inOnlineTotal;
-  const negativeTotal = transactionRecords
+  const outCashTotal = transactionRecords
     .filter((record) => numberValue(record.amount) < 0)
-    .reduce((sum, record) => sum + Math.abs(numberValue(record.amount)), 0);
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const outOnlineTotal = transactionRecords
+    .filter((record) => numberValue(record.amount) < 0)
+    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
+  const negativeTotal = outCashTotal + outOnlineTotal;
   const groupedRecords = transactionRecords.reduce<{ date: string; records: typeof transactionRecords }[]>((groups, record) => {
     const lastGroup = groups.at(-1);
     if (lastGroup?.date === record.date) {
@@ -3142,12 +3245,15 @@ function TransactionsView({
     groups.push({ date: record.date, records: [record] });
     return groups;
   }, []);
-  const visibleTransactionFilters = ["all", "cash_in", "cash_out", "pending"] as TransactionFilter[];
+  const visibleTransactionFilters = (owner
+    ? ["all", "cash_in", "cash_out", "transactions"]
+    : ["all", "cash_in", "cash_out", "pending"]) as TransactionFilter[];
   const transactionFilterLabel = (filter: TransactionFilter) => {
     if (filter === "all") return t("all");
     if (filter === "cash_in") return t("cashIn");
     if (filter === "cash_out") return t("cashOut");
     if (filter === "pending") return t("pending");
+    if (filter === "transactions") return t("transactions");
     return t("all");
   };
 
@@ -3191,7 +3297,7 @@ function TransactionsView({
             <div>
               <span>{t("totalOut")}</span>
               <strong className="negative">-{formatMoney(negativeTotal)}</strong>
-              <small className="history-total-breakdown">{t("cash")} {formatMoney(negativeTotal)}</small>
+              <small className="history-total-breakdown">{t("cash")} {formatMoney(outCashTotal)} · {t("online")} {formatMoney(outOnlineTotal)}</small>
             </div>
           </div>
         ) : (
@@ -3267,6 +3373,11 @@ function TransactionsView({
                         {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
                       </strong>
                       {record.filter === "cash_in" && record.amount > 0 ? (
+                        <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
+                          {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
+                        </span>
+                      ) : null}
+                      {record.filter === "cash_out" && record.amount < 0 && record.onlineAmount > 0 ? (
                         <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
                           {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
                         </span>

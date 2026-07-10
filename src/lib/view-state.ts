@@ -2,7 +2,7 @@ import { todayIso } from "@/lib/constants";
 
 export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
-export type TransactionFilter = "all" | "cash_in" | "cash_out" | "pending";
+export type TransactionFilter = "all" | "cash_in" | "cash_out" | "pending" | "transactions";
 
 export type DateRangeState = {
   preset: DateRangePreset;
@@ -21,7 +21,7 @@ type RawSearchParams = Record<string, string | string[] | undefined>;
 
 const appTabs = ["home", "payments", "library_students", "closing", "settings"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
-const transactionFilters = ["all", "cash_in", "cash_out", "pending"] as const;
+const transactionFilters = ["all", "cash_in", "cash_out", "pending", "transactions"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 function singleParam(params: RawSearchParams, name: string) {
