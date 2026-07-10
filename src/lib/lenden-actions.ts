@@ -1633,6 +1633,9 @@ const handlers = {
       await removeRecordLedgerEntries(admin, recordType, id);
       return ok("Record cancelled.");
     }
+    if (String(record.approval_status ?? "") === "approved") {
+      return fail("Approved transactions cannot be deleted.");
+    }
     const reason = asString(formData, "reason");
     if (!reason) return fail("Deletion reason is required.");
 
@@ -1756,6 +1759,18 @@ const handlers = {
     if (!recordType || !recordId) return fail("Missing record.");
     if (recordType !== "payment" && recordType !== "expense") return fail("Invalid record type.");
 
+    const recordTable = recordType === "expense" ? "expenses" : "payments";
+    const recordResponse = await admin
+      .from(recordTable)
+      .select("approval_status")
+      .eq("id", recordId)
+      .single();
+    const record = typedData<{ approval_status: string }>(recordResponse);
+    if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
+    if (String(record.approval_status ?? "") === "approved") {
+      return fail("Approved transactions cannot be deleted.");
+    }
+
     const existingRequestByKey = await existingByClientRequest<{ id: string }>(
       admin,
       "record_change_requests",
@@ -1835,17 +1850,26 @@ const handlers = {
       return request.status === decision ? ok("Request reviewed.") : fail("This request has already been reviewed.");
     }
 
+    let acceptedCancelTarget: { table: "expenses" | "payments" } | null = null;
+    if (decision === "accepted" && request.request_type === "cancel") {
+      const table = request.record_type === "expense" ? "expenses" : "payments";
+      const recordResponse = await admin.from(table).select("*").eq("id", request.record_id).single();
+      const record = typedData<Record<string, string | number | null>>(recordResponse);
+      if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
+      if (String(record.approval_status ?? "") === "approved") {
+        return fail("Approved transactions cannot be deleted.");
+      }
+      acceptedCancelTarget = { table };
+    }
+
     await admin
       .from("record_change_requests")
       .update({ status: decision, reviewed_by: profile.id, reviewed_at: new Date().toISOString() })
       .eq("id", requestId);
 
-    if (decision === "accepted" && request.request_type === "cancel") {
-      const table = request.record_type === "expense" ? "expenses" : "payments";
-      const recordResponse = await admin.from(table).select("*").eq("id", request.record_id).single();
-      if (recordResponse.error || !recordResponse.data) throw new Error(recordResponse.error?.message ?? "Record not found.");
+    if (acceptedCancelTarget) {
       await admin
-        .from(table)
+        .from(acceptedCancelTarget.table)
         .update({
           record_status: "cancelled",
           approval_status: "cancelled",

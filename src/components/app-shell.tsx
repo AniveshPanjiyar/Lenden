@@ -2813,7 +2813,7 @@ function TransactionsView({
 
     return profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
   }, [expenses, owner, payments, profile.id, profiles, transactionProfileId]);
-  const transactionRecords = useMemo(() => {
+  const allTransactionRecords = useMemo(() => {
     type HistoryRecordFilter = Exclude<TransactionFilter, "all" | "pending">;
     type HistoryRecord = {
       id: string;
@@ -2932,7 +2932,7 @@ function TransactionsView({
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
           canEdit: payment.collected_by === profile.id && isPendingReviewStatus(payment.approval_status) && !activeTransfer,
-          canDelete: owner,
+          canDelete: owner && payment.approval_status !== "approved",
           transferLines: cashImpact > 0 ? transferSummaryLines(payment, linkedTransfers, profiles, t) : [],
           transferRecipients,
           canRequestTransfer,
@@ -2982,7 +2982,7 @@ function TransactionsView({
                 onlineTone: ownerOnlineAmount > 0 ? "online-approved" : "neutral",
                 meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
                 recordType: collectedByOwner ? "payment" : undefined,
-                canDelete: collectedByOwner,
+                canDelete: collectedByOwner && payment.approval_status !== "approved",
                 transferLines: [],
                 transferRecipients: [],
                 canRequestTransfer: false,
@@ -3078,7 +3078,7 @@ function TransactionsView({
           editDate: expense.expense_date,
           editAmount: numberValue(expense.amount),
           canEdit: expense.spent_by === profile.id && pendingApproval,
-          canDelete: owner,
+          canDelete: owner && expense.approval_status !== "approved",
           pendingApproval,
           icon: <ReceiptText size={24} />,
         };
@@ -3111,6 +3111,45 @@ function TransactionsView({
       const pendingMovement = movement.status === "pending";
 
       if (owner) {
+        const selectedProfile = selectedUserId !== "all" ? profiles.find((item) => item.id === selectedUserId) : null;
+        if (selectedProfile && !isOwnerish(selectedProfile.role)) {
+          const selectedStaffAmount = movement.from_profile_id === selectedUserId
+            ? -movementAmount
+            : movement.to_profile_id === selectedUserId
+              ? movementAmount
+              : 0;
+          if (selectedStaffAmount === 0) return [];
+          const counterpartyId = selectedStaffAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
+          const entry = pendingMovement ? null : movementEntry(movement, selectedStaffAmount, selectedUserId);
+          const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
+          if (!dateInRange(date, dateRange)) return [];
+          const staffCashIn = selectedStaffAmount > 0;
+          const incomingOwnerCash = selectedStaffAmount > 0 && fromOwnerish && !toOwnerish;
+          const outgoingOwnerSettlement = selectedStaffAmount < 0 && toOwnerish;
+          return [{
+            id: `movement-${movement.id}`,
+            kind: staffCashIn ? "collection" : "settlement",
+            filter: staffCashIn ? "cash_in" : "cash_out",
+            date,
+            sortAt: movement.responded_at ?? movement.created_at,
+            amount: selectedStaffAmount,
+            cashAmount: movementAmount,
+            onlineAmount: 0,
+            title: staffCashIn ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
+            meta: `${selectedStaffAmount < 0 ? t("to") : t("from")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
+            status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
+            statusTone: movement.status,
+            modeLabel: staffCashIn ? t("cashIn") : labelForMode(movement.mode, t),
+            recordStatus: "active",
+            ownerId: selectedUserId,
+            description: entry?.description ?? "",
+            remark: movement.note ?? "",
+            reason: null,
+            pendingApproval: pendingMovement,
+            icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
+          }];
+        }
+
         const ownerFacingAmount = !fromOwnerish && toOwnerish ? movementAmount : fromOwnerish && !toOwnerish ? -movementAmount : 0;
         if (ownerFacingAmount === 0) return [];
         const ownerReceivedSettlement = ownerFacingAmount > 0;
@@ -3214,25 +3253,26 @@ function TransactionsView({
     });
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
-      .filter((record) => {
-        if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
-        if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
-        if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
-        return record.filter === effectiveTransactionFilter && !record.pendingApproval;
-      })
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, effectiveTransactionFilter, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
-  const inCashTotal = transactionRecords
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
+  const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
+    if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
+    if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
+    if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
+    return record.filter === effectiveTransactionFilter && !record.pendingApproval;
+  }), [allTransactionRecords, effectiveTransactionFilter, owner]);
+  const totalTransactionRecords = allTransactionRecords.filter((record) => record.filter !== "transactions" && !record.pendingApproval);
+  const inCashTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) > 0)
     .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const inOnlineTotal = transactionRecords
+  const inOnlineTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) > 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const positiveTotal = inCashTotal + inOnlineTotal;
-  const outCashTotal = transactionRecords
+  const outCashTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) < 0)
     .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const outOnlineTotal = transactionRecords
+  const outOnlineTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) < 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const negativeTotal = outCashTotal + outOnlineTotal;
