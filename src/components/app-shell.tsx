@@ -69,7 +69,7 @@ import {
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { addMonthsIso, businessLabels, businessPermissions, formatMoney, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
-import type { AgentSettlement, AppData, AppNotification, AppRole, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
+import type { AgentSettlement, AppData, AppNotification, AppRole, ApprovalStatus, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
 type Tab = AppTab;
@@ -1068,29 +1068,12 @@ function pendingPaymentTransfer(movements: MoneyMovement[], paymentId: string) {
   return paymentTransfers(movements, paymentId).find((movement) => movement.status === "pending") ?? null;
 }
 
-function transferSummaryLines(
-  payment: Payment,
-  transfers: MoneyMovement[],
-  profiles: Profile[],
-  t: (key: string) => string,
-) {
-  const cashAmount = paymentCashAmount(payment);
-  const lines = cashAmount > 0
-    ? [`${t("currentHolder")}: ${profileName(profiles, payment.current_holder_id ?? payment.collected_by, t)} · ${t("transferCashAmount")} ${formatMoney(cashAmount)}`]
-    : [];
-
-  transfers.forEach((movement) => {
+function transferSummaryLines(transfers: MoneyMovement[], profiles: Profile[], t: (key: string) => string) {
+  return transfers.map((movement) => {
     const from = profileName(profiles, movement.from_profile_id, t);
     const to = profileName(profiles, movement.to_profile_id, t);
-    const label = movement.status === "pending"
-      ? t("pendingTransfer")
-      : movement.status === "accepted"
-        ? t("acceptedTransfer")
-        : t("rejectedTransfer");
-    lines.push(`${label}: ${from} → ${to}`);
+    return `${from} → ${to}`;
   });
-
-  return lines;
 }
 
 function paymentDisplayTitle(payment: Payment, t: (key: string) => string) {
@@ -1114,6 +1097,30 @@ function dateInRange(isoDate: string, range: NormalizedDateRange) {
 
 function ownerProfileIdSet(profiles: Profile[]) {
   return new Set(profiles.filter((profile) => isOwnerish(profile.role)).map((profile) => profile.id));
+}
+
+function effectivePaymentStatus(payment: Payment, ownerIds: Set<string>): ApprovalStatus {
+  return ownerIds.has(payment.collected_by) ? "approved" : payment.approval_status;
+}
+
+function effectiveExpenseStatus(expense: Expense, ownerIds: Set<string>): ApprovalStatus {
+  return ownerIds.has(expense.spent_by) ? "approved" : expense.approval_status;
+}
+
+function isEffectivelyApprovedPayment(payment: Payment, ownerIds: Set<string>) {
+  return effectivePaymentStatus(payment, ownerIds) === "approved";
+}
+
+function isEffectivelyApprovedExpense(expense: Expense, ownerIds: Set<string>) {
+  return effectiveExpenseStatus(expense, ownerIds) === "approved";
+}
+
+function isEffectivelyPendingPayment(payment: Payment, ownerIds: Set<string>) {
+  return !ownerIds.has(payment.collected_by) && isPendingReviewStatus(payment.approval_status);
+}
+
+function isEffectivelyPendingExpense(expense: Expense, ownerIds: Set<string>) {
+  return !ownerIds.has(expense.spent_by) && isPendingReviewStatus(expense.approval_status);
 }
 
 function movementDate(movement: MoneyMovement) {
@@ -1507,6 +1514,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const selectedDateRange = normalizeDateRange(dateRange);
   const selectedDateRangeLabel = formatDateRange(selectedDateRange, t);
   const closingDate = selectedDateRange.to;
+  const appOwnerProfileIds = useMemo(() => ownerProfileIdSet(appData.profiles), [appData.profiles]);
   const filteredPayments = appData.payments.filter((payment) => dateInRange(payment.payment_date, selectedDateRange));
   const filteredExpenses = appData.expenses.filter((expense) => dateInRange(expense.expense_date, selectedDateRange));
   const transactionUserId = canViewSharedBusinessHistory ? transactionProfileId : appData.profile.id;
@@ -1553,7 +1561,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       (payment) =>
         payment.referral_agent_id === appData.profile.id &&
         payment.record_status === "active" &&
-        payment.approval_status === "approved",
+        isEffectivelyApprovedPayment(payment, appOwnerProfileIds),
     );
     const earned = agentPayments.reduce((sum, payment) => sum + numberValue(payment.incentive_amount), 0);
     const settled = appData.agentSettlements
@@ -1570,7 +1578,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       balance: Math.max(earned - settled - pending, 0),
       count: agentPayments.length,
     };
-  }, [appData.agentSettlements, appData.payments, appData.profile.id]);
+  }, [appData.agentSettlements, appData.payments, appData.profile.id, appOwnerProfileIds]);
 
   const agentIncentiveBalances = useMemo<AgentIncentiveBalance[]>(() => {
     return salesAgents
@@ -1580,7 +1588,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             (payment) =>
               payment.referral_agent_id === agent.id &&
               payment.record_status === "active" &&
-              payment.approval_status === "approved",
+              isEffectivelyApprovedPayment(payment, appOwnerProfileIds),
           )
           .reduce((sum, payment) => sum + numberValue(payment.incentive_amount), 0);
         const committed = appData.agentSettlements
@@ -1589,14 +1597,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         return { agent, balance: Math.max(earned - committed, 0) };
       })
       .filter((item) => item.balance > 0);
-  }, [appData.agentSettlements, appData.payments, salesAgents]);
+  }, [appData.agentSettlements, appData.payments, appOwnerProfileIds, salesAgents]);
 
   const totals = useMemo(() => {
     const activePayments = filteredPayments.filter(
-      (payment) => payment.record_status === "active" && payment.approval_status === "approved",
+      (payment) => payment.record_status === "active" && isEffectivelyApprovedPayment(payment, appOwnerProfileIds),
     );
     const activeExpenses = filteredExpenses.filter(
-      (expense) => expense.record_status === "active" && expense.approval_status === "approved",
+      (expense) => expense.record_status === "active" && isEffectivelyApprovedExpense(expense, appOwnerProfileIds),
     );
     return {
       total: activePayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0),
@@ -1622,7 +1630,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         ]),
       ) as Record<BusinessType, number>,
     };
-  }, [filteredExpenses, filteredPayments]);
+  }, [appOwnerProfileIds, filteredExpenses, filteredPayments]);
 
   const cashBalances = useMemo(() => {
     if (closingSummaries.length > 0) {
@@ -2513,20 +2521,20 @@ function HomeView({
   }
 
   const pendingInScope = (isoDate: string) => pendingRecordInScope(isoDate, dateRange, dateRangePreset);
-  const ownerProfileIds = new Set(data.profiles.filter((profile) => isOwnerish(profile.role)).map((profile) => profile.id));
+  const ownerProfileIds = ownerProfileIdSet(data.profiles);
   const activePayments = data.payments.filter((payment) => payment.record_status === "active");
   const activeExpenses = data.expenses.filter((expense) => expense.record_status === "active");
   const approvedPayments = activePayments.filter(
-    (payment) => payment.approval_status === "approved" && dateInRange(payment.payment_date, dateRange),
+    (payment) => isEffectivelyApprovedPayment(payment, ownerProfileIds) && dateInRange(payment.payment_date, dateRange),
   );
   const approvedExpenses = activeExpenses.filter(
-    (expense) => expense.approval_status === "approved" && dateInRange(expense.expense_date, dateRange),
+    (expense) => isEffectivelyApprovedExpense(expense, ownerProfileIds) && dateInRange(expense.expense_date, dateRange),
   );
   const pendingPayments = activePayments.filter(
-    (payment) => isPendingReviewStatus(payment.approval_status) && pendingInScope(payment.payment_date),
+    (payment) => isEffectivelyPendingPayment(payment, ownerProfileIds) && pendingInScope(payment.payment_date),
   );
   const pendingExpenses = activeExpenses.filter(
-    (expense) => isPendingReviewStatus(expense.approval_status) && pendingInScope(expense.expense_date),
+    (expense) => isEffectivelyPendingExpense(expense, ownerProfileIds) && pendingInScope(expense.expense_date),
   );
   const ownerCashMovements = data.movements.filter(
     (movement) =>
@@ -2860,14 +2868,13 @@ function TransactionsView({
       if (payment.approval_status !== "approved") return labelForStatus(payment.approval_status, t);
       const onlineOnly = paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0;
       if (onlineOnly && !canUseProfileFilter && payment.collected_by === profile.id) return t("neutralized");
-      if (onlineOnly && owner) return t("receivedStatus");
       return labelForStatus(payment.approval_status, t);
     };
     const collectionStatusTone = (payment: Payment) =>
       payment.approval_status === "approved" && paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0
         ? "approved"
         : payment.approval_status;
-    const ownerProfileIds = new Set(profiles.filter((item) => isOwnerish(item.role)).map((item) => item.id));
+    const ownerProfileIds = ownerProfileIdSet(profiles);
     const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
     const paymentMatchesSelectedProfile = (payment: Payment, linkedTransfers: MoneyMovement[]) => (
       userMatches(payment.collected_by) ||
@@ -2885,8 +2892,13 @@ function TransactionsView({
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
         const onlineOnly = onlineImpact > 0 && cashImpact === 0;
-        const onlineApproved = payment.approval_status === "approved";
-        const paymentStatus = collectionStatus(payment);
+        const ownerAuthoredPayment = isOwnerProfile(payment.collected_by);
+        const effectivePaymentApproved = isEffectivelyApprovedPayment(payment, ownerProfileIds);
+        const effectivePaymentPending = isEffectivelyPendingPayment(payment, ownerProfileIds);
+        const onlineApproved = effectivePaymentApproved;
+        const paymentStatus = ownerAuthoredPayment ? t("receivedStatus") : collectionStatus(payment);
+        const paymentStatusTone = ownerAuthoredPayment ? "approved" : collectionStatusTone(payment);
+        const reviewProfileId = paymentReviewProfileId(payment);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
         const transferOut = !owner && linkedTransfers.some(
@@ -2910,7 +2922,7 @@ function TransactionsView({
           : [];
         const canRequestTransfer =
           payment.current_holder_id === profile.id &&
-          isPendingReviewStatus(payment.approval_status) &&
+          effectivePaymentPending &&
           cashImpact > 0 &&
           !pendingTransfer &&
           transferRecipients.length > 0;
@@ -2921,7 +2933,7 @@ function TransactionsView({
           sortAt: payment.created_at,
           title: paymentDisplayTitle(payment, t),
           status: paymentStatus,
-          statusTone: collectionStatusTone(payment),
+          statusTone: paymentStatusTone,
           modeLabel: paymentModeLabel(payment, t),
           recordStatus: payment.record_status,
           ownerId: payment.collected_by,
@@ -2931,13 +2943,13 @@ function TransactionsView({
           recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
-          canEdit: payment.collected_by === profile.id && isPendingReviewStatus(payment.approval_status) && !activeTransfer,
-          canDelete: owner && payment.approval_status !== "approved",
-          transferLines: cashImpact > 0 ? transferSummaryLines(payment, linkedTransfers, profiles, t) : [],
+          canEdit: payment.collected_by === profile.id && effectivePaymentPending && !activeTransfer,
+          canDelete: owner && !effectivePaymentApproved,
+          transferLines: transferSummaryLines(linkedTransfers, profiles, t),
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
-          pendingApproval: isPendingReviewStatus(payment.approval_status) || Boolean(pendingTransfer),
+          pendingApproval: effectivePaymentPending || Boolean(pendingTransfer),
           icon: payment.business_type === "guest_house"
             ? <Hotel size={24} />
             : payment.business_type === "library"
@@ -2952,21 +2964,19 @@ function TransactionsView({
           const currentHolderIsOwner = isOwnerProfile(payment.current_holder_id);
           const rows: HistoryRecord[] = [];
 
-          if (!collectedByOwner || isPendingReviewStatus(payment.approval_status) || pendingTransfer) {
-            rows.push({
-              ...baseRecord,
-              kind: "collection",
-              filter: "transactions",
-              amount: numberValue(payment.amount),
-              cashAmount: cashImpact,
-              onlineAmount: onlineImpact,
-              amountTone: "neutral",
-              onlineTone: onlineApproved ? "online-approved" : "neutral",
-              meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
-            });
-          }
+          rows.push({
+            ...baseRecord,
+            kind: "collection",
+            filter: "transactions",
+            amount: numberValue(payment.amount),
+            cashAmount: cashImpact,
+            onlineAmount: onlineImpact,
+            amountTone: "neutral",
+            onlineTone: onlineApproved ? "online-approved" : "neutral",
+            meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+          });
 
-          if (onlineApproved) {
+          if (effectivePaymentApproved) {
             const ownerCashAmount = collectedByOwner || currentHolderIsOwner ? cashImpact : 0;
             const ownerOnlineAmount = onlineImpact;
             const ownerFinancialAmount = ownerCashAmount + ownerOnlineAmount;
@@ -2982,7 +2992,7 @@ function TransactionsView({
                 onlineTone: ownerOnlineAmount > 0 ? "online-approved" : "neutral",
                 meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
                 recordType: collectedByOwner ? "payment" : undefined,
-                canDelete: collectedByOwner && payment.approval_status !== "approved",
+                canDelete: collectedByOwner && !effectivePaymentApproved,
                 transferLines: [],
                 transferRecipients: [],
                 canRequestTransfer: false,
@@ -3055,7 +3065,9 @@ function TransactionsView({
       .filter((expense) => userMatches(expense.spent_by))
       .flatMap((expense): HistoryRecord[] => {
         const spentByOwner = isOwnerProfile(expense.spent_by);
-        const pendingApproval = isPendingReviewStatus(expense.approval_status);
+        const expenseEffectiveStatus = effectiveExpenseStatus(expense, ownerProfileIds);
+        const effectiveExpenseApproved = isEffectivelyApprovedExpense(expense, ownerProfileIds);
+        const pendingApproval = isEffectivelyPendingExpense(expense, ownerProfileIds);
         const baseRecord = {
           id: expense.id,
           kind: "expense" as const,
@@ -3066,8 +3078,8 @@ function TransactionsView({
           onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
           title: expenseDisplayTitle(expense),
           meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
-          status: labelForStatus(expense.approval_status, t),
-          statusTone: expense.approval_status,
+          status: labelForStatus(expenseEffectiveStatus, t),
+          statusTone: expenseEffectiveStatus,
           modeLabel: labelForMode(expense.mode, t),
           recordStatus: expense.record_status,
           ownerId: expense.spent_by,
@@ -3078,7 +3090,7 @@ function TransactionsView({
           editDate: expense.expense_date,
           editAmount: numberValue(expense.amount),
           canEdit: expense.spent_by === profile.id && pendingApproval,
-          canDelete: owner && expense.approval_status !== "approved",
+          canDelete: owner && !effectiveExpenseApproved,
           pendingApproval,
           icon: <ReceiptText size={24} />,
         };
@@ -3087,7 +3099,7 @@ function TransactionsView({
           return [{ ...baseRecord, filter: "cash_out" }];
         }
 
-        if (spentByOwner && expense.approval_status === "approved") {
+        if (spentByOwner && effectiveExpenseApproved) {
           return [{ ...baseRecord, filter: "cash_out", pendingApproval: false }];
         }
 
@@ -3382,8 +3394,8 @@ function TransactionsView({
                       </div>
                       {record.transferLines && record.transferLines.length > 0 ? (
                         <div className="history-transfer-panel">
-                          {record.transferLines.map((line) => (
-                            <span key={line}>{line}</span>
+                          {record.transferLines.map((line, index) => (
+                            <span key={`${line}-${index}`}>{line}</span>
                           ))}
                           {record.incomingTransferId ? (
                             <div className="history-transfer-actions">
@@ -5519,7 +5531,7 @@ function ClosingReviewDetail({
         cashAmount: paymentCashAmount(payment),
         onlineAmount: paymentOnlineAmount(payment),
         note: paymentReference(payment, t),
-        transferLines: transferSummaryLines(payment, paymentTransfers(movements, payment.id), profiles, t),
+        transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
         tone: "positive" as const,
         icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
@@ -5655,8 +5667,8 @@ function ClosingReviewDetail({
                   <p>{record.note}</p>
                   {record.transferLines.length > 0 ? (
                     <div className="review-transfer-note">
-                      {record.transferLines.map((line) => (
-                        <span key={line}>{line}</span>
+                      {record.transferLines.map((line, index) => (
+                        <span key={`${line}-${index}`}>{line}</span>
                       ))}
                     </div>
                   ) : null}

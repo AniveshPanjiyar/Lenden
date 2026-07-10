@@ -249,6 +249,26 @@ function requireOwnerish(role: string) {
   }
 }
 
+function recordOwnerProfileId(recordType: "payment" | "expense", record: Record<string, string | number | null>) {
+  return String(recordType === "expense" ? record.spent_by : record.collected_by);
+}
+
+async function profileIsOwnerish(admin: SupabaseAdminClient, profileId: string) {
+  const response = await admin.from("profiles").select("role").eq("id", profileId).single();
+  const profile = typedData<{ role: string }>(response);
+  if (response.error || !profile) throw new Error(response.error?.message ?? "Profile not found.");
+  return isOwnerish(profile.role);
+}
+
+async function recordIsEffectivelyApproved(
+  admin: SupabaseAdminClient,
+  recordType: "payment" | "expense",
+  record: Record<string, string | number | null>,
+) {
+  if (String(record.approval_status ?? "") === "approved") return true;
+  return profileIsOwnerish(admin, recordOwnerProfileId(recordType, record));
+}
+
 async function userPermissions(admin: SupabaseAdminClient, profileId: string) {
   const permissionsResponse = await admin
     .from("staff_permissions")
@@ -1144,6 +1164,7 @@ const handlers = {
     const amount = asNumber(formData, "amount") ?? asNumber(formData, "paid_amount") ?? 0;
     const paymentDate = asString(formData, "payment_date") ?? new Date().toISOString().slice(0, 10);
     const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const ownerCreated = isOwnerish(profile.role);
 
     if (!business || amount <= 0) return fail("Business type and amount are required.");
     const hasAccess = await hasBusinessCollectionAccess(admin, profile, business);
@@ -1277,6 +1298,7 @@ const handlers = {
       photo_path: photoPath,
       collected_by: profile.id,
       current_holder_id: cashCollection > 0 ? profile.id : null,
+      approval_status: ownerCreated ? "approved" : "pending",
       client_request_id: requestKey,
     };
     if (libraryStudentId) {
@@ -1360,6 +1382,18 @@ const handlers = {
         if (!isMissingLibraryStudentSchemaError(error)) throw error;
         libraryStudentSyncSkipped = true;
       }
+    }
+
+    if (ownerCreated && cashCollection > 0) {
+      await ensureLedgerEntry(admin, {
+        accountProfileId: profile.id,
+        amount: cashCollection,
+        entryDate: paymentDate,
+        sourceType: "payment",
+        sourceId: payment.id,
+        description: `Cash collected for ${business.replace("_", " ")}`,
+        createdBy: profile.id,
+      });
     }
 
     await createNotifications(admin, {
@@ -1478,6 +1512,7 @@ const handlers = {
     const expenseDate = asString(formData, "expense_date") ?? new Date().toISOString().slice(0, 10);
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const ownerCreated = isOwnerish(profile.role);
     if (amount <= 0 || !description || description.length < 3) {
       return fail("Expense amount and a 3-character description are required.");
     }
@@ -1490,7 +1525,7 @@ const handlers = {
       requestKey,
       "id",
     );
-    if (existingExpense) return ok("Expense saved as pending approval.");
+    if (existingExpense) return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
 
     const photoPath = await uploadReceipt(admin, formData.get("photo"), "expenses", requestKey);
     const expenseResult = await admin
@@ -1504,6 +1539,7 @@ const handlers = {
         remark: asString(formData, "remark"),
         photo_path: photoPath,
         spent_by: profile.id,
+        approval_status: ownerCreated ? "approved" : "pending",
         client_request_id: requestKey,
       })
       .select("id")
@@ -1520,9 +1556,21 @@ const handlers = {
           requestKey,
           "id",
         );
-        if (duplicateExpense) return ok("Expense saved as pending approval.");
+        if (duplicateExpense) return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
       }
       throw new Error(expenseResult.error?.message ?? "Could not save expense.");
+    }
+
+    if (ownerCreated && mode === "cash") {
+      await ensureLedgerEntry(admin, {
+        accountProfileId: profile.id,
+        amount: -amount,
+        entryDate: expenseDate,
+        sourceType: "expense",
+        sourceId: expense.id,
+        description: `Expense: ${description}`,
+        createdBy: profile.id,
+      });
     }
 
     await createNotifications(admin, {
@@ -1536,7 +1584,7 @@ const handlers = {
       metadata: { expense_id: expense.id, amount },
     });
 
-    return ok("Expense saved as pending approval.");
+    return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
   }),
 
   approveRecord: withErrors("Approval failed.", async (formData, { admin, profile }) => {
@@ -1633,7 +1681,7 @@ const handlers = {
       await removeRecordLedgerEntries(admin, recordType, id);
       return ok("Record cancelled.");
     }
-    if (String(record.approval_status ?? "") === "approved") {
+    if (await recordIsEffectivelyApproved(admin, recordType, record)) {
       return fail("Approved transactions cannot be deleted.");
     }
     const reason = asString(formData, "reason");
@@ -1651,7 +1699,7 @@ const handlers = {
 
     await removeRecordLedgerEntries(admin, recordType, id);
 
-    const recordOwnerId = String(recordType === "expense" ? record.spent_by : record.collected_by);
+    const recordOwnerId = recordOwnerProfileId(recordType, record);
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id ? [] : [recordOwnerId],
       actorId: profile.id,
@@ -1681,11 +1729,11 @@ const handlers = {
     const record = typedData<Record<string, string | number | null>>(recordResponse);
     if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
 
-    const recordOwnerId = String(recordType === "expense" ? record.spent_by : record.collected_by);
+    const recordOwnerId = recordOwnerProfileId(recordType, record);
     if (recordOwnerId !== profile.id) {
       return fail("You can edit only your own transactions.");
     }
-    if (String(record.record_status ?? "active") !== "active" || record.approval_status === "approved") {
+    if (String(record.record_status ?? "active") !== "active" || await recordIsEffectivelyApproved(admin, recordType, record)) {
       return fail("Transactions can be edited only before approval.");
     }
     if (recordType === "payment") {
@@ -1762,12 +1810,12 @@ const handlers = {
     const recordTable = recordType === "expense" ? "expenses" : "payments";
     const recordResponse = await admin
       .from(recordTable)
-      .select("approval_status")
+      .select("*")
       .eq("id", recordId)
       .single();
-    const record = typedData<{ approval_status: string }>(recordResponse);
+    const record = typedData<Record<string, string | number | null>>(recordResponse);
     if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
-    if (String(record.approval_status ?? "") === "approved") {
+    if (await recordIsEffectivelyApproved(admin, recordType, record)) {
       return fail("Approved transactions cannot be deleted.");
     }
 
@@ -1856,7 +1904,7 @@ const handlers = {
       const recordResponse = await admin.from(table).select("*").eq("id", request.record_id).single();
       const record = typedData<Record<string, string | number | null>>(recordResponse);
       if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
-      if (String(record.approval_status ?? "") === "approved") {
+      if (await recordIsEffectivelyApproved(admin, request.record_type, record)) {
         return fail("Approved transactions cannot be deleted.");
       }
       acceptedCancelTarget = { table };
