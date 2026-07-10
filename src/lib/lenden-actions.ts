@@ -211,6 +211,7 @@ function isMissingLibraryStudentSchemaError(error: unknown) {
     "library_student_id",
     "library_students",
     "library_student_subscription_events",
+    "photo_url",
   ]);
 }
 
@@ -503,6 +504,32 @@ async function uploadProfilePhoto(
   return bucket.getPublicUrl(path).data.publicUrl;
 }
 
+async function uploadLibraryStudentPhoto(
+  admin: SupabaseAdminClient,
+  profileId: string,
+  file: FormDataEntryValue | null,
+  requestKey: string,
+) {
+  if (!(file instanceof File) || file.size === 0) return null;
+  if (!file.type.startsWith("image/")) return fail("Choose an image file for the student photo.");
+  if (file.size > 3 * 1024 * 1024) return fail("Student photo must be 3 MB or smaller.");
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `${profileId}/${requestKey}-${safeName}`;
+  const bucket = admin.storage.from("library-student-photos");
+  const { error } = await bucket.upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+
+  if (error) {
+    if (isStorageDuplicateError(error)) return bucket.getPublicUrl(path).data.publicUrl;
+    throw new Error(error.message);
+  }
+
+  return bucket.getPublicUrl(path).data.publicUrl;
+}
+
 async function ensureLedgerEntry(
   admin: SupabaseAdminClient,
   params: {
@@ -694,8 +721,8 @@ function readLibraryStudentFields(
   };
 }
 
-function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean) {
-  return {
+function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null) {
+  const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
     address: fields.address,
@@ -714,10 +741,12 @@ function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean
     active,
     placeholder: false,
   };
+  if (photoUrl) payload.photo_url = photoUrl;
+  return payload;
 }
 
-function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean) {
-  return {
+function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null) {
+  const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
     address: fields.address,
@@ -727,6 +756,8 @@ function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active:
     active,
     placeholder: false,
   };
+  if (photoUrl) payload.photo_url = photoUrl;
+  return payload;
 }
 
 async function upsertLibraryStudentEvent(
@@ -780,10 +811,11 @@ async function saveLibraryStudentRecord(
     active: boolean;
     lastPaymentId?: string | null;
     lastPaymentDate?: string | null;
+    photoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentPayload(params.fields, params.active),
+    ...libraryStudentPayload(params.fields, params.active, params.photoUrl),
   };
   if (params.lastPaymentId) payload.last_payment_id = params.lastPaymentId;
   if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
@@ -791,7 +823,7 @@ async function saveLibraryStudentRecord(
   const studentId = normalizeLibraryStudentId(params.id);
   const query = studentId
     ? admin.from("library_students").update(payload).eq("id", studentId)
-    : admin.from("library_students").upsert(payload, { onConflict: "roll_number" });
+    : admin.from("library_students").insert(payload);
   const response = await query.select("id").single();
   const student = typedData<{ id: string }>(response);
   if (response.error || !student) {
@@ -799,7 +831,7 @@ async function saveLibraryStudentRecord(
       throw new Error("Apply the library student migration before saving student records.");
     }
     if (isDuplicateError(response.error)) {
-      throw new Error("This roll number is already linked to another student.");
+      throw new Error("roll number already exist.");
     }
     throw new Error(response.error?.message ?? "Could not save library student.");
   }
@@ -812,16 +844,17 @@ async function saveLibraryStudentIdentityRecord(
     id: string | null;
     fields: LibraryStudentFormFields;
     active: boolean;
+    photoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentIdentityPayload(params.fields, params.active),
+    ...libraryStudentIdentityPayload(params.fields, params.active, params.photoUrl),
   };
 
   const studentId = normalizeLibraryStudentId(params.id);
   const query = studentId
     ? admin.from("library_students").update(payload).eq("id", studentId)
-    : admin.from("library_students").upsert(payload, { onConflict: "roll_number" });
+    : admin.from("library_students").insert(payload);
   const response = await query.select("id").single();
   const student = typedData<{ id: string }>(response);
   if (response.error || !student) {
@@ -829,7 +862,7 @@ async function saveLibraryStudentIdentityRecord(
       throw new Error("Apply the library student migration before saving student records.");
     }
     if (isDuplicateError(response.error)) {
-      throw new Error("This roll number is already linked to another student.");
+      throw new Error("roll number already exist.");
     }
     throw new Error(response.error?.message ?? "Could not save library student.");
   }
@@ -1151,17 +1184,24 @@ const handlers = {
     const photoPath = await uploadReceipt(admin, formData.get("photo"), "payments", requestKey);
     let libraryStudentId: string | null = null;
     let libraryStudentFields: LibraryStudentFormFields | null = null;
+    let libraryStudentPhotoUrl: string | null = null;
     let libraryStudentSyncSkipped = false;
 
     if (business === "library") {
       const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
       if (!parsedStudent.ok) return parsedStudent.result;
       libraryStudentFields = parsedStudent.fields;
+      const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey);
+      if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
+        return uploadedStudentPhoto;
+      }
+      libraryStudentPhotoUrl = typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null;
       try {
         libraryStudentId = await saveLibraryStudentRecord(admin, {
           id: normalizeLibraryStudentId(asString(formData, "library_student_id")),
           fields: libraryStudentFields,
           active: true,
+          photoUrl: libraryStudentPhotoUrl,
         });
       } catch (error) {
         if (!isMissingLibraryStudentSchemaError(error)) throw error;
@@ -1302,6 +1342,7 @@ const handlers = {
           active: true,
           lastPaymentId: payment.id,
           lastPaymentDate: paymentDate,
+          photoUrl: libraryStudentPhotoUrl,
         });
         await upsertLibraryStudentEvent(admin, {
           studentId: libraryStudentId,
@@ -1352,16 +1393,27 @@ const handlers = {
     );
   }),
 
-  saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile }) => {
+  saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile, idempotencyKey }) => {
     await requireLibraryCollectionAccess(admin, profile);
     const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: false, requirePayment: false });
     if (!parsedStudent.ok) return parsedStudent.result;
+
+    const uploadedStudentPhoto = await uploadLibraryStudentPhoto(
+      admin,
+      profile.id,
+      formData.get("student_photo"),
+      idempotencyKey ?? crypto.randomUUID(),
+    );
+    if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
+      return uploadedStudentPhoto;
+    }
 
     const active = !asBool(formData, "inactive");
     await saveLibraryStudentIdentityRecord(admin, {
       id: asString(formData, "id"),
       fields: parsedStudent.fields,
       active,
+      photoUrl: typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null,
     });
 
     return ok(active ? "Library student saved." : "Library student moved to inactive.");
@@ -2323,7 +2375,7 @@ const handlers = {
     return ok(direction === "received_from_user" ? "Received payment recorded." : "Sent payment recorded.");
   }),
 
-  createAgentSettlement: withErrors("Could not create settlement.", async (formData, { admin, profile, idempotencyKey }) => {
+  createAgentSettlement: withErrors("Could not record incentive payout.", async (formData, { admin, profile, idempotencyKey }) => {
     requireOwnerish(profile.role);
     const agentId = asString(formData, "agent_id");
     const amount = asNumber(formData, "amount") ?? 0;
@@ -2338,7 +2390,7 @@ const handlers = {
       requestKey,
       "id",
     );
-    if (existingSettlement) return ok("Agent incentive settled.");
+    if (existingSettlement) return ok("Agent incentive paid.");
 
     const [paymentsResponse, settlementsResponse] = await Promise.all([
       admin
@@ -2377,31 +2429,31 @@ const handlers = {
       .single();
     const settlement = typedData<{ id: string }>(settlementResult);
     if (settlementResult.error || !settlement) {
-      throw new Error(settlementResult.error?.message ?? "Could not create settlement.");
+      throw new Error(settlementResult.error?.message ?? "Could not record incentive payout.");
     }
 
     await createNotifications(admin, {
       recipientIds: [agentId],
       actorId: profile.id,
-      title: "Agent incentive settled",
-      body: `${profile.full_name} marked an agent incentive of ${amount} as settled.`,
+      title: "Agent incentive paid",
+      body: `${profile.full_name} marked an agent incentive payout of ${amount} as paid.`,
       category: "agent",
       tone: "success",
       eventKey: `agent-settlement-created:${settlement.id}`,
       metadata: { settlement_id: settlement.id, amount },
     });
 
-    return ok("Agent incentive settled.");
+    return ok("Agent incentive paid.");
   }),
 
-  respondAgentSettlement: withErrors("Could not update settlement.", async (formData, { admin, profile }) => {
+  respondAgentSettlement: withErrors("Could not update incentive payout.", async (formData, { admin, profile }) => {
     if (isSalesAgent(profile.role)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
     const settlementId = asString(formData, "settlement_id");
     const decision = asString(formData, "decision") as Decision;
-    if (!settlementId || !decision) return fail("Missing settlement response.");
+    if (!settlementId || !decision) return fail("Missing incentive payout response.");
 
     const settlementResponse = await admin
       .from("agent_settlements")
@@ -2416,10 +2468,10 @@ const handlers = {
       status: string;
     }>(settlementResponse);
     if (settlementResponse.error || !settlement) {
-      throw new Error(settlementResponse.error?.message ?? "Settlement not found.");
+      throw new Error(settlementResponse.error?.message ?? "Incentive payout not found.");
     }
     if (settlement.agent_id !== profile.id) {
-      return fail("Only the linked sales agent can confirm this settlement.");
+      return fail("Only the linked sales agent can confirm this incentive payout.");
     }
     if (settlement.status !== "pending") {
       if (settlement.status !== decision) return fail("This agent incentive has already been reviewed.");

@@ -2,7 +2,7 @@ import { todayIso } from "@/lib/constants";
 
 export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
-export type TransactionFilter = "all" | "collections" | "expenses" | "settlements";
+export type TransactionFilter = "all" | "cash_in" | "cash_out" | "pending";
 
 export type DateRangeState = {
   preset: DateRangePreset;
@@ -21,7 +21,7 @@ type RawSearchParams = Record<string, string | string[] | undefined>;
 
 const appTabs = ["home", "payments", "library_students", "closing", "settings"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
-const transactionFilters = ["all", "collections", "expenses", "settlements"] as const;
+const transactionFilters = ["all", "cash_in", "cash_out", "pending"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 function singleParam(params: RawSearchParams, name: string) {
@@ -71,10 +71,17 @@ export function parseAppViewState(params: RawSearchParams, defaultProfileId: str
   const customDateRange = from ? { preset: "custom" as const, from, to: to ?? from } : undefined;
   const dateRange = preset === "custom" && customDateRange ? customDateRange : rangeForPreset(preset);
 
+  const rawTransactionFilter = singleParam(params, "txFilter");
+  const transactionFilter =
+    rawTransactionFilter === "collections" ? "cash_in"
+    : rawTransactionFilter === "expenses" ? "cash_out"
+    : rawTransactionFilter === "settlements" || rawTransactionFilter === "transferred" || rawTransactionFilter === "transfered" ? "all"
+    : rawTransactionFilter;
+
   return {
     tab,
     dateRange,
     transactionProfileId: singleParam(params, "txUser") || defaultProfileId,
-    transactionFilter: oneOf(singleParam(params, "txFilter"), transactionFilters, "all"),
+    transactionFilter: oneOf(transactionFilter, transactionFilters, "all"),
   };
 }

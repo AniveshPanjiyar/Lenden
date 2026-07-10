@@ -97,6 +97,7 @@ export type LibraryStudent = {
   roll_number: string;
   phone_number: string | null;
   address: string | null;
+  photo_url: string | null;
   student_name: string | null;
   seat_number: string | null;
   locker_number: string | null;

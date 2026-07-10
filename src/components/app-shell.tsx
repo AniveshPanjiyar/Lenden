@@ -20,13 +20,13 @@ import {
   Copy,
   GraduationCap,
   Hotel,
-  Info,
   Landmark,
   LogOut,
   Menu,
   Minus,
   MoreHorizontal,
   Pencil,
+  PhoneCall,
   Plus,
   ReceiptText,
   Search,
@@ -115,6 +115,35 @@ type BusinessDashboardStatus = {
   pendingAmount: number;
   pendingCount: number;
 };
+type PendingReviewRecord = {
+  id: string;
+  recordType: "payment" | "expense";
+  transactionType: string;
+  staffName: string;
+  serviceType: string;
+  amount: number;
+  cashAmount: number;
+  onlineAmount: number;
+  date: string;
+  note: string;
+  status: string;
+  statusLabel: string;
+  hasPendingTransfer?: boolean;
+  tone: "positive" | "negative";
+  icon: ReactNode;
+};
+type PendingContextRecord = {
+  id: string;
+  transactionType: string;
+  staffName: string;
+  serviceType: string;
+  amount: number;
+  date: string;
+  note: string;
+  statusLabel: string;
+  tone: "positive" | "negative" | "neutral";
+  icon: ReactNode;
+};
 
 const actionIdempotencyField = "_action_idempotency_key";
 
@@ -191,14 +220,15 @@ const messages: Record<Language, Record<string, string>> = {
     agent: "Agent",
     agentAccessNote: "Read-only incentive access",
     agentCode: "Agent code",
-    agentPayout: "Agent Incentive",
-    agentPayoutLower: "Agent incentive",
+    agentPayout: "Agent incentive payout",
+    agentPayoutLower: "incentive payout",
     amount: "Amount",
     amountReceived: "Amount received",
     approve: "Approve",
+    awaitingOwnerApproval: "Awaiting owner approval",
     back: "Back",
     backlog: "Backlog",
-    balanceIncentive: "Yet to settle",
+    balanceIncentive: "Incentive due",
     business: "Business",
     cancel: "Cancel",
     cancelWrongEntry: "Cancel wrong entry",
@@ -206,10 +236,12 @@ const messages: Record<Language, Record<string, string>> = {
     cashAndOnline: "Cash and online",
     cashBalances: "Cash balances",
     cashCollection: "Cash collection",
-    cashIn: "Cash in",
-    cashInCollected: "Cash in (+)",
-    cashOut: "Cash out",
-    cashOutExpenses: "Out (-)",
+    cashIn: "IN",
+    cashInFromOwner: "IN from owner",
+    cashInHand: "Cash in hand",
+    cashInCollected: "IN",
+    cashOut: "OUT",
+    cashOutExpenses: "OUT",
     cashWithStaff: "Cash with staff",
     currentHolder: "Current holder",
     changeRequests: "Change requests",
@@ -226,10 +258,11 @@ const messages: Record<Language, Record<string, string>> = {
     collected: "Collected",
     copyReferralCode: "Copy code",
     confirmReceived: "Confirm received",
-    confirmedPayouts: "Settled incentive",
+    confirmed: "Confirmed",
+    confirmedPayouts: "Paid incentive",
     collectedByStaff: "Collected payment",
     businessStatus: "Business status",
-    businessStatusHelp: "Collection, expenses, settlement, and pending review by business.",
+    businessStatusHelp: "IN, OUT, and pending review by business.",
     cashImpact: "Cash impact",
     cashToSettle: "Cash to settle",
     course: "Course",
@@ -270,8 +303,10 @@ const messages: Record<Language, Record<string, string>> = {
     incentive: "Incentive",
     incentiveAmount: "Incentive amount",
     incentiveEarned: "Incentive earned",
+    incentivePayout: "Incentive payout",
     incentivePercent: "Incentive %",
     incentiveType: "Incentive type",
+    in: "IN",
     inactive: "Inactive",
     label: "Label",
     language: "Language",
@@ -296,6 +331,7 @@ const messages: Record<Language, Record<string, string>> = {
     newStudent: "New student",
     newPassword: "New password",
     selectStudent: "Select student",
+    studentPhoto: "Student photo",
     studentProfile: "Student profile",
     subscription: "Subscription",
     subscriptionHistory: "Subscription history",
@@ -331,6 +367,7 @@ const messages: Record<Language, Record<string, string>> = {
     openingBalance: "Opening balance",
     openingCashBalance: "Opening",
     optional: "Optional",
+    out: "OUT",
     owner: "Owner",
     ownerSettlement: "Owner Settlement",
     ownerSettlementLower: "Owner settlement",
@@ -345,10 +382,15 @@ const messages: Record<Language, Record<string, string>> = {
     paymentsFor: "Payments for",
     paymentsOnly: "Payments only",
     pendingCashInHand: "Pending cash in hand",
-    pendingPayout: "Pending payout",
+    pendingReviewAmount: "Pending review amount",
+    pendingReviewItems: "Pending review items",
+    pendingPayout: "Pending incentive",
+    pendingIncentive: "Pending incentive",
     pendingReview: "Pending review",
     photo: "Photo",
     phone: "Phone",
+    callStudent: "Call student",
+    personalSummary: "Personal collection summary",
     quickActions: "Quick actions",
     rangeTo: "to",
     reasonOptional: "Reason optional",
@@ -380,12 +422,14 @@ const messages: Record<Language, Record<string, string>> = {
     reviewAndSettle: "Review & Settle",
     reviewToday: "Today",
     reviewPending: "Pending",
+    reviewPendingButton: "Review pending",
     reviewPendingFirst: "Review pending first",
     reviewSettlementNotice: "Only approved transactions will be locked and settled. Post-approval, only the owner can edit records. Please review carefully.",
     settlementAmountHelp: "Enter only the cash actually received for this settlement.",
     role: "Role",
     roll: "Roll",
     rollNumber: "Roll number",
+    rollNumberAlreadyExist: "roll number already exist.",
     room: "Room",
     roomBooking: "Room Booking",
     roomNo: "Room no.",
@@ -401,7 +445,7 @@ const messages: Record<Language, Record<string, string>> = {
     selectSkill: "Select skill",
     selectStaff: "Select staff",
     selectUser: "Select user",
-    sendPayout: "Mark incentive settled",
+    sendPayout: "Pay incentive",
     sendMoney: "Send money",
     sendFormTitle: "SEND",
     shareReferralCode: "Share code",
@@ -415,6 +459,8 @@ const messages: Record<Language, Record<string, string>> = {
     settled: "Settled",
     settledAmount: "Settled",
     settlementDue: "Settlement due",
+    settlementLikePending: "Pending cash movements",
+    settlementActivity: "Settlement activity",
     settlementDate: "Settlement date",
     settlementHistory: "Settlement history",
     settlements: "Settlements",
@@ -422,8 +468,11 @@ const messages: Record<Language, Record<string, string>> = {
     skill: "Skill",
     slotHours: "Slot hours",
     staff: "Staff",
+    staffBusinessStatus: "My service status",
+    staffBusinessStatusHelp: "IN, OUT, and pending review by service.",
     staffDailyLedger: "Staff Daily Ledger",
     staffPermissions: "Staff permissions",
+    spent: "Spent",
     startDate: "Start date",
     startTime: "Start time",
     status: "Status",
@@ -433,12 +482,15 @@ const messages: Record<Language, Record<string, string>> = {
     totalClosing: "Total closing",
     totalCollected: "Total collected",
     totalExpenses: "Total expenses",
-    totalIn: "Total In",
-    totalOut: "Total Out",
+    totalIn: "IN",
+    totalOut: "OUT",
     totalCollection: "Total collection",
     ownerAccountCredit: "Owner account credit",
     totalOpening: "Total opening",
+    totalRecorded: "Total recorded",
+    tillDate: "Till date",
     transferCash: "Transfer cash",
+    transferred: "Transferred",
     transferHistory: "Transfer history",
     transfers: "Transfers",
     transaction: "Transaction",
@@ -488,14 +540,15 @@ const messages: Record<Language, Record<string, string>> = {
     agent: "एजेंट",
     agentAccessNote: "सिर्फ कमिशन देखने का अधिकार",
     agentCode: "एजेंट कोड",
-    agentPayout: "एजेंट कमिशन",
-    agentPayoutLower: "एजेंट कमिशन",
+    agentPayout: "एजेंट कमिशन भुगतान",
+    agentPayoutLower: "कमिशन भुगतान",
     amount: "रकम",
     amountReceived: "मिली रकम",
     approve: "ठीक है",
+    awaitingOwnerApproval: "मालिक की मंजूरी बाकी",
     back: "वापस",
     backlog: "बैकलॉग",
-    balanceIncentive: "सेटल होना बाकी",
+    balanceIncentive: "कमिशन बाकी",
     business: "काम",
     cancel: "रद्द करें",
     cancelWrongEntry: "गलत एंट्री हटाएं",
@@ -503,10 +556,12 @@ const messages: Record<Language, Record<string, string>> = {
     cashAndOnline: "नकद और ऑनलाइन",
     cashBalances: "नकद बाकी",
     cashCollection: "नकद जमा",
-    cashIn: "नकद आया",
-    cashInCollected: "नकद आया (+)",
-    cashOut: "नकद गया",
-    cashOutExpenses: "गया (-)",
+    cashIn: "IN",
+    cashInFromOwner: "मालिक से IN",
+    cashInHand: "हाथ में नकद",
+    cashInCollected: "IN",
+    cashOut: "OUT",
+    cashOutExpenses: "OUT",
     cashWithStaff: "स्टाफ के पास नकद",
     currentHolder: "मौजूदा होल्डर",
     changeRequests: "बदलाव की मांग",
@@ -523,10 +578,11 @@ const messages: Record<Language, Record<string, string>> = {
     collected: "जमा",
     copyReferralCode: "कोड कॉपी करें",
     confirmReceived: "मिल गया",
-    confirmedPayouts: "सेटल कमिशन",
+    confirmed: "पक्का",
+    confirmedPayouts: "दिया गया कमिशन",
     collectedByStaff: "जमा पैसा",
     businessStatus: "काम का स्टेटस",
-    businessStatusHelp: "काम के हिसाब से जमा, खर्च, सेटलमेंट और बाकी जांच।",
+    businessStatusHelp: "काम के हिसाब से IN, OUT और बाकी जांच।",
     cashImpact: "नकद असर",
     cashToSettle: "जमा करने की नकद",
     course: "कोर्स",
@@ -567,8 +623,10 @@ const messages: Record<Language, Record<string, string>> = {
     incentive: "कमिशन",
     incentiveAmount: "कमिशन रकम",
     incentiveEarned: "बना कमिशन",
+    incentivePayout: "कमिशन भुगतान",
     incentivePercent: "कमिशन %",
     incentiveType: "कमिशन प्रकार",
+    in: "IN",
     inactive: "बंद",
     label: "लेबल",
     language: "भाषा",
@@ -593,6 +651,7 @@ const messages: Record<Language, Record<string, string>> = {
     newStudent: "नया छात्र",
     newPassword: "नया पासवर्ड",
     selectStudent: "छात्र चुनें",
+    studentPhoto: "छात्र फोटो",
     studentProfile: "छात्र प्रोफाइल",
     subscription: "सब्सक्रिप्शन",
     subscriptionHistory: "सब्सक्रिप्शन हिसाब",
@@ -628,6 +687,7 @@ const messages: Record<Language, Record<string, string>> = {
     openingBalance: "शुरू हिसाब",
     openingCashBalance: "शुरू",
     optional: "जरूरी नहीं",
+    out: "OUT",
     owner: "मालिक",
     ownerSettlement: "मालिक को जमा",
     ownerSettlementLower: "मालिक को जमा",
@@ -642,10 +702,15 @@ const messages: Record<Language, Record<string, string>> = {
     paymentsFor: "इस तारीख का पैसा",
     paymentsOnly: "सिर्फ जमा पैसा",
     pendingCashInHand: "पेंडिंग हाथ की नकद",
-    pendingPayout: "बाकी भुगतान",
+    pendingReviewAmount: "बाकी जांच रकम",
+    pendingReviewItems: "बाकी जांच एंट्री",
+    pendingPayout: "बाकी कमिशन",
+    pendingIncentive: "बाकी कमिशन",
     pendingReview: "बाकी जांच",
     photo: "फोटो",
     phone: "फोन",
+    callStudent: "छात्र को कॉल करें",
+    personalSummary: "मेरे कलेक्शन का हिसाब",
     quickActions: "जल्दी काम",
     rangeTo: "से",
     reasonOptional: "कारण जरूरी नहीं",
@@ -677,12 +742,14 @@ const messages: Record<Language, Record<string, string>> = {
     reviewAndSettle: "जांचें और जमा करें",
     reviewToday: "आज",
     reviewPending: "बाकी",
+    reviewPendingButton: "बाकी जांचें",
     reviewPendingFirst: "पहले बाकी जांचें",
     reviewSettlementNotice: "सिर्फ मंजूर एंट्री लॉक और सेटल होंगी। मंजूरी के बाद सिर्फ मालिक रिकॉर्ड बदल सकता है। ध्यान से जांचें।",
     settlementAmountHelp: "इस सेटलमेंट में जितनी नकद सच में मिली है, सिर्फ वही रकम डालें।",
     role: "काम",
     roll: "रोल",
     rollNumber: "रोल नंबर",
+    rollNumberAlreadyExist: "यह रोल नंबर पहले से मौजूद है.",
     room: "कमरा",
     roomBooking: "कमरा बुकिंग",
     roomNo: "कमरा नं.",
@@ -698,7 +765,7 @@ const messages: Record<Language, Record<string, string>> = {
     selectSkill: "स्किल चुनें",
     selectStaff: "स्टाफ चुनें",
     selectUser: "यूजर चुनें",
-    sendPayout: "कमिशन सेटल करें",
+    sendPayout: "कमिशन दें",
     sendMoney: "पैसा भेजें",
     sendFormTitle: "भेजें",
     shareReferralCode: "कोड शेयर करें",
@@ -712,6 +779,8 @@ const messages: Record<Language, Record<string, string>> = {
     settled: "जमा हुआ",
     settledAmount: "जमा हुआ",
     settlementDue: "जमा बाकी",
+    settlementLikePending: "बाकी नकद एंट्री",
+    settlementActivity: "सेटलमेंट गतिविधि",
     settlementDate: "सेटलमेंट तारीख",
     settlementHistory: "सेटलमेंट हिसाब",
     settlements: "सेटलमेंट",
@@ -719,8 +788,11 @@ const messages: Record<Language, Record<string, string>> = {
     skill: "स्किल",
     slotHours: "घंटा",
     staff: "स्टाफ",
+    staffBusinessStatus: "मेरे काम का स्टेटस",
+    staffBusinessStatusHelp: "काम के हिसाब से IN, OUT और बाकी जांच।",
     staffDailyLedger: "स्टाफ का दिन का हिसाब",
     staffPermissions: "स्टाफ अधिकार",
+    spent: "खर्च",
     startDate: "शुरू तारीख",
     startTime: "शुरू समय",
     status: "हाल",
@@ -730,12 +802,15 @@ const messages: Record<Language, Record<string, string>> = {
     totalClosing: "कुल बंद हिसाब",
     totalCollected: "कुल जमा",
     totalExpenses: "कुल खर्च",
-    totalIn: "कुल आया",
-    totalOut: "कुल गया",
+    totalIn: "IN",
+    totalOut: "OUT",
     totalCollection: "कुल जमा",
     ownerAccountCredit: "मालिक खाते में जमा",
     totalOpening: "कुल शुरू हिसाब",
+    totalRecorded: "कुल रिकॉर्ड",
+    tillDate: "आज तक",
     transferCash: "नकद भेजें",
+    transferred: "ट्रांसफर हुए",
     transferHistory: "भेजने का हिसाब",
     transfers: "पैसा भेजना",
     transaction: "लेनदेन",
@@ -1037,13 +1112,83 @@ function dateInRange(isoDate: string, range: NormalizedDateRange) {
   return date >= range.from && date <= range.to;
 }
 
+function ownerProfileIdSet(profiles: Profile[]) {
+  return new Set(profiles.filter((profile) => isOwnerish(profile.role)).map((profile) => profile.id));
+}
+
+function movementDate(movement: MoneyMovement) {
+  return (movement.responded_at ?? movement.created_at).slice(0, 10);
+}
+
+function ownerCashTransferInAmount(
+  movements: MoneyMovement[],
+  profiles: Profile[],
+  profileId: string,
+  range: NormalizedDateRange,
+) {
+  const ownerIds = ownerProfileIdSet(profiles);
+  return movements
+    .filter(
+      (movement) =>
+        movement.status === "accepted" &&
+        movement.type === "transfer" &&
+        !movement.payment_id &&
+        movement.to_profile_id === profileId &&
+        ownerIds.has(movement.from_profile_id) &&
+        dateInRange(movementDate(movement), range),
+    )
+    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+}
+
+function summaryWithOwnerCashInAsCollection(
+  summary: UserClosingSummary,
+  movements: MoneyMovement[],
+  profiles: Profile[],
+  date: string,
+) {
+  if (summary.profile.role !== "staff") return summary;
+  const ownerCashIn = ownerCashTransferInAmount(movements, profiles, summary.profile.id, { from: date, to: date });
+  if (ownerCashIn <= 0) return summary;
+
+  return {
+    ...summary,
+    collected: summary.collected + ownerCashIn,
+    received: Math.max(summary.received - ownerCashIn, 0),
+  };
+}
+
 function isPendingReviewStatus(status: string) {
   return status !== "approved" && status !== "rejected" && status !== "cancelled";
+}
+
+function canApproveRecordStatus(status: string) {
+  return status === "pending" || status === "reapproval_required";
+}
+
+function pendingRecordInScope(isoDate: string, range: NormalizedDateRange, preset: DateRangePreset) {
+  const date = isoDate.slice(0, 10);
+  return preset === "today" ? date <= range.to : dateInRange(date, range);
 }
 
 function belongsToClosingReview(recordDate: string, closingDate: string, status: string) {
   const date = recordDate.slice(0, 10);
   return date === closingDate || (date < closingDate && isPendingReviewStatus(status));
+}
+
+function paymentReference(payment: Payment, t: (key: string) => string) {
+  const parts = [
+    payment.customer_name,
+    payment.roll_number ? `${t("roll")}: ${payment.roll_number}` : null,
+    payment.room_number_snapshot ? `${t("room")}: ${payment.room_number_snapshot}` : null,
+    payment.seat_number ? `${t("seat")}: ${payment.seat_number}` : null,
+    payment.description,
+    payment.remark,
+  ].filter(Boolean);
+  return parts.join(" · ") || t("noReason");
+}
+
+function expenseReference(expense: Expense, t: (key: string) => string) {
+  return [expense.description, expense.remark].filter(Boolean).join(" · ") || t("noReason");
 }
 
 function formatDateRange(range: NormalizedDateRange, t: (key: string) => string) {
@@ -1169,9 +1314,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     : data.profiles.some((profile) => profile.id === initialViewState.transactionProfileId)
     ? initialViewState.transactionProfileId
     : isOwnerish(data.profile.role) ? "all" : data.profile.id;
-  const initialTransactionFilter = initialUserIsSalesAgent && initialViewState.transactionFilter === "expenses"
-    ? "all"
-    : initialViewState.transactionFilter;
+  const initialTransactionFilter = initialViewState.transactionFilter;
   const [tab, setTab] = useState<Tab>(initialTab);
   const [language, setLanguageState] = useState<Language>("en");
   const [dateRange, setDateRange] = useState<DateRangeState>(initialViewState.dateRange);
@@ -1379,7 +1522,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               (entry) => entry.account_profile_id === summary.profile_id && entry.entry_date === closingDate,
             );
 
-            return {
+            return summaryWithOwnerCashInAsCollection({
               profile,
               opening: numberValue(summary.opening),
               collected: numberValue(summary.collected),
@@ -1389,14 +1532,21 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               adjustments: numberValue(summary.adjustments),
               closing: numberValue(summary.closing),
               dayEntries,
-            };
+            }, appData.movements, appData.profiles, closingDate);
           })
           .filter((summary): summary is UserClosingSummary => Boolean(summary));
       }
 
-      return closingProfiles.map((profile) => buildClosingSummary(profile, appData.ledger, closingDate));
+      return closingProfiles.map((profile) =>
+        summaryWithOwnerCashInAsCollection(
+          buildClosingSummary(profile, appData.ledger, closingDate),
+          appData.movements,
+          appData.profiles,
+          closingDate,
+        ),
+      );
     },
-    [appData.closingSummaries, appData.ledger, appData.profiles, closingDate, closingProfiles],
+    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingProfiles],
   );
   const agentIncentiveSummary = useMemo<AgentIncentiveSummary>(() => {
     const agentPayments = appData.payments.filter(
@@ -1520,7 +1670,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   const activeDateRangeOptions = dateRangeOptions;
-  const showSharedDateRange = tab === "home";
+  const showSharedDateRange = tab === "home" || tab === "payments";
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent;
 
   return (
@@ -1683,10 +1833,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 cashBalances={cashBalances}
                 owner={owner}
                 data={appData}
+                dateRange={selectedDateRange}
+                dateRangePreset={dateRange.preset}
+                dateLabel={selectedDateRangeLabel}
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
                 setNotice={pushNotice}
+                startTransition={startTransition}
               />
             ) : null}
 
@@ -1919,15 +2073,140 @@ function StatCard({
   );
 }
 
+function PendingReviewSheet({
+  records,
+  contextRecords,
+  close,
+  setNotice,
+  startTransition,
+}: {
+  records: PendingReviewRecord[];
+  contextRecords: PendingContextRecord[];
+  close: () => void;
+  setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
+}) {
+  const { t } = useLanguage();
+  const sortedRecords = [...records].sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
+  const sortedContextRecords = [...contextRecords].sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
+  const totalAmount =
+    records.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
+    contextRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("pendingReview")}>
+      <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={close} />
+      <section className="action-sheet pending-review-sheet">
+        <header className="sheet-header">
+          <div>
+            <p className="eyebrow">{t("tillDate")}</p>
+            <h2>{t("pendingReview")}</h2>
+            <span className="pending-review-total">{records.length + contextRecords.length} {t("pending")} · {formatMoney(totalAmount)}</span>
+          </div>
+          <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={close}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="pending-review-list">
+          {sortedRecords.length > 0 ? sortedRecords.map((record) => {
+            const canReview = canApproveRecordStatus(record.status);
+            return (
+              <article className={`pending-review-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
+                <div className="pending-review-icon">{record.icon}</div>
+                <div className="pending-review-main">
+                  <div className="pending-review-title-row">
+                    <strong>{record.transactionType}</strong>
+                    <span className={`status-chip status-${record.status}`}>{record.statusLabel}</span>
+                  </div>
+                  <p>{record.staffName} · {record.serviceType} · {record.date}</p>
+                  <div className="pending-review-split">
+                    <span>{t("cash")} {formatMoney(record.cashAmount)}</span>
+                    <span>{t("online")} {formatMoney(record.onlineAmount)}</span>
+                  </div>
+                  <p>{record.note}</p>
+                </div>
+                <strong className="pending-review-amount">
+                  {record.amount < 0 ? "-" : ""}{formatMoney(Math.abs(record.amount))}
+                </strong>
+                {canReview ? (
+                  <div className="pending-review-actions">
+                    <MiniAction
+                      hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                      label={t("reject")}
+                      tone="reject"
+                      icon={<X size={18} />}
+                      action={approveRecordAction}
+                      setNotice={setNotice}
+                      startTransition={startTransition}
+                    />
+                    {record.hasPendingTransfer ? (
+                      <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
+                        <Check size={18} />
+                      </button>
+                    ) : (
+                      <MiniAction
+                        hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                        label={t("approve")}
+                        tone="approve"
+                        icon={<Check size={18} />}
+                        action={approveRecordAction}
+                        setNotice={setNotice}
+                        startTransition={startTransition}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <span className="pending-review-note">{record.statusLabel}</span>
+                )}
+              </article>
+            );
+          }) : null}
+
+          {sortedContextRecords.length > 0 ? (
+            <div className="pending-context-group">
+              <h3>{t("settlementLikePending")}</h3>
+              {sortedContextRecords.map((record) => (
+                <article className={`pending-review-card context ${record.tone}`} key={record.id}>
+                  <div className="pending-review-icon">{record.icon}</div>
+                  <div className="pending-review-main">
+                    <div className="pending-review-title-row">
+                      <strong>{record.transactionType}</strong>
+                      <span className="status-chip status-pending">{record.statusLabel}</span>
+                    </div>
+                    <p>{record.staffName} · {record.serviceType} · {record.date}</p>
+                    <p>{record.note}</p>
+                  </div>
+                  <strong className="pending-review-amount">
+                    {record.amount < 0 ? "-" : ""}{formatMoney(Math.abs(record.amount))}
+                  </strong>
+                </article>
+              ))}
+            </div>
+          ) : null}
+
+          {sortedRecords.length === 0 && sortedContextRecords.length === 0 ? (
+            <p className="muted">{t("noRecords")}</p>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function HomeView({
   totals,
   cashBalances,
   owner,
   data,
+  dateRange,
+  dateRangePreset,
+  dateLabel,
   agentIncentiveSummary,
   agentReferralCodes,
   changeTab,
   setNotice,
+  startTransition,
 }: {
   totals: {
     total: number;
@@ -1940,12 +2219,17 @@ function HomeView({
   cashBalances: { profile: Profile; balance: number }[];
   owner: boolean;
   data: AppData;
+  dateRange: NormalizedDateRange;
+  dateRangePreset: DateRangePreset;
+  dateLabel: string;
   agentIncentiveSummary: AgentIncentiveSummary;
   agentReferralCodes: ReferralCode[];
   changeTab: (tab: AppTab) => void;
   setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
+  const [pendingReviewOpen, setPendingReviewOpen] = useState(false);
 
   // Outline: Calculate pending amounts and render either a personalized staff dashboard or owner business status.
   if (isSalesAgent(data.profile.role)) {
@@ -1987,85 +2271,216 @@ function HomeView({
   }
 
   if (!owner) {
+    const profileId = data.profile.id;
+    const pendingInScope = (isoDate: string) => pendingRecordInScope(isoDate, dateRange, dateRangePreset);
     const myLedgerBalance = cashBalances.find((cb) => cb.profile.id === data.profile.id)?.balance ?? 0;
-    const myPendingCash = data.payments
-      .filter(
-        (payment) =>
-          payment.record_status === "active" &&
-          isPendingReviewStatus(payment.approval_status) &&
-          paymentCashAmount(payment) > 0 &&
-          paymentReviewProfileId(payment) === data.profile.id,
-      )
-      .reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
-    const myBalance = myLedgerBalance + myPendingCash;
-    const myPayments = data.payments.filter((p) => p.collected_by === data.profile.id || p.current_holder_id === data.profile.id);
-    const myExpenses = data.expenses.filter((e) => e.spent_by === data.profile.id);
-    const myPendingMovements = data.movements.filter(
-      (m) => m.status === "pending" && (m.from_profile_id === data.profile.id || m.to_profile_id === data.profile.id)
+    const myPendingPayments = data.payments.filter(
+      (payment) =>
+        payment.record_status === "active" &&
+        isPendingReviewStatus(payment.approval_status) &&
+        pendingInScope(payment.payment_date) &&
+        paymentReviewProfileId(payment) === profileId,
     );
-    const myPendingAmount = myPendingMovements.reduce((sum, m) => sum + numberValue(m.amount), 0);
+    const myPendingExpenses = data.expenses.filter(
+      (expense) =>
+        expense.record_status === "active" &&
+        isPendingReviewStatus(expense.approval_status) &&
+        pendingInScope(expense.expense_date) &&
+        expense.spent_by === profileId,
+    );
+    const myPendingSettlementMovements = data.movements.filter(
+      (movement) =>
+        movement.status === "pending" &&
+        movement.type === "settlement" &&
+        pendingInScope(movement.created_at) &&
+        (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
+    );
+    const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
+    const myBalance = myLedgerBalance + myPendingCash;
+    const myPayments = data.payments.filter(
+      (payment) =>
+        payment.record_status === "active" &&
+        dateInRange(payment.payment_date, dateRange) &&
+        (payment.collected_by === profileId || payment.current_holder_id === profileId),
+    );
+    const myApprovedPayments = myPayments.filter((payment) => payment.approval_status === "approved");
+    const myExpenses = data.expenses.filter(
+      (expense) =>
+        expense.record_status === "active" &&
+        dateInRange(expense.expense_date, dateRange) &&
+        expense.spent_by === profileId,
+    );
+    const myApprovedExpenses = myExpenses.filter((expense) => expense.approval_status === "approved");
+    const mySettlementMovements = data.movements.filter(
+      (movement) =>
+        movement.status === "accepted" &&
+        movement.type === "settlement" &&
+        !movement.payment_id &&
+        dateInRange(movement.responded_at ?? movement.created_at, dateRange) &&
+        (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
+    );
+    const myOwnerCashIn = ownerCashTransferInAmount(data.movements, data.profiles, profileId, dateRange);
+    const myCollectionCash = myApprovedPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0) + myOwnerCashIn;
+    const myCollectionOnline = myApprovedPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
+    const myExpenseAmount = myApprovedExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+    const mySettlementOut = mySettlementMovements
+      .filter((movement) => movement.from_profile_id === profileId)
+      .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+    const mySettlementIn = mySettlementMovements
+      .filter((movement) => movement.to_profile_id === profileId)
+      .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+    const myInCash = myCollectionCash + mySettlementIn;
+    const myInOnline = myCollectionOnline;
+    const myInAmount = myInCash + myInOnline;
+    const myOutCash = myExpenseAmount + mySettlementOut;
+    const myPendingAmount =
+      myPendingPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+      myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
+      myPendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+    const myPendingCount = myPendingPayments.length + myPendingExpenses.length + myPendingSettlementMovements.length;
+    const myBusinessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
+      const businessPayments = myApprovedPayments.filter((payment) => payment.business_type === business);
+      const businessExpenses = myApprovedExpenses.filter((expense) => (expense.business_type ?? "general") === business);
+      const pendingBusinessPayments = myPendingPayments.filter((payment) => payment.business_type === business);
+      const pendingBusinessExpenses = myPendingExpenses.filter((expense) => (expense.business_type ?? "general") === business);
+      const cashCollection = businessPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
+      const onlineCollection = businessPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
+      const expenses = businessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+      const pendingAmount =
+        pendingBusinessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+        pendingBusinessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+
+      return {
+        business,
+        collection: businessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0),
+        cashCollection,
+        onlineCollection,
+        expenses,
+        settlement: cashCollection - expenses,
+        pendingAmount,
+        pendingCount: pendingBusinessPayments.length + pendingBusinessExpenses.length,
+      };
+    });
 
     return (
       <div className="space-y-8">
         <div>
           <h2 className="font-headline text-2xl font-bold text-on-surface mb-2">
-            Welcome, {data.profile.full_name}
+            {data.profile.full_name}
           </h2>
           <p className="text-on-surface-variant text-body-md">
-            Here is your personal collection summary for today.
+            {t("personalSummary")} · {dateLabel}
           </p>
         </div>
 
-        <section className="dashboard-stat-grid grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-primary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between h-40 relative overflow-hidden group">
-            <div className="absolute -right-6 -top-6 w-24 h-24 bg-primary/10 rounded-full blur-2xl group-hover:bg-primary/20 transition-all duration-500"></div>
-            <div>
-              <div className="flex items-center gap-2 mb-1">
+        <section className="dashboard-stat-grid dashboard-five-card-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="dashboard-top-card dashboard-compact-card bg-primary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+            <div className="dashboard-card-main">
+              <div className="dashboard-card-title-row">
                 <WalletCards size={20} className="text-primary" />
-                <h3 className="font-label text-sm font-semibold text-on-surface-variant uppercase tracking-wider">My Cash Balance</h3>
+                <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashInHand")}</h3>
               </div>
             </div>
             <div>
-              <p className="font-headline text-4xl font-bold text-primary">{formatMoney(myBalance)}</p>
-              <p className="text-xs text-on-surface-variant font-medium mt-1">
-                {myPendingCash > 0 ? `${formatMoney(myLedgerBalance)} + ${formatMoney(myPendingCash)} ${t("pendingCashInHand")}` : "Cash in hand"}
+              <p className="dashboard-card-value font-headline text-3xl font-bold text-primary">{formatMoney(myBalance)}</p>
+              <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">
+                {t("confirmed")}: {formatMoney(myLedgerBalance)} · {t("pendingCashInHand")}: {formatMoney(myPendingCash)}
               </p>
             </div>
           </div>
 
-          <div className="bg-error-container/40 rounded-xl p-6 shadow-soft flex flex-col justify-between h-40 relative overflow-hidden group">
-            <div className="absolute -right-6 -top-6 w-24 h-24 bg-error/10 rounded-full blur-2xl group-hover:bg-error/20 transition-all duration-500"></div>
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <ReceiptText size={20} className="text-error" />
-                <h3 className="font-label text-sm font-semibold text-on-surface-variant uppercase tracking-wider">My Expenses</h3>
+          <div className="dashboard-top-card dashboard-compact-card bg-surface-container-low border border-primary/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+            <div className="dashboard-card-main">
+              <div className="dashboard-card-title-row">
+                <ReceiptText size={20} className="text-primary" />
+                <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashIn")}</h3>
               </div>
             </div>
             <div>
-              <p className="font-headline text-4xl font-bold text-on-error-container">
-                {formatMoney(myExpenses.reduce((sum, e) => sum + numberValue(e.amount), 0))}
+              <p className="dashboard-card-value font-headline text-3xl font-bold text-primary">{formatMoney(myInAmount)}</p>
+              <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">
+                {t("cash")} {formatMoney(myInCash)} · {t("online")} {formatMoney(myInOnline)}
               </p>
-              <p className="text-xs text-error font-medium mt-1">Total recorded today</p>
             </div>
           </div>
 
-          <div className="bg-tertiary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between h-40 relative overflow-hidden group">
-            <div className="absolute -right-6 -top-6 w-24 h-24 bg-tertiary/10 rounded-full blur-2xl group-hover:bg-tertiary/20 transition-all duration-500"></div>
+          <div className="dashboard-top-card dashboard-compact-card bg-error-container/40 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+            <div className="dashboard-card-main">
+              <div className="dashboard-card-title-row">
+                <Banknote size={20} className="text-error" />
+                <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashOut")}</h3>
+              </div>
+            </div>
             <div>
-              <div className="flex items-center gap-2 mb-1">
+              <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(myOutCash)}</p>
+              <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(myOutCash)}</p>
+            </div>
+          </div>
+
+          <div className="dashboard-top-card dashboard-compact-card bg-tertiary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+            <div className="dashboard-card-main">
+              <div className="dashboard-card-title-row">
                 <ClipboardList size={20} className="text-tertiary" />
-                <h3 className="font-label text-sm font-semibold text-on-surface-variant uppercase tracking-wider">Pending Transfer</h3>
+                <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("pendingReview")}</h3>
               </div>
             </div>
             <div>
-              <p className="font-headline text-4xl font-bold text-on-tertiary-container">{formatMoney(myPendingAmount)}</p>
-              <p className="text-xs text-tertiary font-medium mt-1">Awaiting approval</p>
+              <p className="dashboard-card-value font-headline text-3xl font-bold text-on-tertiary-container">{formatMoney(myPendingAmount)}</p>
+              <p className="dashboard-card-note text-xs text-tertiary font-medium mt-1">
+                {myPendingCount} {t("pending")} · {t("awaitingOwnerApproval")}
+              </p>
             </div>
           </div>
         </section>
 
+        <section className="business-status-panel">
+          <div className="business-status-heading">
+            <div>
+              <h3>{t("staffBusinessStatus")}</h3>
+              <p>{t("staffBusinessStatusHelp")}</p>
+            </div>
+            <button onClick={() => changeTab("payments")} className="text-primary text-sm font-medium hover:underline flex items-center gap-1 cursor-pointer border-0 bg-transparent">
+              {t("viewAll")} <ChevronRight size={16} />
+            </button>
+          </div>
+          <div className="business-status-grid">
+            {myBusinessStatus.map((item) => (
+              <article className={`business-status-card tone-${item.business}`} key={item.business}>
+                <div className="business-status-title">
+                  <span>
+                    {item.business === "guest_house" ? <Hotel size={20} /> : item.business === "library" ? <BookOpen size={20} /> : item.business === "course" ? <GraduationCap size={20} /> : <WalletCards size={20} />}
+                  </span>
+                  <strong>{labelForBusiness(item.business, t)}</strong>
+                </div>
+                <div className="business-status-main">
+                  <span>{t("cashIn")}</span>
+                  <strong>{formatMoney(item.collection)}</strong>
+                </div>
+                <div className="business-status-parts">
+                  <span>
+                    <small>{t("cash")}</small>
+                    <strong>{formatMoney(item.cashCollection)}</strong>
+                  </span>
+                  <span>
+                    <small>{t("online")}</small>
+                    <strong>{formatMoney(item.onlineCollection)}</strong>
+                  </span>
+                  <span className="negative">
+                    <small>{t("cashOut")}</small>
+                    <strong>{formatMoney(item.expenses)}</strong>
+                  </span>
+                </div>
+                <div className={item.pendingCount > 0 ? "business-pending warning" : "business-pending"}>
+                  <span>{t("pendingReview")}{item.pendingCount > 0 ? ` · ${item.pendingCount}` : ""}</span>
+                  <strong>{formatMoney(item.pendingAmount)}</strong>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
         <section className="bg-surface-bright rounded-2xl p-6 shadow-soft border border-outline-variant/20">
-          <h3 className="font-headline text-xl font-bold text-on-surface mb-4">My Recent Activity</h3>
+          <h3 className="font-headline text-xl font-bold text-on-surface mb-4">{t("transactionHistory")}</h3>
           <div className="divide-y divide-outline-variant/10">
             {[...myPayments, ...myExpenses]
               .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -2089,7 +2504,7 @@ function HomeView({
                 );
               })}
             {myPayments.length === 0 && myExpenses.length === 0 ? (
-              <p className="text-on-surface-variant text-sm py-4 text-center">No recent transactions recorded today.</p>
+              <p className="text-on-surface-variant text-sm py-4 text-center">{t("noRecordsForFilter")}</p>
             ) : null}
           </div>
         </section>
@@ -2097,20 +2512,116 @@ function HomeView({
     );
   }
 
+  const pendingInScope = (isoDate: string) => pendingRecordInScope(isoDate, dateRange, dateRangePreset);
+  const ownerProfileIds = new Set(data.profiles.filter((profile) => isOwnerish(profile.role)).map((profile) => profile.id));
   const activePayments = data.payments.filter((payment) => payment.record_status === "active");
   const activeExpenses = data.expenses.filter((expense) => expense.record_status === "active");
-  const approvedPayments = activePayments.filter((payment) => payment.approval_status === "approved");
-  const approvedExpenses = activeExpenses.filter((expense) => expense.approval_status === "approved");
-  const pendingPayments = activePayments.filter((payment) => isPendingReviewStatus(payment.approval_status));
-  const pendingExpenses = activeExpenses.filter((expense) => isPendingReviewStatus(expense.approval_status));
-  const pendingMovements = data.movements.filter((movement) => movement.status === "pending");
-  const pendingAgentSettlements = data.agentSettlements.filter((settlement) => settlement.status === "pending");
+  const approvedPayments = activePayments.filter(
+    (payment) => payment.approval_status === "approved" && dateInRange(payment.payment_date, dateRange),
+  );
+  const approvedExpenses = activeExpenses.filter(
+    (expense) => expense.approval_status === "approved" && dateInRange(expense.expense_date, dateRange),
+  );
+  const pendingPayments = activePayments.filter(
+    (payment) => isPendingReviewStatus(payment.approval_status) && pendingInScope(payment.payment_date),
+  );
+  const pendingExpenses = activeExpenses.filter(
+    (expense) => isPendingReviewStatus(expense.approval_status) && pendingInScope(expense.expense_date),
+  );
+  const ownerCashMovements = data.movements.filter(
+    (movement) =>
+      movement.status === "accepted" &&
+      !movement.payment_id &&
+      dateInRange(movement.responded_at ?? movement.created_at, dateRange),
+  );
+  const ownerMovementIn = ownerCashMovements
+    .filter((movement) => !ownerProfileIds.has(movement.from_profile_id) && ownerProfileIds.has(movement.to_profile_id ?? ""))
+    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+  const ownerMovementOut = ownerCashMovements
+    .filter((movement) => ownerProfileIds.has(movement.from_profile_id) && !ownerProfileIds.has(movement.to_profile_id ?? ""))
+    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+  const ownerAgentPayoutOut = data.agentSettlements
+    .filter((settlement) => settlement.status === "accepted" && dateInRange(settlement.responded_at ?? settlement.created_at, dateRange))
+    .reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
+  const ownerInCash = totals.cash + ownerMovementIn;
+  const ownerInOnline = totals.online;
+  const ownerInAmount = ownerInCash + ownerInOnline;
+  const ownerOutCash = totals.expense + ownerMovementOut + ownerAgentPayoutOut;
+  const pendingSettlementMovements = data.movements.filter(
+    (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(movement.created_at),
+  );
+  const pendingAgentSettlements = data.agentSettlements.filter(
+    (settlement) => settlement.status === "pending" && pendingInScope(settlement.created_at),
+  );
+  const pendingReviewRecords: PendingReviewRecord[] = [
+    ...pendingPayments.map((payment): PendingReviewRecord => ({
+      id: payment.id,
+      recordType: "payment",
+      transactionType: t("payments"),
+      staffName: profileName(data.profiles, paymentReviewProfileId(payment), t),
+      serviceType: labelForBusiness(payment.business_type, t),
+      amount: numberValue(payment.amount),
+      cashAmount: paymentCashAmount(payment),
+      onlineAmount: paymentOnlineAmount(payment),
+      date: payment.payment_date,
+      note: paymentReference(payment, t),
+      status: payment.approval_status,
+      statusLabel: labelForStatus(payment.approval_status, t),
+      hasPendingTransfer: Boolean(pendingPaymentTransfer(data.movements, payment.id)),
+      tone: "positive",
+      icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : payment.business_type === "course" ? <GraduationCap size={22} /> : <WalletCards size={22} />,
+    })),
+    ...pendingExpenses.map((expense): PendingReviewRecord => ({
+      id: expense.id,
+      recordType: "expense",
+      transactionType: t("expenses"),
+      staffName: profileName(data.profiles, expense.spent_by, t),
+      serviceType: labelForBusiness(expense.business_type ?? "general", t),
+      amount: -numberValue(expense.amount),
+      cashAmount: numberValue(expense.amount),
+      onlineAmount: 0,
+      date: expense.expense_date,
+      note: expenseReference(expense, t),
+      status: expense.approval_status,
+      statusLabel: labelForStatus(expense.approval_status, t),
+      tone: "negative",
+      icon: <ReceiptText size={22} />,
+    })),
+  ];
+  const pendingContextRecords: PendingContextRecord[] = [
+    ...pendingSettlementMovements.map((movement): PendingContextRecord => {
+      const toOwner = ownerProfileIds.has(movement.to_profile_id ?? "");
+      const staffId = toOwner ? movement.from_profile_id : movement.to_profile_id;
+      return {
+        id: `movement-${movement.id}`,
+        transactionType: t("settlements"),
+        staffName: profileName(data.profiles, staffId, t),
+        serviceType: t("settlementActivity"),
+        amount: toOwner ? numberValue(movement.amount) : -numberValue(movement.amount),
+        date: movement.created_at.slice(0, 10),
+        note: movement.note ?? t("noReason"),
+        statusLabel: labelForStatus(movement.status, t),
+        tone: toOwner ? "positive" : "negative",
+        icon: <ShieldCheck size={22} />,
+      };
+    }),
+    ...pendingAgentSettlements.map((settlement): PendingContextRecord => ({
+      id: `agent-${settlement.id}`,
+      transactionType: t("pendingIncentive"),
+      staffName: profileName(data.profiles, settlement.agent_id, t),
+      serviceType: t("agentPayoutLower"),
+      amount: -numberValue(settlement.amount),
+      date: settlement.created_at.slice(0, 10),
+      note: settlement.note ?? t("noReason"),
+      statusLabel: labelForStatus(settlement.status, t),
+      tone: "negative",
+      icon: <WalletCards size={22} />,
+    })),
+  ];
   const pendingAmount =
-    pendingPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
-    pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
-    pendingMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0) +
-    pendingAgentSettlements.reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
-  const netSettlement = Math.max(totals.cash - totals.expense, 0);
+    pendingReviewRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
+    pendingContextRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
+  const pendingCount = pendingReviewRecords.length + pendingContextRecords.length;
   const businessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
     const businessPayments = approvedPayments.filter((payment) => payment.business_type === business);
     const businessExpenses = approvedExpenses.filter((expense) => (expense.business_type ?? "general") === business);
@@ -2137,100 +2648,61 @@ function HomeView({
 
   return (
     <div className="space-y-8">
-      <section className="dashboard-stat-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="dashboard-top-card dashboard-detail-card dashboard-detail-card-collection bg-primary-container/20 rounded-xl p-6 shadow-soft flex flex-col gap-4 relative overflow-hidden group md:col-span-1">
-          <div className="absolute -right-6 -top-6 w-24 h-24 bg-primary/10 rounded-full blur-2xl group-hover:bg-primary/20 transition-all duration-500"></div>
+      <section className="dashboard-stat-grid dashboard-five-card-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="dashboard-top-card dashboard-compact-card bg-primary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
           <div className="dashboard-card-main relative z-10">
             <div className="dashboard-card-title-row">
               <WalletCards size={20} className="text-primary" />
-              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Total Collection</h3>
-            </div>
-            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-primary-container">{formatMoney(totals.total)}</p>
-            <p className="dashboard-card-note text-xs text-primary font-medium mt-1 flex items-center gap-1">
-              <Landmark size={14} />
-              {formatMoney(totals.online)} {t("ownerAccountCredit")}
-            </p>
-          </div>
-          <div className="dashboard-breakdown-grid grid grid-cols-2 gap-3 pt-2 border-t border-primary/10 relative z-10">
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Library</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.byBusiness.library)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Rooms</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.byBusiness.guest_house)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Coaching</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.byBusiness.course)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Others</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.byBusiness.general)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="dashboard-top-card dashboard-detail-card dashboard-detail-card-expense bg-error-container/40 rounded-xl p-6 shadow-soft flex flex-col gap-4 relative overflow-hidden group">
-          <div className="absolute -right-6 -top-6 w-24 h-24 bg-error/10 rounded-full blur-2xl group-hover:bg-error/20 transition-all duration-500"></div>
-          <div className="dashboard-card-main relative z-10">
-            <div className="dashboard-card-title-row">
-              <ReceiptText size={20} className="text-error" />
-              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Total Expenses</h3>
-            </div>
-            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(totals.expense)}</p>
-            <p className="dashboard-card-note text-xs text-error font-medium mt-1 flex items-center gap-1">
-              <Info size={14} /> {t("approved")}
-            </p>
-          </div>
-          <div className="dashboard-breakdown-grid dashboard-breakdown-expense grid grid-cols-2 gap-3 pt-2 border-t border-error/10 relative z-10">
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Library</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.expenseByBusiness.library)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Rooms</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.expenseByBusiness.guest_house)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Coaching</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.expenseByBusiness.course)}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Others</span>
-              <span className="text-sm font-bold text-on-surface">{formatMoney(totals.expenseByBusiness.general)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="dashboard-top-card dashboard-compact-card bg-surface-container-low border border-primary/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
-          <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-all duration-500"></div>
-          <div className="dashboard-card-main">
-            <div className="dashboard-card-title-row">
-              <ShieldCheck size={20} className="text-primary" />
-              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("settlementDue")}</h3>
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashIn")}</h3>
             </div>
           </div>
           <div>
-            <p className="dashboard-card-value font-headline text-3xl font-bold text-primary">{formatMoney(netSettlement)}</p>
-            <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">{t("cashCollection")} - {t("expenses")}</p>
+            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-primary-container">{formatMoney(ownerInAmount)}</p>
+            <p className="dashboard-card-note text-xs text-primary font-medium mt-1">
+              {t("cash")} {formatMoney(ownerInCash)} · {t("online")} {formatMoney(ownerInOnline)}
+            </p>
+          </div>
+        </div>
+
+        <div className="dashboard-top-card dashboard-compact-card bg-error-container/40 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+          <div className="dashboard-card-main relative z-10">
+            <div className="dashboard-card-title-row">
+              <ReceiptText size={20} className="text-error" />
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashOut")}</h3>
+            </div>
+          </div>
+          <div>
+            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(ownerOutCash)}</p>
+            <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(ownerOutCash)}</p>
           </div>
         </div>
 
         <div className="dashboard-top-card dashboard-compact-card bg-tertiary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
-          <div className="absolute -right-6 -top-6 w-24 h-24 bg-tertiary/10 rounded-full blur-2xl group-hover:bg-tertiary/20 transition-all duration-500"></div>
           <div className="dashboard-card-main">
             <div className="dashboard-card-title-row">
               <ClipboardList size={20} className="text-tertiary" />
-              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Pending</h3>
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("pendingReview")}</h3>
             </div>
           </div>
           <div>
             <p className="dashboard-card-value font-headline text-3xl font-bold text-on-tertiary-container">{formatMoney(pendingAmount)}</p>
-            <p className="dashboard-card-note text-xs text-tertiary font-medium mt-1">Awaiting verification</p>
+            <p className="dashboard-card-note text-xs text-tertiary font-medium mt-1">{pendingCount} {t("pending")} · {dateRangePreset === "today" ? t("tillDate") : dateLabel}</p>
+            <button className="dashboard-card-action" type="button" onClick={() => setPendingReviewOpen(true)}>
+              {t("reviewPendingButton")}
+            </button>
           </div>
         </div>
       </section>
+
+      {pendingReviewOpen ? (
+        <PendingReviewSheet
+          records={pendingReviewRecords}
+          contextRecords={pendingContextRecords}
+          close={() => setPendingReviewOpen(false)}
+          setNotice={setNotice}
+          startTransition={startTransition}
+        />
+      ) : null}
 
       <section className="business-status-panel">
         <div className="business-status-heading">
@@ -2239,7 +2711,7 @@ function HomeView({
             <p>{t("businessStatusHelp")}</p>
           </div>
           <button onClick={() => changeTab("closing")} className="text-primary text-sm font-medium hover:underline flex items-center gap-1 cursor-pointer border-0 bg-transparent">
-            View All <ChevronRight size={16} />
+            {t("viewAll")} <ChevronRight size={16} />
           </button>
         </div>
         <div className="business-status-grid">
@@ -2252,7 +2724,7 @@ function HomeView({
                 <strong>{labelForBusiness(item.business, t)}</strong>
               </div>
               <div className="business-status-main">
-                <span>{t("collections")}</span>
+                <span>{t("cashIn")}</span>
                 <strong>{formatMoney(item.collection)}</strong>
               </div>
               <div className="business-status-parts">
@@ -2265,12 +2737,8 @@ function HomeView({
                   <strong>{formatMoney(item.onlineCollection)}</strong>
                 </span>
                 <span className="negative">
-                  <small>{t("expenses")}</small>
+                  <small>{t("cashOut")}</small>
                   <strong>{formatMoney(item.expenses)}</strong>
-                </span>
-                <span className={item.settlement < 0 ? "negative" : "positive"}>
-                  <small>{t("settlementDue")}</small>
-                  <strong>{formatMoney(item.settlement)}</strong>
                 </span>
               </div>
               <div className={item.pendingCount > 0 ? "business-pending warning" : "business-pending"}>
@@ -2331,6 +2799,7 @@ function TransactionsView({
   const { t } = useLanguage();
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
+  const effectiveTransactionFilter = transactionFilter;
   const selectableProfiles = useMemo(() => {
     if (owner) return profiles.filter((item) => item.active);
 
@@ -2345,15 +2814,17 @@ function TransactionsView({
     return profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
   }, [expenses, owner, payments, profile.id, profiles, transactionProfileId]);
   const transactionRecords = useMemo(() => {
+    type CashTransactionFilter = Exclude<TransactionFilter, "all" | "pending">;
     type HistoryRecord = {
       id: string;
       kind: "collection" | "expense" | "settlement" | "agent_payout";
-      filter: Exclude<TransactionFilter, "all">;
+      filter: CashTransactionFilter;
       date: string;
       sortAt: string;
       amount: number;
+      cashAmount: number;
+      onlineAmount: number;
       amountTone?: "positive" | "negative" | "neutral" | "online-approved";
-      onlineAmount?: number;
       onlineTone?: "neutral" | "online-approved";
       title: string;
       meta: string;
@@ -2375,12 +2846,10 @@ function TransactionsView({
       transferRecipients?: Profile[];
       canRequestTransfer?: boolean;
       incomingTransferId?: string | null;
+      pendingApproval?: boolean;
     };
     const selectedUserId = canUseProfileFilter ? transactionProfileId : profile.id;
     const userMatches = (userId: string | null | undefined) => selectedUserId === "all" || userId === selectedUserId;
-    const agentReferralIds = new Set(agentReferralCodes.map((referral) => referral.id));
-    const isAgentReferralPayment = (payment: Payment) =>
-      payment.referral_agent_id === profile.id || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false);
     const movementEntry = (movement: MoneyMovement, amount: number, accountId?: string | null) =>
       ledger.find((entry) => {
         if (entry.source_id !== movement.id || entry.source_type !== movement.type) return false;
@@ -2399,11 +2868,10 @@ function TransactionsView({
         ? "approved"
         : payment.approval_status;
 
-    const paymentRows = payments
+    const paymentRows = currentUserIsSalesAgent ? [] : payments
       .filter((payment) => dateInRange(payment.payment_date, dateRange))
       .filter((payment) => payment.record_status === "active")
       .filter((payment) => {
-        if (currentUserIsSalesAgent) return isAgentReferralPayment(payment);
         const linkedTransfers = paymentTransfers(movements, payment.id);
         return (
           userMatches(payment.collected_by) ||
@@ -2412,30 +2880,6 @@ function TransactionsView({
         );
       })
       .map((payment): HistoryRecord => {
-        if (currentUserIsSalesAgent) {
-          const paymentAmount = numberValue(payment.amount);
-          const incentiveAmount = numberValue(payment.incentive_amount);
-          return {
-            id: payment.id,
-            kind: "collection",
-            filter: "collections",
-            date: payment.payment_date,
-            sortAt: payment.created_at,
-            amount: incentiveAmount,
-            title: payment.referral_code_snapshot ? `${t("incentive")} · ${payment.referral_code_snapshot}` : t("incentiveEarned"),
-            meta: `${paymentDisplayTitle(payment, t)} · ${labelForBusiness(payment.business_type, t)} · ${t("paymentAmount")} ${formatMoney(paymentAmount)}`,
-            status: labelForStatus(payment.approval_status, t),
-            statusTone: payment.approval_status,
-            modeLabel: paymentModeLabel(payment, t),
-            recordStatus: payment.record_status,
-            ownerId: profile.id,
-            description: payment.description ?? "",
-            remark: payment.remark ?? "",
-            reason: payment.cancel_reason,
-            icon: <WalletCards size={24} />,
-          };
-        }
-
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
         const onlineOnly = onlineImpact > 0 && cashImpact === 0;
@@ -2445,13 +2889,25 @@ function TransactionsView({
         const linkedTransfers = paymentTransfers(movements, payment.id);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
-        const shownAmount = canUseProfileFilter
-          ? numberValue(payment.amount)
-          : payment.current_holder_id === profile.id
+        const transferOut = !owner && linkedTransfers.some(
+          (movement) =>
+            (movement.status === "accepted" || movement.status === "pending") &&
+            movement.from_profile_id === profile.id,
+        );
+        const transferIn = !owner && linkedTransfers.some(
+          (movement) =>
+            (movement.status === "accepted" || movement.status === "pending") &&
+            movement.to_profile_id === profile.id,
+        );
+        const rowCashAmount = canUseProfileFilter
+          ? cashImpact
+          : transferOut
             ? cashImpact
-            : onlineOnly && staffOwnOnline
-              ? onlineImpact
+            : payment.current_holder_id === profile.id || transferIn
+              ? cashImpact
               : 0;
+        const rowOnlineAmount = !transferOut && (canUseProfileFilter || (staffOwnOnline && !transferIn)) ? onlineImpact : 0;
+        const shownAmount = transferOut ? -rowCashAmount : rowCashAmount + rowOnlineAmount;
         const amountTone = onlineOnly && staffOwnOnline
           ? (onlineApproved ? "online-approved" : "neutral")
           : shownAmount === 0
@@ -2479,18 +2935,19 @@ function TransactionsView({
         return {
           id: payment.id,
           kind: "collection",
-          filter: "collections",
+          filter: transferOut ? "cash_out" : "cash_in",
           date: payment.payment_date,
           sortAt: payment.created_at,
           amount: shownAmount,
+          cashAmount: rowCashAmount,
+          onlineAmount: rowOnlineAmount,
           amountTone,
-          onlineAmount: !onlineOnly && staffOwnOnline ? onlineImpact : undefined,
           onlineTone: onlineApproved ? "online-approved" : "neutral",
           title: paymentDisplayTitle(payment, t),
           meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!canUseProfileFilter && onlineOnly ? ` · ${t("ownerAccountCredit")}` : ""}`,
           status: paymentStatus,
           statusTone: collectionStatusTone(payment),
-          modeLabel: !canUseProfileFilter && onlineOnly ? t("cashImpact") : paymentModeLabel(payment, t),
+          modeLabel: paymentModeLabel(payment, t),
           recordStatus: payment.record_status,
           ownerId: payment.collected_by,
           description: payment.description ?? "",
@@ -2505,6 +2962,7 @@ function TransactionsView({
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
+          pendingApproval: isPendingReviewStatus(payment.approval_status) || Boolean(pendingTransfer),
           icon: payment.business_type === "guest_house"
             ? <Hotel size={24} />
             : payment.business_type === "library"
@@ -2521,15 +2979,17 @@ function TransactionsView({
       .map((expense): HistoryRecord => ({
         id: expense.id,
         kind: "expense" as const,
-        filter: "expenses",
+        filter: "cash_out",
         date: expense.expense_date,
         sortAt: expense.created_at,
         amount: -numberValue(expense.amount),
+        cashAmount: numberValue(expense.amount),
+        onlineAmount: 0,
         title: expenseDisplayTitle(expense),
         meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
         status: labelForStatus(expense.approval_status, t),
         statusTone: expense.approval_status,
-        modeLabel: labelForMode(expense.mode, t),
+        modeLabel: t("cash"),
         recordStatus: expense.record_status,
         ownerId: expense.spent_by,
         description: expense.description,
@@ -2540,43 +3000,49 @@ function TransactionsView({
         editAmount: numberValue(expense.amount),
         canEdit: expense.spent_by === profile.id && isPendingReviewStatus(expense.approval_status),
         canDelete: owner,
+        pendingApproval: isPendingReviewStatus(expense.approval_status),
         icon: <ReceiptText size={24} />,
       }));
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
-      if (movement.status !== "accepted" || movement.payment_id) return [];
+      if ((movement.status !== "accepted" && movement.status !== "pending") || movement.payment_id) return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
       const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
       const fromOwnerish = isOwnerish(fromProfile?.role ?? "");
       const toOwnerish = isOwnerish(toProfile?.role ?? "");
       const movementAmount = numberValue(movement.amount);
+      const pendingMovement = movement.status === "pending";
 
       if (owner) {
         const ownerFacingAmount = !fromOwnerish && toOwnerish ? movementAmount : fromOwnerish && !toOwnerish ? -movementAmount : 0;
         if (ownerFacingAmount === 0) return [];
+        const ownerReceivedSettlement = ownerFacingAmount > 0;
         const counterpartyId = ownerFacingAmount > 0 ? movement.from_profile_id : movement.to_profile_id;
         if (!userMatches(counterpartyId)) return [];
-        const entry = movementEntry(movement, ownerFacingAmount);
+        const entry = pendingMovement ? null : movementEntry(movement, ownerFacingAmount);
         const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
         if (!dateInRange(date, dateRange)) return [];
         const counterpartyName = profileName(profiles, counterpartyId, t);
         return [{
           id: `movement-${movement.id}`,
-          kind: "settlement",
-          filter: "settlements",
+          kind: ownerReceivedSettlement ? "settlement" : "expense",
+          filter: ownerReceivedSettlement ? "cash_in" : "cash_out",
           date,
           sortAt: movement.responded_at ?? movement.created_at,
           amount: ownerFacingAmount,
+          cashAmount: movementAmount,
+          onlineAmount: 0,
           title: ownerFacingAmount > 0 ? t("cashReceived") : t("cashSent"),
           meta: `${ownerFacingAmount > 0 ? t("from") : t("to")}: ${counterpartyName}${movement.note ? ` · ${movement.note}` : ""}`,
-          status: t("verified"),
-          statusTone: "accepted",
+          status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
+          statusTone: movement.status,
           modeLabel: labelForMode(movement.mode, t),
           recordStatus: "active",
           ownerId: counterpartyId ?? profile.id,
           description: entry?.description ?? "",
           remark: movement.note ?? "",
           reason: null,
-          icon: <ArrowDown size={24} />,
+          pendingApproval: pendingMovement,
+          icon: ownerReceivedSettlement ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
         }];
       }
 
@@ -2588,27 +3054,33 @@ function TransactionsView({
       if (staffFacingAmount === 0) return [];
       if (!userMatches(profile.id)) return [];
       const counterpartyId = staffFacingAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
-      const entry = movementEntry(movement, staffFacingAmount, profile.id);
+      const entry = pendingMovement ? null : movementEntry(movement, staffFacingAmount, profile.id);
       const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
       if (!dateInRange(date, dateRange)) return [];
+      const staffCashIn = staffFacingAmount > 0;
+      const incomingOwnerCash = staffFacingAmount > 0 && fromOwnerish && !toOwnerish;
+      const outgoingOwnerSettlement = staffFacingAmount < 0 && toOwnerish;
       return [{
         id: `movement-${movement.id}`,
-        kind: "settlement",
-        filter: "settlements",
+        kind: staffCashIn ? "collection" : "settlement",
+        filter: staffCashIn ? "cash_in" : "cash_out",
         date,
         sortAt: movement.responded_at ?? movement.created_at,
         amount: staffFacingAmount,
-        title: staffFacingAmount < 0 ? t("cashSettled") : t("cashReceived"),
+        cashAmount: movementAmount,
+        onlineAmount: 0,
+        title: staffCashIn ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
         meta: `${staffFacingAmount < 0 ? t("to") : t("from")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
-        status: t("verified"),
-        statusTone: "accepted",
-        modeLabel: labelForMode(movement.mode, t),
+        status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
+        statusTone: movement.status,
+        modeLabel: staffCashIn ? t("cashIn") : labelForMode(movement.mode, t),
         recordStatus: "active",
         ownerId: profile.id,
         description: entry?.description ?? "",
         remark: movement.note ?? "",
         reason: null,
-        icon: <ArrowDown size={24} />,
+        pendingApproval: pendingMovement,
+        icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
       }];
     });
     const agentRows = agentSettlements.flatMap((settlement): HistoryRecord[] => {
@@ -2621,31 +3093,43 @@ function TransactionsView({
       return [{
         id: `agent-${settlement.id}`,
         kind: "agent_payout",
-        filter: "settlements",
+        filter: visibleToAgent ? "cash_in" : "cash_out",
         date: settlement.created_at.slice(0, 10),
         sortAt: settlement.responded_at ?? settlement.created_at,
         amount: visibleToOwner ? -amount : amount,
-        title: t("agentPayout"),
+        cashAmount: amount,
+        onlineAmount: 0,
+        amountTone: visibleToOwner ? "negative" : "positive",
+        title: settlement.status === "pending" ? t("pendingIncentive") : visibleToAgent ? t("incentivePayout") : t("agentPayout"),
         meta: `${visibleToOwner ? t("to") : t("from")}: ${profileName(profiles, visibleToOwner ? settlement.agent_id : settlement.paid_by, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
         status: labelForStatus(settlement.status, t),
         statusTone: settlement.status,
-        modeLabel: t("online"),
+        modeLabel: visibleToAgent ? t("cashIn") : t("agentPayoutLower"),
         recordStatus: "active",
         ownerId: visibleToOwner ? settlement.agent_id : profile.id,
         description: "",
         remark: settlement.note ?? "",
         reason: null,
+        pendingApproval: settlement.status === "pending",
         icon: <WalletCards size={24} />,
       }];
     });
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
-      .filter((record) => transactionFilter === "all" || record.filter === transactionFilter)
+      .filter((record) => {
+        if (effectiveTransactionFilter === "all") return true;
+        if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
+        return record.filter === effectiveTransactionFilter && !record.pendingApproval;
+      })
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentReferralCodes, agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionFilter, transactionProfileId]);
-  const positiveTotal = transactionRecords
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, effectiveTransactionFilter, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
+  const inCashTotal = transactionRecords
     .filter((record) => numberValue(record.amount) > 0)
-    .reduce((sum, record) => sum + numberValue(record.amount), 0);
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const inOnlineTotal = transactionRecords
+    .filter((record) => numberValue(record.amount) > 0)
+    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
+  const positiveTotal = inCashTotal + inOnlineTotal;
   const negativeTotal = transactionRecords
     .filter((record) => numberValue(record.amount) < 0)
     .reduce((sum, record) => sum + Math.abs(numberValue(record.amount)), 0);
@@ -2658,9 +3142,14 @@ function TransactionsView({
     groups.push({ date: record.date, records: [record] });
     return groups;
   }, []);
-  const visibleTransactionFilters = currentUserIsSalesAgent
-    ? (["all", "collections", "settlements"] as TransactionFilter[])
-    : (["all", "collections", "expenses", "settlements"] as TransactionFilter[]);
+  const visibleTransactionFilters = ["all", "cash_in", "cash_out", "pending"] as TransactionFilter[];
+  const transactionFilterLabel = (filter: TransactionFilter) => {
+    if (filter === "all") return t("all");
+    if (filter === "cash_in") return t("cashIn");
+    if (filter === "cash_out") return t("cashOut");
+    if (filter === "pending") return t("pending");
+    return t("all");
+  };
 
   return (
     <div className="view-stack mobile-clean transaction-history-view">
@@ -2696,28 +3185,31 @@ function TransactionsView({
             <div>
               <span>{t("totalIn")}</span>
               <strong className="positive">+{formatMoney(positiveTotal)}</strong>
+              <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
             </div>
             <div className="history-total-divider" />
             <div>
               <span>{t("totalOut")}</span>
               <strong className="negative">-{formatMoney(negativeTotal)}</strong>
+              <small className="history-total-breakdown">{t("cash")} {formatMoney(negativeTotal)}</small>
             </div>
           </div>
         ) : (
           <div className="agent-history-total">
-            <span>{t("incentiveEarned")}</span>
+            <span>{t("cashIn")}</span>
             <strong>{formatMoney(positiveTotal)}</strong>
+            <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
           </div>
         )}
         <div className="history-tab-strip" role="tablist" aria-label={t("transactions")}>
           {visibleTransactionFilters.map((filter) => (
             <button
-              className={transactionFilter === filter ? "history-tab active" : "history-tab"}
+              className={effectiveTransactionFilter === filter ? "history-tab active" : "history-tab"}
               key={filter}
               type="button"
               onClick={() => setTransactionFilter(filter)}
             >
-              {filter === "all" ? t("all") : filter === "collections" ? (currentUserIsSalesAgent ? t("referralTransactions") : t("collections")) : filter === "expenses" ? t("expenses") : t("settlements")}
+              {transactionFilterLabel(filter)}
             </button>
           ))}
         </div>
@@ -2731,7 +3223,7 @@ function TransactionsView({
               <div className="history-card-list">
                 {group.records.map((record) => (
                   <article
-                    className={`history-card ${record.filter === "settlements" ? "settlement" : record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
+                    className={`history-card ${record.kind === "settlement" ? "settlement" : record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
                     key={`${record.kind}-${record.id}`}
                   >
                     <div className="history-card-icon">{record.icon}</div>
@@ -2774,12 +3266,12 @@ function TransactionsView({
                       <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
                         {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
                       </strong>
-                      {record.onlineAmount ? (
+                      {record.filter === "cash_in" && record.amount > 0 ? (
                         <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
-                          {t("onlinePart")} {formatMoney(record.onlineAmount)}
+                          {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
                         </span>
                       ) : null}
-                      {record.filter === "settlements" ? <span>{t("settlements")}</span> : null}
+                      {record.kind === "settlement" ? <span>{record.filter === "cash_in" ? t("cashIn") : t("cashOut")}</span> : null}
                       {record.recordType && (record.canEdit || record.canDelete || record.canRequestTransfer) ? (
                         <details className="history-actions-menu">
                           <summary aria-label={t("moreOptions")}>
@@ -3037,6 +3529,11 @@ function displayTextValue(value: string | number | null | undefined) {
   return text || "-";
 }
 
+function studentPhoneHref(phoneNumber: string | null | undefined) {
+  const normalized = phoneNumber?.trim().replace(/[^\d+]/g, "");
+  return normalized ? `tel:${normalized}` : null;
+}
+
 function displayMoneyValue(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : formatMoney(value);
 }
@@ -3074,6 +3571,34 @@ function normalizeLibraryRollNumberForView(value: string | null | undefined) {
   return normalized || null;
 }
 
+function libraryRollKey(value: string | null | undefined) {
+  return normalizeLibraryRollNumberForView(value)?.toLowerCase() ?? null;
+}
+
+function libraryStudentRollKey(student: LibraryStudent) {
+  return libraryRollKey(studentDisplayRollNumber(student));
+}
+
+function nextLibraryRollNumber(students: LibraryStudent[]) {
+  let largestValue = -1;
+  let largestWidth = 0;
+
+  students.forEach((student) => {
+    const rollNumber = normalizeLibraryRollNumberForView(studentDisplayRollNumber(student));
+    if (!rollNumber || !/^\d+$/.test(rollNumber)) return;
+    const numericRoll = Number(rollNumber);
+    if (!Number.isSafeInteger(numericRoll)) return;
+    if (numericRoll > largestValue || (numericRoll === largestValue && rollNumber.length > largestWidth)) {
+      largestValue = numericRoll;
+      largestWidth = rollNumber.length;
+    }
+  });
+
+  if (largestValue < 0) return "";
+  const nextRollNumber = String(largestValue + 1);
+  return nextRollNumber.padStart(largestWidth, "0");
+}
+
 function isNumericLibraryRoll(value: string | null | undefined) {
   const normalized = normalizeLibraryRollNumberForView(value);
   return Boolean(normalized && /^\d+$/.test(normalized));
@@ -3087,6 +3612,26 @@ function studentHasSwappedRollAndName(student: LibraryStudent) {
 
 function studentDisplayRollNumber(student: LibraryStudent) {
   return studentHasSwappedRollAndName(student) ? student.student_name?.trim() ?? student.roll_number : student.roll_number;
+}
+
+function StudentPhoto({
+  student,
+  displayName,
+  className = "",
+}: {
+  student: LibraryStudent;
+  displayName: string;
+  className?: string;
+}) {
+  const imageUrl = getProfileImage(displayName, student.photo_url);
+  return (
+    <span
+      className={`library-student-photo ${className}`}
+      role="img"
+      aria-label={`${displayName} photo`}
+      style={{ backgroundImage: `url("${imageUrl.replace(/"/g, "%22")}")` }}
+    />
+  );
 }
 
 function studentNameInputValue(student: LibraryStudent) {
@@ -3113,6 +3658,24 @@ function isRealLibraryStudentId(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+function rollNumberFromVirtualLibraryStudentId(value: string) {
+  if (!value.startsWith("roll:")) return null;
+  const rawRollNumber = value.slice("roll:".length);
+  try {
+    return normalizeLibraryRollNumberForView(decodeURIComponent(rawRollNumber));
+  } catch {
+    return normalizeLibraryRollNumberForView(rawRollNumber);
+  }
+}
+
+function libraryStudentMatchesSelection(student: LibraryStudent, selectedId: string) {
+  if (!selectedId) return false;
+  if (student.id === selectedId) return true;
+  const selectedRollNumber = rollNumberFromVirtualLibraryStudentId(selectedId);
+  if (!selectedRollNumber) return false;
+  return normalizeLibraryRollNumberForView(student.roll_number) === selectedRollNumber;
+}
+
 function paymentMatchesLibraryStudent(payment: Payment, student: LibraryStudent) {
   if (payment.library_student_id === student.id) return true;
   const paymentRollNumber = normalizeLibraryRollNumberForView(payment.roll_number);
@@ -3120,12 +3683,65 @@ function paymentMatchesLibraryStudent(payment: Payment, student: LibraryStudent)
   return Boolean(paymentRollNumber && studentRollNumber && paymentRollNumber === studentRollNumber);
 }
 
+function libraryPaymentSubscriptionSortKey(payment: Payment) {
+  return [
+    payment.end_date ?? "",
+    payment.start_date ?? "",
+    payment.payment_date,
+    payment.created_at,
+    payment.id,
+  ].join("|");
+}
+
+function libraryStudentSubscriptionSortKey(student: LibraryStudent) {
+  return [
+    student.subscription_end_date ?? "",
+    student.subscription_start_date ?? "",
+    student.last_payment_date ?? "",
+  ].join("|");
+}
+
+function latestLibrarySubscriptionPayment(payments: Payment[]) {
+  return payments
+    .filter((payment) => payment.business_type === "library" && payment.record_status === "active")
+    .sort((a, b) => libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)))[0] ?? null;
+}
+
+function libraryStudentWithLatestSubscription(student: LibraryStudent, payments: Payment[]) {
+  const latestPayment = latestLibrarySubscriptionPayment(payments);
+  if (!latestPayment) return student;
+
+  const paymentDate = latestPayment.payment_date.slice(0, 10);
+  if (libraryStudentSubscriptionSortKey(student) > libraryPaymentSubscriptionSortKey(latestPayment)) return student;
+
+  return {
+    ...student,
+    student_name: latestPayment.customer_name ?? student.student_name,
+    roll_number: normalizeLibraryRollNumberForView(latestPayment.roll_number) ?? student.roll_number,
+    seat_number: latestPayment.seat_number ?? student.seat_number,
+    start_time: latestPayment.start_time ?? student.start_time,
+    end_time: latestPayment.end_time ?? student.end_time,
+    slot_hours: latestPayment.slot_hours ?? student.slot_hours,
+    subscription_start_date: latestPayment.start_date ?? student.subscription_start_date,
+    subscription_end_date: latestPayment.end_date ?? student.subscription_end_date,
+    fee_amount: latestPayment.fee_amount ?? student.fee_amount,
+    paid_amount: latestPayment.paid_amount ?? student.paid_amount,
+    dues_amount: latestPayment.dues_amount ?? student.dues_amount,
+    advance_amount: latestPayment.advance_amount ?? student.advance_amount,
+    active: true,
+    placeholder: false,
+    last_payment_id: latestPayment.id,
+    last_payment_date: paymentDate,
+    updated_at: latestPayment.created_at,
+  };
+}
+
 function mergePaymentHistory(...groups: Payment[][]) {
   const rows = new Map<string, Payment>();
   groups.flat().forEach((payment) => rows.set(payment.id, payment));
 
   return [...rows.values()].sort((a, b) =>
-    `${b.payment_date}-${b.created_at}-${b.id}`.localeCompare(`${a.payment_date}-${a.created_at}-${a.id}`),
+    libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)),
   );
 }
 
@@ -3167,7 +3783,7 @@ function LibraryStudentsView({
         studentDisplayName(a, t).localeCompare(studentDisplayName(b, t), undefined, { sensitivity: "base" })
       );
     });
-  const selectedStudent = students.find((student) => student.id === selectedId) ?? null;
+  const baseSelectedStudent = students.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null;
   const openStudentDetails = (studentId: string) => {
     setSelectedId(studentId);
     setEditingStudent(false);
@@ -3177,18 +3793,22 @@ function LibraryStudentsView({
     setEditingStudent(false);
   };
   const historyQuery = useQuery({
-    queryKey: ["library-student-history", selectedStudent?.id ?? ""],
-    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/app/library-students/${encodeURIComponent(selectedStudent?.id ?? "")}/payments`),
-    enabled: Boolean(selectedStudent?.id),
+    queryKey: ["library-student-history", baseSelectedStudent?.id ?? ""],
+    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/app/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments`),
+    enabled: Boolean(baseSelectedStudent?.id),
     placeholderData: (previousHistory) => previousHistory,
   });
   const localHistoryPayments = useMemo(
-    () => selectedStudent ? payments.filter((payment) => paymentMatchesLibraryStudent(payment, selectedStudent)) : [],
-    [payments, selectedStudent],
+    () => baseSelectedStudent ? payments.filter((payment) => paymentMatchesLibraryStudent(payment, baseSelectedStudent)) : [],
+    [baseSelectedStudent, payments],
   );
   const historyPayments = useMemo(
     () => mergePaymentHistory(historyQuery.data?.payments ?? [], localHistoryPayments),
     [historyQuery.data?.payments, localHistoryPayments],
+  );
+  const selectedStudent = useMemo(
+    () => baseSelectedStudent ? libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments) : null,
+    [baseSelectedStudent, historyPayments],
   );
   return (
     <section className="space-y-5">
@@ -3224,49 +3844,69 @@ function LibraryStudentsView({
           </span>
         </label>
         <div className="mt-4 max-h-[68vh] space-y-2 overflow-y-auto pr-1">
-          {visibleStudents.map((student) => (
-            <button
-              key={student.id}
-              type="button"
-              onClick={() => openStudentDetails(student.id)}
-              className={`group w-full rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                selectedStudent?.id === student.id ? "border-primary bg-primary-container/60" : "border-outline-variant/25 bg-surface"
-              } ${expired(student) ? "border-yellow-400 bg-yellow-50" : ""}`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <span className="inline-flex rounded-full bg-surface-container-high px-2 py-0.5 text-xs font-bold text-on-surface-variant">
-                    #{studentDisplayRollNumber(student)}
-                  </span>
-                  <strong className="mt-2 block truncate text-base text-on-surface">{studentDisplayName(student, t)}</strong>
-                </div>
-                <span className={`status-chip ${expired(student) ? "status-pending" : student.active ? "status-approved" : "status-rejected"}`}>
-                  {expired(student) ? t("expiredSubscription") : student.active ? t("active") : t("inactiveStudents")}
-                </span>
-              </div>
-              <div className="mt-3 grid gap-2 text-xs text-on-surface-variant sm:grid-cols-2">
-                <span className="rounded-lg bg-surface-container-low px-3 py-2">
-                  <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("timing")}</strong>
-                  <span className="text-sm font-semibold text-on-surface">{displayTimeRange(student.start_time, student.end_time)}</span>
-                </span>
-                <span className="rounded-lg bg-surface-container-low px-3 py-2">
-                  <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("subscriptionPeriod")}</strong>
-                  <span className="text-sm font-semibold text-on-surface">{displayDateRange(student.subscription_start_date, student.subscription_end_date, t)}</span>
-                </span>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs text-on-surface-variant">
-                <span>{student.phone_number ?? t("unknown")}</span>
-                <span>·</span>
-                <span>{t("seat")} {student.seat_number ?? "-"}</span>
-                {student.locker_number ? (
-                  <>
+          {visibleStudents.map((student) => {
+            const callHref = studentPhoneHref(student.phone_number);
+            return (
+              <article
+                key={student.id}
+                className={`relative rounded-lg border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                  selectedStudent?.id === student.id ? "border-primary bg-primary-container/60" : "border-outline-variant/25 bg-surface"
+                } ${expired(student) ? "border-yellow-400 bg-yellow-50" : ""}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => openStudentDetails(student.id)}
+                  className="group w-full border-0 bg-transparent p-3 pr-14 text-left"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <StudentPhoto student={student} displayName={studentDisplayName(student, t)} className="list" />
+                      <div className="min-w-0">
+                        <span className="inline-flex rounded-full bg-surface-container-high px-2 py-0.5 text-xs font-bold text-on-surface-variant">
+                          #{studentDisplayRollNumber(student)}
+                        </span>
+                        <strong className="mt-2 block truncate text-base text-on-surface">{studentDisplayName(student, t)}</strong>
+                      </div>
+                    </div>
+                    <span className={`status-chip ${expired(student) ? "status-pending" : student.active ? "status-approved" : "status-rejected"}`}>
+                      {expired(student) ? t("expiredSubscription") : student.active ? t("active") : t("inactiveStudents")}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs text-on-surface-variant sm:grid-cols-2">
+                    <span className="rounded-lg bg-surface-container-low px-3 py-2">
+                      <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("timing")}</strong>
+                      <span className="text-sm font-semibold text-on-surface">{displayTimeRange(student.start_time, student.end_time)}</span>
+                    </span>
+                    <span className="rounded-lg bg-surface-container-low px-3 py-2">
+                      <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("subscriptionPeriod")}</strong>
+                      <span className="text-sm font-semibold text-on-surface">{displayDateRange(student.subscription_start_date, student.subscription_end_date, t)}</span>
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-on-surface-variant">
+                    <span>{student.phone_number ?? t("unknown")}</span>
                     <span>·</span>
-                    <span>{t("lockerNumber")} {student.locker_number}</span>
-                  </>
+                    <span>{t("seat")} {student.seat_number ?? "-"}</span>
+                    {student.locker_number ? (
+                      <>
+                        <span>·</span>
+                        <span>{t("lockerNumber")} {student.locker_number}</span>
+                      </>
+                    ) : null}
+                  </div>
+                </button>
+                {callHref ? (
+                  <a
+                    className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-primary/20 bg-surface text-primary shadow-sm transition hover:bg-primary hover:text-on-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                    href={callHref}
+                    aria-label={`${t("callStudent")}: ${studentDisplayName(student, t)}`}
+                    title={t("callStudent")}
+                  >
+                    <PhoneCall size={17} />
+                  </a>
                 ) : null}
-              </div>
-            </button>
-          ))}
+              </article>
+            );
+          })}
           {visibleStudents.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
         </div>
       </section>
@@ -3298,14 +3938,17 @@ function LibraryStudentsView({
               {!editingStudent ? (
                 <div className="library-student-detail-view">
                   <section className={`library-student-hero-card ${expired(selectedStudent) ? "expired" : ""}`}>
-                    <div className="min-w-0">
-                      <span className={`status-chip ${expired(selectedStudent) ? "status-pending" : selectedStudent.active ? "status-approved" : "status-rejected"}`}>
-                        {expired(selectedStudent) ? t("expiredSubscription") : selectedStudent.active ? t("active") : t("inactiveStudents")}
-                      </span>
-                      <h3>{studentDisplayName(selectedStudent, t)}</h3>
-                      <p>
-                        #{studentDisplayRollNumber(selectedStudent)} · {t("phone")} {displayTextValue(selectedStudent.phone_number)}
-                      </p>
+                    <div className="flex min-w-0 items-center gap-4">
+                      <StudentPhoto student={selectedStudent} displayName={studentDisplayName(selectedStudent, t)} className="hero" />
+                      <div className="min-w-0">
+                        <span className={`status-chip ${expired(selectedStudent) ? "status-pending" : selectedStudent.active ? "status-approved" : "status-rejected"}`}>
+                          {expired(selectedStudent) ? t("expiredSubscription") : selectedStudent.active ? t("active") : t("inactiveStudents")}
+                        </span>
+                        <h3>{studentDisplayName(selectedStudent, t)}</h3>
+                        <p>
+                          #{studentDisplayRollNumber(selectedStudent)} · {t("phone")} {displayTextValue(selectedStudent.phone_number)}
+                        </p>
+                      </div>
                     </div>
                     <div className="library-student-hero-meta">
                       <span>{t("lastPayment")}</span>
@@ -3395,6 +4038,14 @@ function LibraryStudentsView({
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
                   <h3 className="full-span section-title">{t("studentProfile")}</h3>
+                  <label className="full-span">
+                    {t("studentPhoto")}
+                    <span className="camera-field">
+                      <Camera size={16} />
+                      {t("addImage")}
+                      <input name="student_photo" type="file" accept="image/*" />
+                    </span>
+                  </label>
                   <label>
                     {t("name")}
                     <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
@@ -3440,6 +4091,7 @@ function LibraryStudentsView({
                   <h4 className="font-headline text-base font-bold">{t("addSubscription")}</h4>
                 </div>
                 <PaymentForm
+                  key={`${selectedStudent.id}-${selectedStudent.last_payment_id ?? selectedStudent.updated_at}`}
                   type="library"
                   rooms={[]}
                   mainCourses={[]}
@@ -3681,6 +4333,7 @@ function PaymentForm({
 }) {
   const { t } = useLanguage();
   const initialLibraryPrefill = type === "library" && initialLibraryStudent ? libraryStudentPrefill(initialLibraryStudent, t) : null;
+  const defaultNewLibraryRollNumber = type === "library" ? nextLibraryRollNumber(libraryStudents) : "";
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? "");
   const [paid, setPaid] = useState("");
   const [amount, setAmount] = useState("");
@@ -3693,7 +4346,7 @@ function PaymentForm({
   const [librarySearch, setLibrarySearch] = useState(initialLibraryPrefill?.searchLabel ?? "");
   const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState(initialLibraryPrefill?.id ?? "");
   const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? "");
-  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? "");
+  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? defaultNewLibraryRollNumber);
   const [phoneNumber, setPhoneNumber] = useState(initialLibraryPrefill?.phoneNumber ?? "");
   const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
   const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? "");
@@ -3723,6 +4376,36 @@ function PaymentForm({
       })
       .slice(0, 40);
   }, [librarySearch, libraryStudents, t, type]);
+  const selectedLibraryStudent = useMemo(() => {
+    if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
+    return libraryStudents.find((student) => student.id === selectedLibraryStudentId) ?? null;
+  }, [initialLibraryStudent, libraryStudents, selectedLibraryStudentId]);
+  const duplicateLibraryRollStudent = useMemo(() => {
+    if (type !== "library") return null;
+    const rollKey = libraryRollKey(rollNumber);
+    if (!rollKey) return null;
+
+    return libraryStudents.find((student) => {
+      if (libraryStudentRollKey(student) !== rollKey) return false;
+      return !selectedLibraryStudentId || !libraryStudentMatchesSelection(student, selectedLibraryStudentId);
+    }) ?? null;
+  }, [libraryStudents, rollNumber, selectedLibraryStudentId, type]);
+  const duplicateLibraryRollError = duplicateLibraryRollStudent ? t("rollNumberAlreadyExist") : "";
+
+  function handlePaymentSubmit(event: FormEvent<HTMLFormElement>) {
+    if (duplicateLibraryRollStudent) {
+      event.preventDefault();
+      setNotice({ ok: false, message: t("rollNumberAlreadyExist") });
+      return;
+    }
+
+    if (onSuccess) {
+      submitAndClose(event, createPaymentAction, setNotice, startTransition, onSuccess);
+      return;
+    }
+
+    submitWith(event, createPaymentAction, setNotice, startTransition);
+  }
 
   function applyLibraryStudentPrefill(student: LibraryStudent) {
     const values = libraryStudentPrefill(student, t);
@@ -3743,7 +4426,7 @@ function PaymentForm({
     const student = libraryStudents.find((item) => item.id === studentId);
     if (!student) {
       setStudentName("");
-      setRollNumber("");
+      setRollNumber(defaultNewLibraryRollNumber);
       setPhoneNumber("");
       setAddress("");
       setSeatNumber("");
@@ -3769,11 +4452,7 @@ function PaymentForm({
   return (
     <form
       className="form-grid two"
-      onSubmit={(event) =>
-        onSuccess
-          ? submitAndClose(event, createPaymentAction, setNotice, startTransition, onSuccess)
-          : submitWith(event, createPaymentAction, setNotice, startTransition)
-      }
+      onSubmit={handlePaymentSubmit}
     >
       <input type="hidden" name="business_type" value={type} />
       {type === "guest_house" ? (
@@ -3806,13 +4485,26 @@ function PaymentForm({
           <input type="hidden" name="address" value={address} />
           <input type="hidden" name="seat_number" value={seatNumber} />
           <input type="hidden" name="locker_number" value={lockerNumber} />
-          <div className="library-selected-profile full-span">
-            <span>{t("libraryStudent")}</span>
-            <strong>{studentName || t("unknown")}</strong>
-            <small>
-              {t("rollNumber")} {rollNumber || "-"} · {t("phone")} {phoneNumber || "-"} · {t("seat")} {seatNumber || "-"}
-            </small>
+          <div className="library-selected-profile full-span with-photo">
+            {selectedLibraryStudent ? (
+              <StudentPhoto student={selectedLibraryStudent} displayName={studentDisplayName(selectedLibraryStudent, t)} className="selected" />
+            ) : null}
+            <div>
+              <span>{t("libraryStudent")}</span>
+              <strong>{studentName || t("unknown")}</strong>
+              <small>
+                {t("rollNumber")} {rollNumber || "-"} · {t("phone")} {phoneNumber || "-"} · {t("seat")} {seatNumber || "-"}
+              </small>
+            </div>
           </div>
+          <label className="full-span">
+            {t("studentPhoto")}
+            <span className="camera-field">
+              <Camera size={16} />
+              {t("addImage")}
+              <input name="student_photo" type="file" accept="image/*" />
+            </span>
+          </label>
           <label>
             {t("paymentDate")}
             <input name="payment_date" type="date" defaultValue={todayIso()} required />
@@ -3890,13 +4582,16 @@ function PaymentForm({
                 className={selectedLibraryStudentId === student.id ? "selected" : ""}
                 onClick={() => selectLibraryStudent(student.id)}
               >
-                <span>
-                  <strong>{studentDisplayRollNumber(student)} · {studentDisplayName(student, t)}</strong>
-                  <small>
-                    {student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}
-                    {student.subscription_end_date ? ` · ${t("expiresOn")} ${displayDate(student.subscription_end_date)}` : ""}
-                  </small>
-                </span>
+                <div className="library-search-result-main">
+                  <StudentPhoto student={student} displayName={studentDisplayName(student, t)} className="picker" />
+                  <span>
+                    <strong>{studentDisplayRollNumber(student)} · {studentDisplayName(student, t)}</strong>
+                    <small>
+                      {student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}
+                      {student.subscription_end_date ? ` · ${t("expiresOn")} ${displayDate(student.subscription_end_date)}` : ""}
+                    </small>
+                  </span>
+                </div>
                 {!student.active ? <em>{t("inactiveStudents")}</em> : null}
               </button>
             ))}
@@ -3909,7 +4604,19 @@ function PaymentForm({
           </label>
           <label>
             {t("rollNumber")}
-            <input name="roll_number" value={rollNumber} onChange={(event) => setRollNumber(event.target.value)} required />
+            <input
+              name="roll_number"
+              value={rollNumber}
+              onChange={(event) => setRollNumber(event.target.value)}
+              aria-invalid={duplicateLibraryRollStudent ? "true" : undefined}
+              aria-describedby={duplicateLibraryRollStudent ? "library-roll-number-error" : undefined}
+              required
+            />
+            {duplicateLibraryRollError ? (
+              <span id="library-roll-number-error" className="text-xs font-semibold text-error" role="alert">
+                {duplicateLibraryRollError}
+              </span>
+            ) : null}
           </label>
           <label>
             {t("phone")}
@@ -3918,6 +4625,14 @@ function PaymentForm({
           <label className="full-span">
             {t("address")}
             <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
+          </label>
+          <label className="full-span">
+            {t("studentPhoto")}
+            <span className="camera-field">
+              <Camera size={16} />
+              {t("addImage")}
+              <input name="student_photo" type="file" accept="image/*" />
+            </span>
           </label>
           <label>
             {t("paymentDate")}
@@ -4177,7 +4892,7 @@ function PaymentForm({
         {t("remark")}
         <textarea name="remark" rows={3} />
       </label>
-      <button className="primary-button full-span" type="submit">
+      <button className="primary-button full-span" type="submit" disabled={Boolean(duplicateLibraryRollStudent)}>
         {t("collectPayment")}
       </button>
     </form>
@@ -4221,6 +4936,7 @@ function ExpenseForm({
           : submitWith(event, createExpenseAction, setNotice, startTransition)
       }
     >
+      <input type="hidden" name="mode" value="cash" />
       <label>
         {t("business")}
         <select name="business_type" defaultValue="general">
@@ -4242,13 +4958,6 @@ function ExpenseForm({
       <label>
         {t("amount")}
         <input name="amount" type="number" min="0" step="1" required />
-      </label>
-      <label>
-        {t("mode")}
-        <select name="mode" defaultValue="cash">
-          <option value="cash">{t("cash")}</option>
-          <option value="online">{t("online")}</option>
-        </select>
       </label>
       <label>
         {t("photo")}
@@ -4476,27 +5185,48 @@ function ClosingView({
     ? summaries.filter((summary) => summary.profile.active && summary.profile.role === "staff")
     : summaries.filter((summary) => summary.profile.id === profile.id);
   const selectedReviewSummary = reviewProfileId ? visibleSummaries.find((summary) => summary.profile.id === reviewProfileId) ?? null : null;
-  const pendingReviewCount = (summary: UserClosingSummary) =>
-    payments.filter(
+  const pendingReviewSummary = (summary: UserClosingSummary) => {
+    const pendingPayments = payments.filter(
       (payment) =>
         paymentReviewProfileId(payment) === summary.profile.id &&
         payment.record_status === "active" &&
         belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
         isPendingReviewStatus(payment.approval_status),
-    ).length +
-    expenses.filter(
+    );
+    const pendingExpenses = expenses.filter(
       (expense) =>
         expense.spent_by === summary.profile.id &&
         expense.record_status === "active" &&
         belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
         isPendingReviewStatus(expense.approval_status),
-    ).length;
+    );
+    const pendingSettlementMovements = movements.filter(
+      (movement) =>
+        movement.status === "pending" &&
+        movement.type === "settlement" &&
+        movement.created_at.slice(0, 10) <= date &&
+        (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
+    );
+
+    return {
+      count: pendingPayments.length + pendingExpenses.length + pendingSettlementMovements.length,
+      amount:
+        pendingPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+        pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
+        pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0),
+    };
+  };
   const overview = {
-    opening: visibleSummaries.reduce((sum, summary) => sum + summary.opening, 0),
     collected: visibleSummaries.reduce((sum, summary) => sum + summary.collected, 0),
     expenses: visibleSummaries.reduce((sum, summary) => sum + summary.expenses, 0),
-    closing: visibleSummaries.reduce((sum, summary) => sum + summary.closing, 0),
+    received: visibleSummaries.reduce((sum, summary) => sum + summary.received, 0),
+    sent: visibleSummaries.reduce((sum, summary) => sum + summary.sent, 0),
+    pendingAmount: visibleSummaries.reduce((sum, summary) => sum + pendingReviewSummary(summary).amount, 0),
+    pendingCount: visibleSummaries.reduce((sum, summary) => sum + pendingReviewSummary(summary).count, 0),
   };
+  const overviewInCash = overview.collected + overview.received;
+  const overviewInOnline = 0;
+  const overviewOutCash = overview.expenses + overview.sent;
 
   if (selectedReviewSummary && owner) {
     return (
@@ -4519,21 +5249,19 @@ function ClosingView({
     <div className="view-stack closing-workspace">
       {owner ? (
         <div className="closing-overview-grid">
-          <article className="closing-overview-card">
-            <span>{t("totalOpening")}</span>
-            <strong>{formatMoney(overview.opening)}</strong>
-          </article>
           <article className="closing-overview-card positive">
-            <span>{t("totalCollected")}</span>
-            <strong>{formatMoney(overview.collected)}</strong>
+            <span>{t("cashIn")}</span>
+            <strong>{formatMoney(overviewInCash + overviewInOnline)}</strong>
+            <p className="money-split-line">{t("cash")} {formatMoney(overviewInCash)} · {t("online")} {formatMoney(overviewInOnline)}</p>
           </article>
           <article className="closing-overview-card negative">
-            <span>{t("totalExpenses")}</span>
-            <strong>{formatMoney(overview.expenses)}</strong>
+            <span>{t("cashOut")}</span>
+            <strong>{formatMoney(overviewOutCash)}</strong>
+            <p className="money-split-line">{t("cash")} {formatMoney(overviewOutCash)}</p>
           </article>
-          <article className="closing-overview-card net">
-            <span>{t("netSettlement")}</span>
-            <strong>{formatMoney(overview.closing)}</strong>
+          <article className="closing-overview-card pending">
+            <span>{t("pending")}{overview.pendingCount > 0 ? ` · ${overview.pendingCount}` : ""}</span>
+            <strong>{formatMoney(overview.pendingAmount)}</strong>
           </article>
         </div>
       ) : null}
@@ -4545,7 +5273,7 @@ function ClosingView({
         </div>
         <div className="closing-user-grid">
           {visibleSummaries.map((summary) => {
-            const pendingCount = pendingReviewCount(summary);
+            const pendingSummary = pendingReviewSummary(summary);
             return (
               <article
                 className="closing-user-card"
@@ -4557,26 +5285,24 @@ function ClosingView({
                     <strong>{summary.profile.full_name}</strong>
                     <small>{t(roleLabelKeys[summary.profile.role] ?? summary.profile.role)}</small>
                   </span>
-                  <span className={pendingCount > 0 ? "closing-status warning" : "closing-status"}>
-                    {pendingCount > 0 ? `${pendingCount} ${t("pending")}` : t("active")}
+                  <span className={pendingSummary.count > 0 ? "closing-status warning" : "closing-status"}>
+                    {pendingSummary.count > 0 ? `${pendingSummary.count} ${t("pending")}` : t("active")}
                   </span>
                 </div>
                 <div className="closing-ledger-parts">
-                  <span>
-                    <small>{t("openingCashBalance")}</small>
-                    <strong>{formatMoney(summary.opening)}</strong>
-                  </span>
                   <span className="positive">
-                    <small>{t("cashInCollected")}</small>
-                    <strong>{formatMoney(summary.collected)}</strong>
+                    <small>{t("cashIn")}</small>
+                    <strong>{formatMoney(summary.collected + summary.received)}</strong>
+                    <em>{t("cash")} {formatMoney(summary.collected + summary.received)} · {t("online")} {formatMoney(0)}</em>
                   </span>
                   <span className="negative">
-                    <small>{t("cashOutExpenses")}</small>
-                    <strong>{formatMoney(summary.expenses)}</strong>
+                    <small>{t("cashOut")}</small>
+                    <strong>{formatMoney(summary.expenses + summary.sent)}</strong>
+                    <em>{t("cash")} {formatMoney(summary.expenses + summary.sent)}</em>
                   </span>
-                  <span>
-                    <small>{t("settledAmount")}</small>
-                    <strong>{formatMoney(summary.sent + summary.received)}</strong>
+                  <span className="warning">
+                    <small>{t("pending")}</small>
+                    <strong>{formatMoney(pendingSummary.amount)}</strong>
                   </span>
                 </div>
                 <div className="closing-net-row">
@@ -4638,6 +5364,10 @@ function ClosingReviewDetail({
         recordDate: payment.payment_date,
         isBacklog: payment.payment_date < date,
         createdAt: payment.created_at,
+        businessLabel: labelForBusiness(payment.business_type, t),
+        cashAmount: paymentCashAmount(payment),
+        onlineAmount: paymentOnlineAmount(payment),
+        note: paymentReference(payment, t),
         transferLines: transferSummaryLines(payment, paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
         tone: "positive" as const,
@@ -4655,11 +5385,15 @@ function ClosingReviewDetail({
         recordType: "expense" as const,
         title: expenseDisplayTitle(expense),
         amount: -numberValue(expense.amount),
-        mode: labelForMode(expense.mode, t),
+        mode: t("cash"),
         status: expense.approval_status,
         recordDate: expense.expense_date,
         isBacklog: expense.expense_date < date,
         createdAt: expense.created_at,
+        businessLabel: labelForBusiness(expense.business_type ?? "general", t),
+        cashAmount: numberValue(expense.amount),
+        onlineAmount: 0,
+        note: expenseReference(expense, t),
         transferLines: [] as string[],
         hasPendingTransfer: false,
         tone: "negative" as const,
@@ -4668,6 +5402,17 @@ function ClosingReviewDetail({
   ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
   const todayRecords = reviewRecords.filter((record) => record.recordDate === date);
   const pendingRecords = reviewRecords.filter((record) => isPendingReviewStatus(record.status));
+  const pendingSettlementMovements = movements.filter(
+    (movement) =>
+      movement.status === "pending" &&
+      movement.type === "settlement" &&
+      movement.created_at.slice(0, 10) <= date &&
+      (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
+  );
+  const pendingReviewAmount =
+    pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
+    pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+  const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
   const actionableRecords = pendingRecords;
   const settlementAmount = Math.abs(summary.closing);
@@ -4676,6 +5421,9 @@ function ClosingReviewDetail({
   const settlementEntryNumber = numberValue(settlementEntryAmount);
   const canFinalize = actionableRecords.length === 0 && settlementAmount > 0 && settlementEntryNumber > 0 && settlementEntryNumber <= settlementAmount;
   const createdTime = (createdAt: string) => createdAt.slice(11, 16);
+  const reviewInCash = summary.collected + summary.received;
+  const reviewInOnline = 0;
+  const reviewOutCash = summary.expenses + summary.sent;
 
   return (
     <div className="closing-review-detail">
@@ -4695,17 +5443,19 @@ function ClosingReviewDetail({
           <span>{t("netCashInHand")}</span>
           <strong>{formatMoney(summary.closing)}</strong>
         </article>
-        <article>
-          <span>{t("openingCashBalance")}</span>
-          <strong>{formatMoney(summary.opening)}</strong>
-        </article>
         <article className="positive">
-          <span>{t("cashInCollected")}</span>
-          <strong>{formatMoney(summary.collected)}</strong>
+          <span>{t("cashIn")}</span>
+          <strong>{formatMoney(reviewInCash + reviewInOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewInCash)} · {t("online")} {formatMoney(reviewInOnline)}</p>
         </article>
         <article className="negative">
-          <span>{t("cashOutExpenses")}</span>
-          <strong>{formatMoney(summary.expenses)}</strong>
+          <span>{t("cashOut")}</span>
+          <strong>{formatMoney(reviewOutCash)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)}</p>
+        </article>
+        <article className="pending">
+          <span>{t("pending")}{pendingReviewCount > 0 ? ` · ${pendingReviewCount}` : ""}</span>
+          <strong>{formatMoney(pendingReviewAmount)}</strong>
         </article>
       </section>
 
@@ -4739,14 +5489,19 @@ function ClosingReviewDetail({
         </div>
         <div className="review-transaction-list">
           {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
-            const canReview = isPendingReviewStatus(record.status);
+            const canReview = canApproveRecordStatus(record.status);
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
               <article className={`review-transaction-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
                 <div className="review-transaction-icon">{record.icon}</div>
                 <div className="review-transaction-main">
                   <strong>{record.title}</strong>
-                  <p>{recordWhen} · {record.mode}</p>
+                  <p>{recordWhen} · {record.businessLabel} · {record.mode}</p>
+                  <div className="pending-review-split">
+                    <span>{t("cash")} {formatMoney(record.cashAmount)}</span>
+                    <span>{t("online")} {formatMoney(record.onlineAmount)}</span>
+                  </div>
+                  <p>{record.note}</p>
                   {record.transferLines.length > 0 ? (
                     <div className="review-transfer-note">
                       {record.transferLines.map((line) => (
@@ -4792,6 +5547,23 @@ function ClosingReviewDetail({
           }) : (
             <p className="muted">{t("noRecordsForFilter")}</p>
           )}
+          {reviewTab === "pending" && pendingSettlementMovements.length > 0 ? (
+            <div className="pending-context-group">
+              <h3>{t("settlementLikePending")}</h3>
+              {pendingSettlementMovements.map((movement) => (
+                <article className="review-transaction-card neutral" key={movement.id}>
+                  <div className="review-transaction-icon"><ShieldCheck size={22} /></div>
+                  <div className="review-transaction-main">
+                    <strong>{t("settlements")}</strong>
+                    <p>{movement.created_at.slice(0, 10)} · {profileName(profiles, movement.from_profile_id === summary.profile.id ? movement.to_profile_id : movement.from_profile_id, t)}</p>
+                    <p>{movement.note ?? t("noReason")}</p>
+                    <span className="status-chip status-pending">{labelForStatus(movement.status, t)}</span>
+                  </div>
+                  <strong className="review-transaction-amount">{formatMoney(movement.amount)}</strong>
+                </article>
+              ))}
+            </div>
+          ) : null}
         </div>
       </section>
 

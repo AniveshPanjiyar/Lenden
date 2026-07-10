@@ -6,6 +6,7 @@ import type {
   AppData,
   AgentSettlement,
   AppNotification,
+  ApprovalStatus,
   BootstrapPayload,
   BusinessType,
   ChangeRequest,
@@ -28,6 +29,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 let closingSummariesRpcAvailable = false;
 
 const virtualLibraryStudentPrefix = "roll:";
+const pendingReviewStatuses = ["pending", "reapproval_required", "cancel_requested"] satisfies ApprovalStatus[];
 
 function isMissingDbSchemaError(error: { code?: string; message?: string } | null | undefined, identifiers: string[]) {
   const message = error?.message?.toLowerCase() ?? "";
@@ -56,50 +58,105 @@ function virtualLibraryStudentId(rollNumber: string) {
   return `${virtualLibraryStudentPrefix}${encodeURIComponent(rollNumber)}`;
 }
 
+function libraryPaymentSubscriptionSortKey(payment: Payment) {
+  return [
+    payment.end_date ?? "",
+    payment.start_date ?? "",
+    payment.payment_date,
+    payment.created_at,
+    payment.id,
+  ].join("|");
+}
+
+function libraryStudentSubscriptionSortKey(student: LibraryStudent) {
+  return [
+    student.subscription_end_date ?? "",
+    student.subscription_start_date ?? "",
+    student.last_payment_date ?? "",
+  ].join("|");
+}
+
+function libraryStudentWithPaymentSnapshot(student: LibraryStudent, payment: Payment): LibraryStudent {
+  if (libraryStudentSubscriptionSortKey(student) > libraryPaymentSubscriptionSortKey(payment)) return student;
+
+  return {
+    ...student,
+    student_name: payment.customer_name ?? student.student_name,
+    roll_number: normalizeLibraryRollNumber(payment.roll_number) ?? student.roll_number,
+    seat_number: payment.seat_number ?? student.seat_number,
+    start_time: payment.start_time ?? student.start_time,
+    end_time: payment.end_time ?? student.end_time,
+    slot_hours: payment.slot_hours ?? student.slot_hours,
+    subscription_start_date: payment.start_date ?? student.subscription_start_date,
+    subscription_end_date: payment.end_date ?? student.subscription_end_date,
+    fee_amount: payment.fee_amount ?? student.fee_amount,
+    paid_amount: payment.paid_amount ?? student.paid_amount,
+    dues_amount: payment.dues_amount ?? student.dues_amount,
+    advance_amount: payment.advance_amount ?? student.advance_amount,
+    active: true,
+    placeholder: false,
+    last_payment_id: payment.id,
+    last_payment_date: payment.payment_date,
+    updated_at: payment.created_at,
+  };
+}
+
 function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: Payment[]) {
   const rows = new Map<string, LibraryStudent>();
   const rollKeys = new Set<string>();
-
-  students.forEach((student) => {
-    rows.set(student.id, student);
-    const rollNumber = normalizeLibraryRollNumber(student.roll_number);
-    if (rollNumber) rollKeys.add(rollNumber);
-  });
+  const latestPaymentsByRoll = new Map<string, Payment>();
 
   payments
     .filter((payment) => payment.business_type === "library" && payment.record_status === "active")
     .forEach((payment) => {
       const rollNumber = normalizeLibraryRollNumber(payment.roll_number);
-      if (!rollNumber || rollKeys.has(rollNumber)) return;
+      if (!rollNumber) return;
 
-      rollKeys.add(rollNumber);
-      rows.set(virtualLibraryStudentId(rollNumber), {
-        id: virtualLibraryStudentId(rollNumber),
-        roll_number: rollNumber,
-        phone_number: null,
-        address: null,
-        student_name: payment.customer_name,
-        seat_number: payment.seat_number,
-        locker_number: null,
-        start_time: payment.start_time,
-        end_time: payment.end_time,
-        slot_hours: payment.slot_hours,
-        subscription_start_date: payment.start_date,
-        subscription_end_date: payment.end_date,
-        fee_amount: payment.fee_amount,
-        paid_amount: payment.paid_amount,
-        dues_amount: payment.dues_amount,
-        advance_amount: payment.advance_amount,
-        active: true,
-        placeholder: false,
-        status_note: null,
-        last_payment_id: payment.id,
-        last_payment_date: payment.payment_date,
-        metadata: { source: "payment" },
-        created_at: payment.created_at,
-        updated_at: payment.created_at,
-      });
+      const current = latestPaymentsByRoll.get(rollNumber);
+      if (!current || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(current)) {
+        latestPaymentsByRoll.set(rollNumber, payment);
+      }
     });
+
+  students.forEach((student) => {
+    const rollNumber = normalizeLibraryRollNumber(student.roll_number);
+    const latestPayment = rollNumber ? latestPaymentsByRoll.get(rollNumber) : null;
+    rows.set(student.id, latestPayment ? libraryStudentWithPaymentSnapshot(student, latestPayment) : student);
+    if (rollNumber) rollKeys.add(rollNumber);
+  });
+
+  latestPaymentsByRoll.forEach((payment, rollNumber) => {
+    if (rollKeys.has(rollNumber)) return;
+
+    rollKeys.add(rollNumber);
+    rows.set(virtualLibraryStudentId(rollNumber), {
+      id: virtualLibraryStudentId(rollNumber),
+      roll_number: rollNumber,
+      phone_number: null,
+      address: null,
+      photo_url: null,
+      student_name: payment.customer_name,
+      seat_number: payment.seat_number,
+      locker_number: null,
+      start_time: payment.start_time,
+      end_time: payment.end_time,
+      slot_hours: payment.slot_hours,
+      subscription_start_date: payment.start_date,
+      subscription_end_date: payment.end_date,
+      fee_amount: payment.fee_amount,
+      paid_amount: payment.paid_amount,
+      dues_amount: payment.dues_amount,
+      advance_amount: payment.advance_amount,
+      active: true,
+      placeholder: false,
+      status_note: null,
+      last_payment_id: payment.id,
+      last_payment_date: payment.payment_date,
+      metadata: { source: "payment" },
+      created_at: payment.created_at,
+      updated_at: payment.created_at,
+    });
+  });
 
   return [...rows.values()];
 }
@@ -119,6 +176,12 @@ async function requireUserAndProfile(supabase: SupabaseServerClient) {
 
 function visibleData<T>(data: T[] | null, predicate: (item: T) => boolean) {
   return (data ?? []).filter(predicate);
+}
+
+function mergeById<T extends { id: string }>(...groups: T[][]) {
+  const rows = new Map<string, T>();
+  groups.flat().forEach((item) => rows.set(item.id, item));
+  return [...rows.values()];
 }
 
 function accessibleBusinessTypes(role: string, permissions: string[]) {
@@ -197,6 +260,24 @@ async function loadDashboard(
     .lte("expense_date", range.to)
     .order("created_at", { ascending: false })
     .limit(300);
+  const pendingPaymentsQuery = supabase
+    .from("payments")
+    .select("*")
+    .eq("record_status", "active")
+    .in("approval_status", pendingReviewStatuses)
+    .lte("payment_date", closingDate)
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(500);
+  const pendingExpensesQuery = supabase
+    .from("expenses")
+    .select("*")
+    .eq("record_status", "active")
+    .in("approval_status", pendingReviewStatuses)
+    .lte("expense_date", closingDate)
+    .order("expense_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(500);
   const ledgerQuery = supabase
     .from("ledger_entries")
     .select("*")
@@ -217,6 +298,8 @@ async function loadDashboard(
     libraryStudentPaymentsResult,
     paymentsResult,
     expensesResult,
+    pendingPaymentsResult,
+    pendingExpensesResult,
     movementsResult,
     ledgerResult,
     closingSummariesResult,
@@ -244,6 +327,8 @@ async function loadDashboard(
       : Promise.resolve({ data: [], error: null }),
     paymentsQuery,
     expensesQuery,
+    pendingPaymentsQuery,
+    pendingExpensesQuery,
     supabase.from("money_movements").select("*").order("created_at", { ascending: false }).limit(300),
     ledgerQuery,
     supabase.rpc("lenden_closing_summaries", { p_closing_date: closingDate }),
@@ -283,10 +368,12 @@ async function loadDashboard(
         libraryStudentPaymentRows,
       )
     : [];
+  const paymentRows = mergeById((paymentsResult.data ?? []) as Payment[], (pendingPaymentsResult.data ?? []) as Payment[]);
+  const expenseRows = mergeById((expensesResult.data ?? []) as Expense[], (pendingExpensesResult.data ?? []) as Expense[]);
 
   return {
     libraryStudents,
-    payments: visibleData((paymentsResult.data ?? []) as Payment[], (payment) =>
+    payments: visibleData(paymentRows, (payment) =>
       salesAgent
         ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
         : ownerish ||
@@ -297,7 +384,7 @@ async function loadDashboard(
     ),
     expenses: salesAgent
       ? []
-      : visibleData((expensesResult.data ?? []) as Expense[], (expense) =>
+      : visibleData(expenseRows, (expense) =>
           ownerish || expense.spent_by === userId || (expense.business_type ? accessibleBusinesses.has(expense.business_type) : false),
         ),
     movements: salesAgent

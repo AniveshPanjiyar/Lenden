@@ -1627,6 +1627,10 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   line-height: 1.1;
 }
 
+.agent-history-total .history-total-breakdown {
+  color: var(--muted);
+}
+
 .agent-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1937,6 +1941,13 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.history-total-breakdown {
+  color: var(--history-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .history-total-card strong {
@@ -2524,7 +2535,7 @@ summary::-webkit-details-marker {
 
 .closing-overview-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -2543,7 +2554,8 @@ summary::-webkit-details-marker {
 }
 
 .closing-overview-card.positive::after,
-.closing-overview-card.negative::after {
+.closing-overview-card.negative::after,
+.closing-overview-card.pending::after {
   content: "";
   position: absolute;
   inset: 0 0 0 auto;
@@ -2553,6 +2565,10 @@ summary::-webkit-details-marker {
 
 .closing-overview-card.negative::after {
   background: var(--closing-error);
+}
+
+.closing-overview-card.pending::after {
+  background: #c66a42;
 }
 
 .closing-overview-card.net {
@@ -2583,6 +2599,15 @@ summary::-webkit-details-marker {
   line-height: 1.2;
 }
 
+.money-split-line,
+.closing-ledger-parts em {
+  color: var(--closing-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
 .closing-overview-card.positive strong,
 .closing-ledger-parts .positive strong {
   color: var(--closing-success);
@@ -2591,6 +2616,12 @@ summary::-webkit-details-marker {
 .closing-overview-card.negative strong,
 .closing-ledger-parts .negative strong {
   color: var(--closing-error);
+}
+
+.closing-overview-card.pending strong,
+.closing-ledger-parts .warning strong,
+.review-summary-grid .pending strong {
+  color: #8a5a00;
 }
 
 .closing-ledger-section {
@@ -2689,7 +2720,7 @@ summary::-webkit-details-marker {
 
 .closing-ledger-parts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -2765,7 +2796,7 @@ summary::-webkit-details-marker {
 
 .review-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -2781,7 +2812,7 @@ summary::-webkit-details-marker {
 }
 
 .review-summary-grid .review-net-card {
-  grid-column: span 3;
+  grid-column: span 5;
   background: var(--closing-primary);
   color: #fff;
   border-color: var(--closing-primary);
@@ -2943,6 +2974,136 @@ summary::-webkit-details-marker {
   padding: 0;
   display: grid;
   place-items: center;
+}
+
+.pending-review-sheet {
+  width: min(920px, calc(100% - 24px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.pending-review-total {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pending-review-list,
+.pending-context-group {
+  display: grid;
+  gap: 12px;
+}
+
+.pending-context-group {
+  border-top: 1px dashed var(--line);
+  margin-top: 4px;
+  padding-top: 12px;
+}
+
+.pending-context-group h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 15px;
+}
+
+.pending-review-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.86);
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  box-shadow: 0 8px 22px rgba(49, 66, 57, 0.07);
+}
+
+.pending-review-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(47, 111, 94, 0.12);
+  color: var(--good);
+}
+
+.pending-review-card.negative .pending-review-icon {
+  background: var(--soft-bad);
+  color: var(--bad);
+}
+
+.pending-review-card.neutral .pending-review-icon {
+  background: rgba(82, 111, 159, 0.12);
+  color: var(--course);
+}
+
+.pending-review-main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.pending-review-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pending-review-title-row strong,
+.pending-review-main p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pending-review-main p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pending-review-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pending-review-split span {
+  border-radius: 999px;
+  background: rgba(47, 111, 94, 0.1);
+  color: var(--brand-strong);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pending-review-amount {
+  color: var(--foreground);
+  font-family: var(--font-headline);
+  font-size: 20px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.pending-review-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pending-review-actions .mini-action {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.pending-review-note {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .review-settle-bar {
@@ -3325,6 +3486,40 @@ summary::-webkit-details-marker {
   padding: 12px;
 }
 
+.library-student-photo {
+  width: 48px;
+  height: 48px;
+  display: block;
+  flex: 0 0 auto;
+  border: 2px solid rgba(255, 253, 248, 0.95);
+  border-radius: 999px;
+  background-color: rgba(47, 111, 94, 0.12);
+  background-position: center;
+  background-size: cover;
+  box-shadow: 0 8px 18px rgba(49, 66, 57, 0.16);
+}
+
+.library-student-photo.list {
+  width: 50px;
+  height: 50px;
+}
+
+.library-student-photo.hero {
+  width: 74px;
+  height: 74px;
+  border-radius: 18px;
+}
+
+.library-student-photo.picker {
+  width: 38px;
+  height: 38px;
+}
+
+.library-student-photo.selected {
+  width: 46px;
+  height: 46px;
+}
+
 .library-profile-panel div,
 .library-selected-profile {
   display: grid;
@@ -3479,6 +3674,19 @@ summary::-webkit-details-marker {
   gap: 3px;
 }
 
+.library-search-result-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.library-search-results .library-student-photo {
+  display: block;
+  min-width: 38px;
+  gap: 0;
+}
+
 .library-search-results button small,
 .library-search-results p {
   margin: 0;
@@ -3495,6 +3703,12 @@ summary::-webkit-details-marker {
 
 .library-selected-profile {
   padding: 12px;
+}
+
+.library-selected-profile.with-photo {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
 }
 
 .subscription-history-row {
@@ -3959,12 +4173,21 @@ summary::-webkit-details-marker {
     align-items: start;
   }
 
+  .pending-review-card {
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: start;
+  }
+
   .review-transaction-amount,
-  .review-transaction-actions {
+  .review-transaction-actions,
+  .pending-review-amount,
+  .pending-review-actions,
+  .pending-review-note {
     grid-column: 2;
   }
 
-  .review-transaction-amount {
+  .review-transaction-amount,
+  .pending-review-amount {
     text-align: left;
   }
 
@@ -4319,6 +4542,27 @@ option {
 
 .dashboard-card-note svg {
   flex: 0 0 auto;
+}
+
+.dashboard-card-action {
+  margin-top: 10px;
+  min-height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.dashboard-card-action:hover {
+  background: var(--brand-strong);
+}
+
+.dashboard-five-card-grid .dashboard-top-card {
+  min-height: 190px;
 }
 
 .dashboard-breakdown-grid {

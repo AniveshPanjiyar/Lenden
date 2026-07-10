@@ -28,12 +28,22 @@ function normalizeLibraryRollNumber(value: string | null | undefined) {
   return normalized || null;
 }
 
+function libraryPaymentSubscriptionSortKey(payment: Payment) {
+  return [
+    payment.end_date ?? "",
+    payment.start_date ?? "",
+    payment.payment_date,
+    payment.created_at,
+    payment.id,
+  ].join("|");
+}
+
 function mergePaymentRows(...groups: Payment[][]) {
   const rows = new Map<string, Payment>();
   groups.flat().forEach((payment) => rows.set(payment.id, payment));
 
   return [...rows.values()].sort((a, b) =>
-    `${b.payment_date}-${b.created_at}-${b.id}`.localeCompare(`${a.payment_date}-${a.created_at}-${a.id}`),
+    libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)),
   );
 }
 
