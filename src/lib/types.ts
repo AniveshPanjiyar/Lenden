@@ -98,6 +98,8 @@ export type LibraryStudent = {
   phone_number: string | null;
   address: string | null;
   photo_url: string | null;
+  aadhar_number: string | null;
+  aadhar_photo_url: string | null;
   student_name: string | null;
   seat_number: string | null;
   locker_number: string | null;

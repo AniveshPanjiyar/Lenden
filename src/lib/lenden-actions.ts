@@ -41,6 +41,7 @@ type SupabaseAdminClient = {
     };
   };
   from: (table: string) => QueryBuilder;
+  rpc: (fn: string, args?: Record<string, unknown>) => Promise<QueryResponse<unknown>>;
   storage: {
     from: (bucket: string) => {
       upload: (
@@ -208,6 +209,8 @@ function isMissingLibraryStudentSchemaError(error: unknown) {
   if (message.includes("library student migration")) return true;
   return isMissingDbSchemaError(error, [
     "address",
+    "aadhar_number",
+    "aadhar_photo_url",
     "library_student_id",
     "library_students",
     "library_student_subscription_events",
@@ -550,6 +553,32 @@ async function uploadLibraryStudentPhoto(
   return bucket.getPublicUrl(path).data.publicUrl;
 }
 
+async function uploadLibraryStudentAadharPhoto(
+  admin: SupabaseAdminClient,
+  profileId: string,
+  file: FormDataEntryValue | null,
+  requestKey: string,
+) {
+  if (!(file instanceof File) || file.size === 0) return null;
+  if (!file.type.startsWith("image/")) return fail("Choose an image file for the Aadhar card photo.");
+  if (file.size > 3 * 1024 * 1024) return fail("Aadhar card photo must be 3 MB or smaller.");
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `${profileId}/aadhar-${requestKey}-${safeName}`;
+  const bucket = admin.storage.from("library-student-photos");
+  const { error } = await bucket.upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+
+  if (error) {
+    if (isStorageDuplicateError(error)) return bucket.getPublicUrl(path).data.publicUrl;
+    throw new Error(error.message);
+  }
+
+  return bucket.getPublicUrl(path).data.publicUrl;
+}
+
 async function ensureLedgerEntry(
   admin: SupabaseAdminClient,
   params: {
@@ -594,6 +623,26 @@ async function hasRecordLedgerEntry(admin: SupabaseAdminClient, recordType: "pay
     .maybeSingle();
   if (response.error) throw new Error(response.error.message);
   return Boolean(response.data);
+}
+
+async function profileCashBalanceAt(admin: SupabaseAdminClient, profileId: string, entryDate: string) {
+  const rpcResponse = await admin.rpc("lenden_profile_cash_balance_at", {
+    p_profile_id: profileId,
+    p_entry_date: entryDate,
+  });
+  if (!rpcResponse.error && rpcResponse.data !== null) return Number(rpcResponse.data ?? 0);
+  if (!isMissingDbSchemaError(rpcResponse.error, ["lenden_profile_cash_balance_at"])) {
+    throw new Error(rpcResponse.error?.message ?? "Could not calculate cash balance.");
+  }
+
+  const ledgerResponse = await admin
+    .from("ledger_entries")
+    .select("amount")
+    .eq("account_profile_id", profileId)
+    .lte("entry_date", entryDate);
+  if (ledgerResponse.error) throw new Error(ledgerResponse.error.message);
+  return typedDataArray<{ amount: number | string | null }>(ledgerResponse)
+    .reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
 }
 
 async function ownerRecipientIds(admin: SupabaseAdminClient, excludeId?: string) {
@@ -670,6 +719,7 @@ type LibraryStudentFormFields = {
   studentName: string;
   phoneNumber: string | null;
   address: string | null;
+  aadharNumber: string | null;
   seatNumber: string | null;
   lockerNumber: string | null;
   startTime: string | null;
@@ -691,6 +741,7 @@ function readLibraryStudentFields(
   const studentName = asString(formData, "customer_name") ?? asString(formData, "student_name");
   const phoneNumber = normalizePhoneNumber(asString(formData, "phone_number"));
   const address = asString(formData, "address");
+  const aadharNumber = asString(formData, "aadhar_number");
   const startDate = asString(formData, "start_date");
   const endDate = asString(formData, "end_date");
   const startTime = normalizeClockTime(asString(formData, "start_time"));
@@ -726,6 +777,7 @@ function readLibraryStudentFields(
       studentName,
       phoneNumber,
       address,
+      aadharNumber,
       seatNumber: asString(formData, "seat_number"),
       lockerNumber: asString(formData, "locker_number"),
       startTime,
@@ -741,11 +793,12 @@ function readLibraryStudentFields(
   };
 }
 
-function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null) {
+function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null, aadharPhotoUrl?: string | null) {
   const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
     address: fields.address,
+    aadhar_number: fields.aadharNumber,
     student_name: fields.studentName,
     seat_number: fields.seatNumber,
     locker_number: fields.lockerNumber,
@@ -762,14 +815,16 @@ function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean
     placeholder: false,
   };
   if (photoUrl) payload.photo_url = photoUrl;
+  if (aadharPhotoUrl) payload.aadhar_photo_url = aadharPhotoUrl;
   return payload;
 }
 
-function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null) {
+function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null, aadharPhotoUrl?: string | null) {
   const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
     address: fields.address,
+    aadhar_number: fields.aadharNumber,
     student_name: fields.studentName,
     seat_number: fields.seatNumber,
     locker_number: fields.lockerNumber,
@@ -777,6 +832,7 @@ function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active:
     placeholder: false,
   };
   if (photoUrl) payload.photo_url = photoUrl;
+  if (aadharPhotoUrl) payload.aadhar_photo_url = aadharPhotoUrl;
   return payload;
 }
 
@@ -832,10 +888,11 @@ async function saveLibraryStudentRecord(
     lastPaymentId?: string | null;
     lastPaymentDate?: string | null;
     photoUrl?: string | null;
+    aadharPhotoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentPayload(params.fields, params.active, params.photoUrl),
+    ...libraryStudentPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl),
   };
   if (params.lastPaymentId) payload.last_payment_id = params.lastPaymentId;
   if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
@@ -865,10 +922,11 @@ async function saveLibraryStudentIdentityRecord(
     fields: LibraryStudentFormFields;
     active: boolean;
     photoUrl?: string | null;
+    aadharPhotoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentIdentityPayload(params.fields, params.active, params.photoUrl),
+    ...libraryStudentIdentityPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl),
   };
 
   const studentId = normalizeLibraryStudentId(params.id);
@@ -895,6 +953,7 @@ function fieldsFromLibraryStudentRecord(record: Record<string, string | number |
     studentName: String(record.student_name ?? ""),
     phoneNumber: typeof record.phone_number === "string" ? record.phone_number : null,
     address: typeof record.address === "string" ? record.address : null,
+    aadharNumber: typeof record.aadhar_number === "string" ? record.aadhar_number : null,
     seatNumber: typeof record.seat_number === "string" ? record.seat_number : null,
     lockerNumber: typeof record.locker_number === "string" ? record.locker_number : null,
     startTime: typeof record.start_time === "string" ? normalizeClockTime(record.start_time) : null,
@@ -1180,10 +1239,10 @@ const handlers = {
     );
     if (existingPayment) return ok("Payment saved.");
 
-    const fee = asNumber(formData, "fee_amount");
-    const paid = asNumber(formData, "paid_amount") ?? amount;
-    const due = fee !== null ? Math.max(fee - paid, 0) : null;
-    const advance = fee !== null ? Math.max(paid - fee, 0) : null;
+    let fee = asNumber(formData, "fee_amount");
+    let paid = asNumber(formData, "paid_amount") ?? amount;
+    let due = fee !== null ? Math.max(fee - paid, 0) : null;
+    let advance = fee !== null ? Math.max(paid - fee, 0) : null;
     let cashCollection = mode === "cash" ? amount : 0;
     let onlineCollection = mode === "online" ? amount : 0;
     if (mode === "mixed") {
@@ -1202,53 +1261,93 @@ const handlers = {
     const courseId = asString(formData, "course_id");
     const skillCourseId = asString(formData, "skill_course_id");
     const referralCodeText = asString(formData, "referral_code");
-    const photoPath = await uploadReceipt(admin, formData.get("photo"), "payments", requestKey);
     let libraryStudentId: string | null = null;
     let libraryStudentFields: LibraryStudentFormFields | null = null;
     let libraryStudentPhotoUrl: string | null = null;
     let libraryStudentSyncSkipped = false;
+    let libraryPaymentEventKeyPrefix = "library-payment-renewal";
+    let libraryPaymentEventSource = "library_payment";
 
     if (business === "library") {
-      const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
-      if (!parsedStudent.ok) return parsedStudent.result;
-      libraryStudentFields = parsedStudent.fields;
-      const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey);
-      if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
-        return uploadedStudentPhoto;
-      }
-      libraryStudentPhotoUrl = typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null;
-      try {
-        libraryStudentId = await saveLibraryStudentRecord(admin, {
-          id: normalizeLibraryStudentId(asString(formData, "library_student_id")),
-          fields: libraryStudentFields,
-          active: true,
-          photoUrl: libraryStudentPhotoUrl,
-        });
-      } catch (error) {
-        if (!isMissingLibraryStudentSchemaError(error)) throw error;
-        libraryStudentSyncSkipped = true;
-        libraryStudentId = null;
+      const libraryPaymentKind = asString(formData, "library_payment_kind") === "dues" ? "dues" : "renewal";
+      if (libraryPaymentKind === "dues") {
+        libraryPaymentEventKeyPrefix = "library-due-payment";
+        libraryPaymentEventSource = "library_due_payment";
+        libraryStudentId = normalizeLibraryStudentId(asString(formData, "library_student_id"));
+        if (!libraryStudentId) return fail("Select a library student before collecting dues.");
+
+        const studentResponse = await admin.from("library_students").select("*").eq("id", libraryStudentId).single();
+        const studentRecord = typedData<Record<string, string | number | boolean | null>>(studentResponse);
+        if (studentResponse.error || !studentRecord) {
+          if (isMissingLibraryStudentSchemaError(studentResponse.error)) {
+            return fail("Apply the library student migration before collecting dues.");
+          }
+          throw new Error(studentResponse.error?.message ?? "Could not load library student.");
+        }
+
+        const currentFields = fieldsFromLibraryStudentRecord(studentRecord);
+        const previousDue = asNumber(formData, "previous_due_amount") ?? currentFields.duesAmount ?? 0;
+        if (previousDue <= 0) return fail("No dues are pending for this student.");
+
+        const previousPaid = asNumber(formData, "previous_paid_amount") ?? currentFields.paidAmount ?? 0;
+        const nextDue = Math.max(previousDue - amount, 0);
+        const nextAdvance = Math.max(amount - previousDue, 0);
+        fee = currentFields.feeAmount;
+        paid = previousPaid + amount;
+        due = nextDue;
+        advance = nextAdvance;
+        libraryStudentFields = {
+          ...currentFields,
+          paidAmount: paid,
+          duesAmount: nextDue,
+          advanceAmount: nextAdvance,
+        };
+      } else {
+        const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
+        if (!parsedStudent.ok) return parsedStudent.result;
+        libraryStudentFields = parsedStudent.fields;
+        const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey);
+        if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
+          return uploadedStudentPhoto;
+        }
+        libraryStudentPhotoUrl = typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null;
+        try {
+          libraryStudentId = await saveLibraryStudentRecord(admin, {
+            id: normalizeLibraryStudentId(asString(formData, "library_student_id")),
+            fields: libraryStudentFields,
+            active: true,
+            photoUrl: libraryStudentPhotoUrl,
+          });
+        } catch (error) {
+          if (!isMissingLibraryStudentSchemaError(error)) throw error;
+          libraryStudentSyncSkipped = true;
+          libraryStudentId = null;
+        }
       }
     }
 
-    let roomSnapshot = null;
-    if (roomId) {
-      const roomResponse = await admin.from("rooms").select("room_number").eq("id", roomId).single();
-      const room = typedData<{ room_number: string }>(roomResponse);
-      roomSnapshot = room?.room_number ?? null;
-    }
+    const [photoPath, roomResponse, referralResponse] = await Promise.all([
+      uploadReceipt(admin, formData.get("photo"), "payments", requestKey),
+      roomId
+        ? admin.from("rooms").select("room_number").eq("id", roomId).single()
+        : Promise.resolve({ data: null, error: null } satisfies QueryResponse<unknown>),
+      referralCodeText
+        ? admin
+            .from("referral_codes")
+            .select("id, agent_id, discount_type, discount_value, incentive_type, incentive_value")
+            .ilike("code", referralCodeText)
+            .eq("active", true)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null } satisfies QueryResponse<unknown>),
+    ]);
 
+    const room = typedData<{ room_number: string }>(roomResponse);
+    const roomSnapshot = room?.room_number ?? null;
     let referralCodeId = null;
     let referralAgentId = null;
     let discountAmountApplied = 0;
     let incentiveAmount = 0;
     if (referralCodeText) {
-      const referralResponse = await admin
-        .from("referral_codes")
-        .select("id, agent_id, discount_type, discount_value, incentive_type, incentive_value")
-        .ilike("code", referralCodeText)
-        .eq("active", true)
-        .maybeSingle();
       const referral = typedData<{
         id: string;
         agent_id: string | null;
@@ -1276,16 +1375,16 @@ const handlers = {
       dues_amount: due,
       advance_amount: advance,
       payment_date: paymentDate,
-      start_date: asString(formData, "start_date"),
-      end_date: asString(formData, "end_date"),
-      customer_name: asString(formData, "customer_name"),
-      roll_number: asString(formData, "roll_number"),
+      start_date: libraryStudentFields?.subscriptionStartDate ?? asString(formData, "start_date"),
+      end_date: libraryStudentFields?.subscriptionEndDate ?? asString(formData, "end_date"),
+      customer_name: libraryStudentFields?.studentName ?? asString(formData, "customer_name"),
+      roll_number: libraryStudentFields?.rollNumber ?? asString(formData, "roll_number"),
       room_id: roomId,
       room_number_snapshot: roomSnapshot,
-      seat_number: asString(formData, "seat_number"),
-      start_time: asString(formData, "start_time"),
-      end_time: asString(formData, "end_time"),
-      slot_hours: asNumber(formData, "slot_hours"),
+      seat_number: libraryStudentFields?.seatNumber ?? asString(formData, "seat_number"),
+      start_time: libraryStudentFields?.startTime ?? asString(formData, "start_time"),
+      end_time: libraryStudentFields?.endTime ?? asString(formData, "end_time"),
+      slot_hours: libraryStudentFields?.slotHours ?? asNumber(formData, "slot_hours"),
       course_id: courseId,
       skill_course_id: skillCourseId,
       referral_code_id: referralCodeId,
@@ -1369,14 +1468,14 @@ const handlers = {
         await upsertLibraryStudentEvent(admin, {
           studentId: libraryStudentId,
           paymentId: payment.id,
-          eventKey: `library-payment-renewal:${payment.id}`,
+          eventKey: `${libraryPaymentEventKeyPrefix}:${payment.id}`,
           eventType: "payment_renewal",
           eventDate: paymentDate,
-          source: "library_payment",
+          source: libraryPaymentEventSource,
           fields: libraryStudentFields,
           active: true,
           createdBy: profile.id,
-          metadata: { amount, mode },
+          metadata: { amount, mode, payment_kind: libraryPaymentEventSource },
         });
       } catch (error) {
         if (!isMissingLibraryStudentSchemaError(error)) throw error;
@@ -1442,12 +1541,23 @@ const handlers = {
       return uploadedStudentPhoto;
     }
 
+    const uploadedAadharPhoto = await uploadLibraryStudentAadharPhoto(
+      admin,
+      profile.id,
+      formData.get("aadhar_photo"),
+      idempotencyKey ?? crypto.randomUUID(),
+    );
+    if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
+      return uploadedAadharPhoto;
+    }
+
     const active = !asBool(formData, "inactive");
     await saveLibraryStudentIdentityRecord(admin, {
       id: asString(formData, "id"),
       fields: parsedStudent.fields,
       active,
       photoUrl: typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null,
+      aadharPhotoUrl: typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null,
     });
 
     return ok(active ? "Library student saved." : "Library student moved to inactive.");
@@ -2379,13 +2489,7 @@ const handlers = {
       return ok(direction === "received_from_user" ? "Received payment recorded." : "Sent payment recorded.");
     }
 
-    const senderLedgerResponse = await admin
-      .from("ledger_entries")
-      .select("amount")
-      .eq("account_profile_id", fromProfileId)
-      .lte("entry_date", settlementDate);
-    const senderLedger = typedDataArray<{ amount: number | string | null }>(senderLedgerResponse);
-    const senderBalance = senderLedger.reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
+    const senderBalance = await profileCashBalanceAt(admin, fromProfileId, settlementDate);
     if (!senderOwnerish) {
       if (senderBalance <= 0) return fail("No cash is available to send from this user.");
       if (amount > senderBalance) return fail("Amount is higher than this user's closing balance.");

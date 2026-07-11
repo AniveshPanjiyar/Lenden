@@ -46,7 +46,7 @@ function isMissingDbSchemaError(error: { code?: string; message?: string } | nul
 }
 
 function isMissingLibraryStudentSchemaError(error: { code?: string; message?: string } | null | undefined) {
-  return isMissingDbSchemaError(error, ["library_students", "library_student_id", "library_student_subscription_events"]);
+  return isMissingDbSchemaError(error, ["aadhar_number", "aadhar_photo_url", "library_students", "library_student_id", "library_student_subscription_events"]);
 }
 
 function normalizeLibraryRollNumber(value: string | null | undefined) {
@@ -135,6 +135,8 @@ function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: 
       phone_number: null,
       address: null,
       photo_url: null,
+      aadhar_number: null,
+      aadhar_photo_url: null,
       student_name: payment.customer_name,
       seat_number: payment.seat_number,
       locker_number: null,

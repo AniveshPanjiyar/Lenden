@@ -79,7 +79,37 @@ type ToastNotice = ActionResult & { id: string };
 type ActionModal = "positive" | "negative" | null;
 type PositiveFlow = BusinessType | "receive_money";
 type NegativeFlow = "expense" | "send_money" | "agent_settlement";
+type ClientAction = (formData: FormData) => Promise<ActionResult>;
+type MutationRefreshScope = "dashboard" | "bootstrap" | "dashboard-library" | "none";
+type MutationRefreshDetail = {
+  scope: MutationRefreshScope;
+  savingMessageKey: string;
+  refreshingMessageKey: string;
+};
 type SettlementDirection = "received_from_user" | "sent_to_user";
+type LibraryMemberMode = "new" | "existing";
+type LibraryStudentListMode = "active" | "live" | "inactive";
+type StudentRecordSource =
+  | { id: "library"; type: "library"; label: string }
+  | { id: string; type: "mainCourse" | "skillCourse"; label: string; course: Course };
+type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "mainCourse" | "skillCourse" }>;
+type CourseStudentRecord = {
+  id: string;
+  displayName: string;
+  rollNumber: string | null;
+  courseName: string;
+  seatNumber: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  subscriptionStartDate: string | null;
+  subscriptionEndDate: string | null;
+  lastPaymentDate: string;
+  feeAmount: number | null;
+  paidAmount: number | null;
+  duesAmount: number | null;
+  advanceAmount: number | null;
+  active: boolean;
+};
 type NormalizedDateRange = {
   from: string;
   to: string;
@@ -202,6 +232,8 @@ const messages: Record<Language, Record<string, string>> = {
     acceptTransfer: "Accept transfer",
     active: "Active",
     address: "Address",
+    aadharCardPhoto: "Aadhar card photo",
+    aadharNumber: "Aadhar number",
     addSubscription: "Add subscription",
     addCourse: "Add course",
     addExpense: "Add expense",
@@ -252,6 +284,7 @@ const messages: Record<Language, Record<string, string>> = {
     code: "Code",
     closeNavigation: "Close navigation",
     closeModal: "Close modal",
+    collectDue: "Collect due",
     collectPayment: "Collect payment",
     collectMoney: "Collect money",
     collections: "Collections",
@@ -284,14 +317,19 @@ const messages: Record<Language, Record<string, string>> = {
     discountPercent: "Discount %",
     discountType: "Discount type",
     dues: "Dues",
+    duesCollectionHelp: "This receipt will reduce the pending dues for the existing subscription only.",
     email: "Email",
     endDate: "End date",
     endTime: "End time",
     editTransaction: "Edit",
+    expired: "Expired",
     expense: "Expense",
     expenseDate: "Expense date",
     expenses: "Expenses",
     exportCsv: "Export CSV",
+    expiryNotSet: "Expiry not set",
+    expiresIn: "Expires in",
+    expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
     filterPayments: "Filter payments",
@@ -316,11 +354,18 @@ const messages: Record<Language, Record<string, string>> = {
     ledgerEntry: "Ledger entry",
     library: "Library",
     libraryStudent: "Library student",
-    libraryStudents: "Library Students",
+    libraryStudents: "Students",
+    memberType: "Member type",
+    existingMember: "Existing member",
+    renewSubscription: "Renew subscription",
     studentDetails: "Student details",
     studentRecords: "Student records",
     studentSearch: "Search student",
     activeStudents: "Active students",
+    ago: "ago",
+    day: "day",
+    days: "days",
+    liveStudents: "LIVE students",
     inactiveStudents: "Inactive students",
     expiredSubscription: "Expired subscription",
     expiresOn: "Expires on",
@@ -382,6 +427,7 @@ const messages: Record<Language, Record<string, string>> = {
     paymentsFor: "Payments for",
     paymentsOnly: "Payments only",
     pendingCashInHand: "Pending cash in hand",
+    pendingDues: "Pending dues",
     pendingReviewAmount: "Pending review amount",
     pendingReviewItems: "Pending review items",
     pendingPayout: "Pending incentive",
@@ -419,12 +465,13 @@ const messages: Record<Language, Record<string, string>> = {
     transferCashAmount: "Transfer cash",
     transferToStaff: "Transfer to staff",
     transferTransaction: "Transfer",
-    reviewAndSettle: "Review & Settle",
+    viewPhoto: "View photo",
+    reviewAndSettle: "Review",
     reviewToday: "Today",
     reviewPending: "Pending",
     reviewPendingButton: "Review pending",
     reviewPendingFirst: "Review pending first",
-    reviewSettlementNotice: "Only approved transactions will be locked and settled. Post-approval, only the owner can edit records. Please review carefully.",
+    reviewSettlementNotice: "Review pending transactions carefully before recording received cash.",
     settlementAmountHelp: "Enter only the cash actually received for this settlement.",
     role: "Role",
     roll: "Roll",
@@ -437,6 +484,10 @@ const messages: Record<Language, Record<string, string>> = {
     salesAgent: "Sales agent",
     save: "Save",
     saving: "Saving...",
+    savingChanges: "Saving changes...",
+    savingTransaction: "Saving transaction...",
+    updatingAppData: "Updating app data...",
+    updatingTransactionList: "Updating transaction list...",
     select: "Select",
     selectAgent: "Select agent",
     selectAnotherType: "Select another type",
@@ -522,6 +573,8 @@ const messages: Record<Language, Record<string, string>> = {
     acceptTransfer: "ट्रांसफर मान लें",
     active: "चालू",
     address: "पता",
+    aadharCardPhoto: "आधार कार्ड फोटो",
+    aadharNumber: "आधार नंबर",
     addSubscription: "सब्सक्रिप्शन जोड़ें",
     addCourse: "कोर्स जोड़ें",
     addExpense: "खर्च जोड़ें",
@@ -572,6 +625,7 @@ const messages: Record<Language, Record<string, string>> = {
     code: "कोड",
     closeNavigation: "मेनू बंद करें",
     closeModal: "बंद करें",
+    collectDue: "बाकी जमा करें",
     collectPayment: "पैसा जमा करें",
     collectMoney: "पैसा लें",
     collections: "कलेक्शन",
@@ -604,14 +658,19 @@ const messages: Record<Language, Record<string, string>> = {
     discountPercent: "छूट %",
     discountType: "छूट प्रकार",
     dues: "बाकी",
+    duesCollectionHelp: "यह भुगतान पुराने सब्सक्रिप्शन की बाकी रकम ही कम करेगा।",
     email: "ईमेल",
     endDate: "खत्म तारीख",
     endTime: "खत्म समय",
     editTransaction: "बदलें",
+    expired: "खत्म",
     expense: "खर्च",
     expenseDate: "खर्च तारीख",
     expenses: "खर्च",
     exportCsv: "CSV निकालें",
+    expiryNotSet: "खत्म तारीख नहीं है",
+    expiresIn: "इतने दिन में खत्म",
+    expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
     filterPayments: "छांटें",
@@ -636,11 +695,18 @@ const messages: Record<Language, Record<string, string>> = {
     ledgerEntry: "हिसाब एंट्री",
     library: "लाइब्रेरी",
     libraryStudent: "लाइब्रेरी छात्र",
-    libraryStudents: "लाइब्रेरी छात्र",
+    libraryStudents: "छात्र",
+    memberType: "सदस्य प्रकार",
+    existingMember: "पुराना सदस्य",
+    renewSubscription: "सब्सक्रिप्शन रिन्यू करें",
     studentDetails: "छात्र जानकारी",
     studentRecords: "छात्र रिकॉर्ड",
     studentSearch: "छात्र खोजें",
     activeStudents: "चालू छात्र",
+    ago: "पहले",
+    day: "दिन",
+    days: "दिन",
+    liveStudents: "LIVE छात्र",
     inactiveStudents: "बंद छात्र",
     expiredSubscription: "सब्सक्रिप्शन खत्म",
     expiresOn: "खत्म तारीख",
@@ -702,6 +768,7 @@ const messages: Record<Language, Record<string, string>> = {
     paymentsFor: "इस तारीख का पैसा",
     paymentsOnly: "सिर्फ जमा पैसा",
     pendingCashInHand: "पेंडिंग हाथ की नकद",
+    pendingDues: "बाकी रकम",
     pendingReviewAmount: "बाकी जांच रकम",
     pendingReviewItems: "बाकी जांच एंट्री",
     pendingPayout: "बाकी कमिशन",
@@ -739,12 +806,13 @@ const messages: Record<Language, Record<string, string>> = {
     transferCashAmount: "नकद ट्रांसफर",
     transferToStaff: "स्टाफ को ट्रांसफर करें",
     transferTransaction: "ट्रांसफर",
-    reviewAndSettle: "जांचें और जमा करें",
+    viewPhoto: "फोटो देखें",
+    reviewAndSettle: "जांचें",
     reviewToday: "आज",
     reviewPending: "बाकी",
     reviewPendingButton: "बाकी जांचें",
     reviewPendingFirst: "पहले बाकी जांचें",
-    reviewSettlementNotice: "सिर्फ मंजूर एंट्री लॉक और सेटल होंगी। मंजूरी के बाद सिर्फ मालिक रिकॉर्ड बदल सकता है। ध्यान से जांचें।",
+    reviewSettlementNotice: "नकद मिला दर्ज करने से पहले बाकी एंट्री ध्यान से जांचें।",
     settlementAmountHelp: "इस सेटलमेंट में जितनी नकद सच में मिली है, सिर्फ वही रकम डालें।",
     role: "काम",
     roll: "रोल",
@@ -757,6 +825,10 @@ const messages: Record<Language, Record<string, string>> = {
     salesAgent: "सेल्स एजेंट",
     save: "सेव",
     saving: "सेव हो रहा है...",
+    savingChanges: "बदलाव सेव हो रहे हैं...",
+    savingTransaction: "लेनदेन सेव हो रहा है...",
+    updatingAppData: "ऐप डेटा अपडेट हो रहा है...",
+    updatingTransactionList: "लेनदेन सूची अपडेट हो रही है...",
     select: "चुनें",
     selectAgent: "एजेंट चुनें",
     selectAnotherType: "दूसरा प्रकार चुनें",
@@ -907,6 +979,88 @@ function labelForStatus(status: string, t: (key: string) => string) {
   return t("language") === messages.hi.language ? hiStatusLabels[key] ?? status.replaceAll("_", " ") : statusLabels[key] ?? status.replaceAll("_", " ");
 }
 
+const actionStartedEvent = "lenden:action-started";
+const actionEndedEvent = "lenden:action-ended";
+const mutationCommittedEvent = "lenden:mutation-committed";
+
+const transactionRefreshActions = new Set<ClientAction>([
+  approveRecordAction,
+  cancelRecordAction,
+  createAgentSettlementAction,
+  createExpenseAction,
+  createPaymentAction,
+  reviewChangeRequestAction,
+  requestPaymentTransferAction,
+  respondPaymentTransferAction,
+  settleCashAction,
+  updateRecordAction,
+]);
+
+const bootstrapRefreshActions = new Set<ClientAction>([
+  changeUserPasswordAction,
+  createStaffAction,
+  deleteCourseAction,
+  deleteReferralAction,
+  deleteRoomAction,
+  deleteUserAction,
+  saveCourseAction,
+  saveReferralAction,
+  saveRoomAction,
+  saveStaffPermissionsAction,
+  updateProfileAction,
+]);
+
+const libraryRefreshActions = new Set<ClientAction>([
+  saveLibraryStudentAction,
+  setLibraryStudentStatusAction,
+]);
+
+function setDocumentAppBusy(busy: boolean) {
+  if (typeof document === "undefined") return;
+  if (busy) {
+    document.body.dataset.lendenBusy = "true";
+    return;
+  }
+  delete document.body.dataset.lendenBusy;
+}
+
+function documentAppBusy() {
+  return typeof document !== "undefined" && document.body.dataset.lendenBusy === "true";
+}
+
+function mutationRefreshDetail(action: ClientAction, formData: FormData): MutationRefreshDetail {
+  const isLibraryPayment = action === createPaymentAction && formData.get("business_type") === "library";
+  if (libraryRefreshActions.has(action) || isLibraryPayment) {
+    return {
+      scope: "dashboard-library",
+      savingMessageKey: action === createPaymentAction ? "savingTransaction" : "savingChanges",
+      refreshingMessageKey: action === createPaymentAction ? "updatingTransactionList" : "updatingAppData",
+    };
+  }
+
+  if (transactionRefreshActions.has(action)) {
+    return {
+      scope: "dashboard",
+      savingMessageKey: "savingTransaction",
+      refreshingMessageKey: "updatingTransactionList",
+    };
+  }
+
+  if (bootstrapRefreshActions.has(action)) {
+    return {
+      scope: "bootstrap",
+      savingMessageKey: "savingChanges",
+      refreshingMessageKey: "updatingAppData",
+    };
+  }
+
+  return {
+    scope: "none",
+    savingMessageKey: "savingChanges",
+    refreshingMessageKey: "updatingAppData",
+  };
+}
+
 function formValidationMessage(form: HTMLFormElement) {
   const invalid = form.querySelector(":invalid") as
     | (HTMLInputElement & { validationMessage?: string; reportValidity?: () => boolean })
@@ -960,7 +1114,7 @@ function clearFormIdempotencyKey(form: HTMLFormElement) {
 
 function submitWith(
   event: FormEvent<HTMLFormElement>,
-  action: (formData: FormData) => Promise<ActionResult>,
+  action: ClientAction,
   setNotice: (notice: ActionResult | null) => void,
   startTransition: ReturnType<typeof useTransition>[1],
   reset = true,
@@ -971,8 +1125,11 @@ function submitWith(
     setNotice({ ok: false, message: formValidationMessage(form) });
     return;
   }
-  if (form.dataset.submitting === "true") return;
+  if (form.dataset.submitting === "true" || documentAppBusy()) return;
   const formData = formDataWithIdempotencyKey(form);
+  const refreshDetail = mutationRefreshDetail(action, formData);
+  setDocumentAppBusy(true);
+  window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
@@ -980,15 +1137,18 @@ function submitWith(
       clearFormIdempotencyKey(form);
       setNotice(result);
       if (result.ok) {
-        window.dispatchEvent(new CustomEvent("lenden:mutation-success"));
+        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, { detail: refreshDetail }));
         if (reset) form.reset();
         form.closest("details.history-actions-menu")?.removeAttribute("open");
+      } else {
+        window.dispatchEvent(new CustomEvent(actionEndedEvent));
       }
     } catch (error) {
       setNotice({
         ok: false,
         message: error instanceof Error ? error.message : "Network error. Please check your connection and try again.",
       });
+      window.dispatchEvent(new CustomEvent(actionEndedEvent));
     } finally {
       setFormSubmitting(form, false);
     }
@@ -997,7 +1157,7 @@ function submitWith(
 
 function submitAndClose(
   event: FormEvent<HTMLFormElement>,
-  action: (formData: FormData) => Promise<ActionResult>,
+  action: ClientAction,
   setNotice: (notice: ActionResult | null) => void,
   startTransition: ReturnType<typeof useTransition>[1],
   onSuccess: () => void,
@@ -1008,8 +1168,11 @@ function submitAndClose(
     setNotice({ ok: false, message: formValidationMessage(form) });
     return;
   }
-  if (form.dataset.submitting === "true") return;
+  if (form.dataset.submitting === "true" || documentAppBusy()) return;
   const formData = formDataWithIdempotencyKey(form);
+  const refreshDetail = mutationRefreshDetail(action, formData);
+  setDocumentAppBusy(true);
+  window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
@@ -1017,15 +1180,18 @@ function submitAndClose(
       clearFormIdempotencyKey(form);
       setNotice(result);
       if (result.ok) {
-        window.dispatchEvent(new CustomEvent("lenden:mutation-success"));
+        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, { detail: refreshDetail }));
         form.reset();
         onSuccess();
+      } else {
+        window.dispatchEvent(new CustomEvent(actionEndedEvent));
       }
     } catch (error) {
       setNotice({
         ok: false,
         message: error instanceof Error ? error.message : "Network error. Please check your connection and try again.",
       });
+      window.dispatchEvent(new CustomEvent(actionEndedEvent));
     } finally {
       setFormSubmitting(form, false);
     }
@@ -1335,6 +1501,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [selectedPositive, setSelectedPositive] = useState<PositiveFlow | null>(null);
   const [selectedNegative, setSelectedNegative] = useState<NegativeFlow | null>(null);
   const [pending, startTransition] = useTransition();
+  const [actionBusyMessageKey, setActionBusyMessageKey] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const initialDashboardData = useMemo(() => dashboardFromAppData(data), [data]);
   const initialDashboardParams = useMemo(
@@ -1389,15 +1556,69 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, []);
 
   useEffect(() => {
-    function refreshCachedData() {
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      void queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
-      void queryClient.invalidateQueries({ queryKey: ["library-student-history"] });
+    function startBusy(event: Event) {
+      const detail = (event as CustomEvent<MutationRefreshDetail>).detail;
+      setDocumentAppBusy(true);
+      setActionBusyMessageKey(detail?.savingMessageKey ?? "savingChanges");
     }
 
-    window.addEventListener("lenden:mutation-success", refreshCachedData);
-    return () => window.removeEventListener("lenden:mutation-success", refreshCachedData);
-  }, [queryClient]);
+    function endBusy() {
+      setActionBusyMessageKey(null);
+      setDocumentAppBusy(false);
+    }
+
+    async function refreshCachedData(detail: MutationRefreshDetail) {
+      setDocumentAppBusy(true);
+      setActionBusyMessageKey(detail.refreshingMessageKey);
+
+      try {
+        const refreshes: Promise<unknown>[] = [];
+        if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
+          refreshes.push(
+            queryClient.refetchQueries({
+              queryKey: ["dashboard", dashboardParams],
+              exact: true,
+              type: "active",
+            }),
+          );
+        }
+        if (detail.scope === "bootstrap") {
+          refreshes.push(
+            queryClient.refetchQueries({
+              queryKey: ["bootstrap"],
+              exact: true,
+              type: "active",
+            }),
+          );
+        }
+        if (detail.scope === "dashboard-library") {
+          refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history"] }));
+        }
+        await Promise.all(refreshes);
+      } finally {
+        endBusy();
+      }
+    }
+
+    function commitMutation(event: Event) {
+      const detail = (event as CustomEvent<MutationRefreshDetail>).detail ?? {
+        scope: "none",
+        savingMessageKey: "savingChanges",
+        refreshingMessageKey: "updatingAppData",
+      };
+      void refreshCachedData(detail);
+    }
+
+    window.addEventListener(actionStartedEvent, startBusy);
+    window.addEventListener(actionEndedEvent, endBusy);
+    window.addEventListener(mutationCommittedEvent, commitMutation);
+    return () => {
+      window.removeEventListener(actionStartedEvent, startBusy);
+      window.removeEventListener(actionEndedEvent, endBusy);
+      window.removeEventListener(mutationCommittedEvent, commitMutation);
+      setDocumentAppBusy(false);
+    };
+  }, [dashboardParams, queryClient]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1680,6 +1901,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const activeDateRangeOptions = dateRangeOptions;
   const showSharedDateRange = tab === "home" || tab === "payments";
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent;
+  const showPageHeadingRow = tab !== "library_students";
+  const busyMessage = actionBusyMessageKey ? t(actionBusyMessageKey) : pending ? t("saving") : null;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
@@ -1755,66 +1978,68 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
         <main className="app-main flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8 w-full" onInvalidCapture={handleInvalid}>
           <div className="app-main-inner max-w-4xl mx-auto space-y-8">
-            <div className="page-heading-row flex justify-between items-center">
-              <div className="flex items-center gap-3 md:hidden">
-                <h1 className="mobile-page-title font-headline text-2xl font-bold text-on-surface">
-                  {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
-                </h1>
+            {showPageHeadingRow ? (
+              <div className="page-heading-row flex justify-between items-center">
+                <div className="flex items-center gap-3 md:hidden">
+                  <h1 className="mobile-page-title font-headline text-2xl font-bold text-on-surface">
+                    {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
+                  </h1>
+                </div>
+
+                <div className="page-controls controls-row flex items-center gap-2 ml-auto">
+                  {tab === "closing" ? (
+                    <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
+                      <CalendarDays size={19} />
+                      <input
+                        aria-label={t("settlementDate")}
+                        type="date"
+                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
+                        value={closingDate}
+                        onChange={(event) => {
+                          const nextDate = event.target.value || todayIso();
+                          setDateRange({ preset: "custom", from: nextDate, to: nextDate });
+                        }}
+                      />
+                    </div>
+                  ) : showSharedDateRange ? (
+                    <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
+                      <CalendarDays size={19} />
+                      <select
+                        aria-label={t("dateRange")}
+                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
+                        value={dateRange.preset}
+                        onChange={(event) => setDateRange((current) => rangeForPreset(event.target.value as DateRangePreset, current))}
+                      >
+                        {activeDateRangeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {t(option.labelKey)}
+                          </option>
+                        ))}
+                      </select>
+                      {dateRange.preset === "custom" ? (
+                        <div className="custom-date-inputs flex items-center gap-2 border-l border-outline-variant/30 pl-2 ml-2">
+                          <input
+                            aria-label={t("startDate")}
+                            type="date"
+                            className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
+                            value={dateRange.from}
+                            onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", from: event.target.value }))}
+                          />
+                          <span className="text-xs text-on-surface-variant font-bold">{t("rangeTo")}</span>
+                          <input
+                            aria-label={t("endDate")}
+                            type="date"
+                            className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
+                            value={dateRange.to}
+                            onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", to: event.target.value }))}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              
-              <div className="page-controls controls-row flex items-center gap-2 ml-auto">
-                {tab === "closing" ? (
-                  <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
-                    <CalendarDays size={19} />
-                    <input
-                      aria-label={t("settlementDate")}
-                      type="date"
-                      className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                      value={closingDate}
-                      onChange={(event) => {
-                        const nextDate = event.target.value || todayIso();
-                        setDateRange({ preset: "custom", from: nextDate, to: nextDate });
-                      }}
-                    />
-                  </div>
-                ) : showSharedDateRange ? (
-                  <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
-                    <CalendarDays size={19} />
-                    <select
-                      aria-label={t("dateRange")}
-                      className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                      value={dateRange.preset}
-                      onChange={(event) => setDateRange((current) => rangeForPreset(event.target.value as DateRangePreset, current))}
-                    >
-                      {activeDateRangeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {t(option.labelKey)}
-                        </option>
-                      ))}
-                    </select>
-                    {dateRange.preset === "custom" ? (
-                      <div className="custom-date-inputs flex items-center gap-2 border-l border-outline-variant/30 pl-2 ml-2">
-                        <input
-                          aria-label={t("startDate")}
-                          type="date"
-                          className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                          value={dateRange.from}
-                          onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", from: event.target.value }))}
-                        />
-                        <span className="text-xs text-on-surface-variant font-bold">{t("rangeTo")}</span>
-                        <input
-                          aria-label={t("endDate")}
-                          type="date"
-                          className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                          value={dateRange.to}
-                          onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", to: event.target.value }))}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
+            ) : null}
 
             {showQuickActions ? (
               <BottomActions
@@ -1825,8 +2050,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            <ToastStack toasts={toasts} pending={pending} savingLabel={t("saving")} dismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
-            {pending ? <div className="action-lock" aria-hidden="true" /> : null}
+            <ToastStack toasts={toasts} pending={false} savingLabel={busyMessage ?? t("saving")} dismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
+            {busyMessage ? (
+              <div className="action-lock" role="status" aria-live="polite" aria-label={busyMessage}>
+                <div className="action-lock-card">
+                  <span className="toast-icon saving-dot" aria-hidden="true" />
+                  <strong>{busyMessage}</strong>
+                </div>
+              </div>
+            ) : null}
             {notificationsOpen ? (
               <NotificationSheet
                 notifications={notifications}
@@ -1856,6 +2088,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               <TransactionsView
                 dateLabel={selectedDateRangeLabel}
                 dateRange={selectedDateRange}
+                dateRangePreset={dateRange.preset}
                 transactionFilter={transactionFilter}
                 setTransactionFilter={setTransactionFilter}
                 transactionProfileId={transactionUserId}
@@ -1881,6 +2114,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               <LibraryStudentsView
                 students={appData.libraryStudents}
                 payments={appData.payments}
+                courses={appData.courses}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -1952,6 +2186,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
+          payments={appData.payments}
           libraryStudents={appData.libraryStudents}
           moneyMovementProfiles={moneyMovementProfiles}
           settlementDate={closingDate}
@@ -2764,6 +2999,7 @@ function HomeView({
 function TransactionsView({
   dateLabel,
   dateRange,
+  dateRangePreset,
   transactionFilter,
   setTransactionFilter,
   transactionProfileId,
@@ -2785,6 +3021,7 @@ function TransactionsView({
 }: {
   dateLabel: string;
   dateRange: NormalizedDateRange;
+  dateRangePreset: DateRangePreset;
   transactionFilter: TransactionFilter;
   setTransactionFilter: (filter: TransactionFilter) => void;
   transactionProfileId: string;
@@ -2882,8 +3119,11 @@ function TransactionsView({
       linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id))
     );
 
+    const historyDateInScope = (isoDate: string, pendingApproval: boolean) =>
+      pendingApproval ? pendingRecordInScope(isoDate, dateRange, dateRangePreset) : dateInRange(isoDate, dateRange);
+
     const paymentRows = currentUserIsSalesAgent ? [] : payments
-      .filter((payment) => dateInRange(payment.payment_date, dateRange))
+      .filter((payment) => historyDateInScope(payment.payment_date, isEffectivelyPendingPayment(payment, ownerProfileIds)))
       .filter((payment) => payment.record_status === "active")
       .flatMap((payment): HistoryRecord[] => {
         const linkedTransfers = paymentTransfers(movements, payment.id);
@@ -3060,7 +3300,7 @@ function TransactionsView({
         return rows;
       });
     const expenseRows = currentUserIsSalesAgent ? [] : expenses
-      .filter((expense) => dateInRange(expense.expense_date, dateRange))
+      .filter((expense) => historyDateInScope(expense.expense_date, isEffectivelyPendingExpense(expense, ownerProfileIds)))
       .filter((expense) => expense.record_status === "active")
       .filter((expense) => userMatches(expense.spent_by))
       .flatMap((expense): HistoryRecord[] => {
@@ -3134,7 +3374,7 @@ function TransactionsView({
           const counterpartyId = selectedStaffAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
           const entry = pendingMovement ? null : movementEntry(movement, selectedStaffAmount, selectedUserId);
           const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
-          if (!dateInRange(date, dateRange)) return [];
+          if (!historyDateInScope(date, pendingMovement)) return [];
           const staffCashIn = selectedStaffAmount > 0;
           const incomingOwnerCash = selectedStaffAmount > 0 && fromOwnerish && !toOwnerish;
           const outgoingOwnerSettlement = selectedStaffAmount < 0 && toOwnerish;
@@ -3169,7 +3409,7 @@ function TransactionsView({
         if (!userMatches(counterpartyId)) return [];
         const entry = pendingMovement ? null : movementEntry(movement, ownerFacingAmount);
         const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
-        if (!dateInRange(date, dateRange)) return [];
+        if (!historyDateInScope(date, pendingMovement)) return [];
         const counterpartyName = profileName(profiles, counterpartyId, t);
         return [{
           id: `movement-${movement.id}`,
@@ -3205,7 +3445,7 @@ function TransactionsView({
       const counterpartyId = staffFacingAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
       const entry = pendingMovement ? null : movementEntry(movement, staffFacingAmount, profile.id);
       const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
-      if (!dateInRange(date, dateRange)) return [];
+      if (!historyDateInScope(date, pendingMovement)) return [];
       const staffCashIn = staffFacingAmount > 0;
       const incomingOwnerCash = staffFacingAmount > 0 && fromOwnerish && !toOwnerish;
       const outgoingOwnerSettlement = staffFacingAmount < 0 && toOwnerish;
@@ -3238,7 +3478,7 @@ function TransactionsView({
       const visibleToOwner = owner && userMatches(settlement.agent_id);
       const visibleToAgent = !owner && settlement.agent_id === profile.id && userMatches(settlement.agent_id);
       if (!visibleToOwner && !visibleToAgent) return [];
-      if (!dateInRange(settlement.created_at, dateRange)) return [];
+      if (!historyDateInScope(settlement.created_at, settlement.status === "pending")) return [];
       return [{
         id: `agent-${settlement.id}`,
         kind: "agent_payout",
@@ -3266,7 +3506,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
     if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
     if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
@@ -3666,6 +3906,32 @@ function displayTime(value: string | null) {
   return value ? value.slice(0, 5) : "";
 }
 
+function timeToMinutes(value: string | null | undefined) {
+  const match = value?.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function currentMinuteOfDay() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function isTimeRangeLiveNow(startTime: string | null | undefined, endTime: string | null | undefined, minuteOfDay: number) {
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  if (start === null || end === null || start === end) return false;
+  if (start < end) return minuteOfDay >= start && minuteOfDay < end;
+  return minuteOfDay >= start || minuteOfDay < end;
+}
+
+function isLibraryStudentLiveNow(student: LibraryStudent, minuteOfDay: number) {
+  return isTimeRangeLiveNow(student.start_time, student.end_time, minuteOfDay);
+}
+
 function displayDate(value: string | null | undefined) {
   if (!value) return "-";
   const [year, month, day] = value.slice(0, 10).split("-");
@@ -3677,6 +3943,34 @@ function displayDateRange(startDate: string | null | undefined, endDate: string 
   if (endDate) return `${t("until")} ${displayDate(endDate)}`;
   if (startDate) return `${t("from")} ${displayDate(startDate)}`;
   return "-";
+}
+
+function isoDateUtcMs(value: string | null | undefined) {
+  const dateText = value?.slice(0, 10);
+  if (!dateText || !/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const [year, month, day] = dateText.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function daysBetweenIsoDates(from: string, to: string | null | undefined) {
+  const fromMs = isoDateUtcMs(from);
+  const toMs = isoDateUtcMs(to);
+  if (fromMs === null || toMs === null) return null;
+  return Math.round((toMs - fromMs) / 86400000);
+}
+
+function subscriptionExpiryStatusLabel(endDate: string | null | undefined, today: string, t: (key: string) => string) {
+  const dayDelta = daysBetweenIsoDates(today, endDate);
+  if (dayDelta === null) return t("expiryNotSet");
+  const dayCount = Math.abs(dayDelta);
+  const dayLabel = dayCount === 1 ? t("day") : t("days");
+  if (dayDelta < 0) return `${t("expired")} ${dayCount} ${dayLabel} ${t("ago")}`;
+  if (dayDelta === 0) return t("expiresToday");
+  return `${t("expiresIn")} ${dayDelta} ${dayLabel}`;
+}
+
+function libraryExpiryStatusLabel(student: LibraryStudent, today: string, t: (key: string) => string) {
+  return subscriptionExpiryStatusLabel(student.subscription_end_date, today, t);
 }
 
 function displayTimeRange(startTime: string | null, endTime: string | null) {
@@ -3718,6 +4012,19 @@ function compareLibraryRollNumbers(a: string | null | undefined, b: string | nul
   if (left.numeric !== null && right.numeric === null) return -1;
   if (left.numeric === null && right.numeric !== null) return 1;
   return left.text.localeCompare(right.text, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareLibraryStudentsByExpiry(a: LibraryStudent, b: LibraryStudent, t: (key: string) => string) {
+  const aExpiry = isoDateUtcMs(a.subscription_end_date);
+  const bExpiry = isoDateUtcMs(b.subscription_end_date);
+  if (aExpiry !== null && bExpiry !== null && aExpiry !== bExpiry) return aExpiry - bExpiry;
+  if (aExpiry !== null && bExpiry === null) return -1;
+  if (aExpiry === null && bExpiry !== null) return 1;
+
+  return (
+    compareLibraryRollNumbers(studentDisplayRollNumber(a), studentDisplayRollNumber(b)) ||
+    studentDisplayName(a, t).localeCompare(studentDisplayName(b, t), undefined, { sensitivity: "base" })
+  );
 }
 
 function isExpiredLibraryStudent(student: LibraryStudent, today: string) {
@@ -3762,6 +4069,26 @@ function nextLibraryRollNumber(students: LibraryStudent[]) {
   return nextRollNumber.padStart(largestWidth, "0");
 }
 
+function nextCourseRollNumber(records: CourseStudentRecord[]) {
+  let largestValue = -1;
+  let largestWidth = 0;
+
+  records.forEach((record) => {
+    const rollNumber = normalizeLibraryRollNumberForView(record.rollNumber);
+    if (!rollNumber || !/^\d+$/.test(rollNumber)) return;
+    const numericRoll = Number(rollNumber);
+    if (!Number.isSafeInteger(numericRoll)) return;
+    if (numericRoll > largestValue || (numericRoll === largestValue && rollNumber.length > largestWidth)) {
+      largestValue = numericRoll;
+      largestWidth = rollNumber.length;
+    }
+  });
+
+  if (largestValue < 0) return "1";
+  const nextRollNumber = String(largestValue + 1);
+  return nextRollNumber.padStart(largestWidth, "0");
+}
+
 function isNumericLibraryRoll(value: string | null | undefined) {
   const normalized = normalizeLibraryRollNumberForView(value);
   return Boolean(normalized && /^\d+$/.test(normalized));
@@ -3777,6 +4104,26 @@ function studentDisplayRollNumber(student: LibraryStudent) {
   return studentHasSwappedRollAndName(student) ? student.student_name?.trim() ?? student.roll_number : student.roll_number;
 }
 
+function StudentAvatar({
+  displayName,
+  imageUrl,
+  className = "",
+}: {
+  displayName: string;
+  imageUrl?: string | null;
+  className?: string;
+}) {
+  const avatarUrl = imageUrl ?? getProfileImage(displayName);
+  return (
+    <span
+      className={`library-student-photo ${className}`}
+      role="img"
+      aria-label={`${displayName} photo`}
+      style={{ backgroundImage: `url("${avatarUrl.replace(/"/g, "%22")}")` }}
+    />
+  );
+}
+
 function StudentPhoto({
   student,
   displayName,
@@ -3787,14 +4134,7 @@ function StudentPhoto({
   className?: string;
 }) {
   const imageUrl = getProfileImage(displayName, student.photo_url);
-  return (
-    <span
-      className={`library-student-photo ${className}`}
-      role="img"
-      aria-label={`${displayName} photo`}
-      style={{ backgroundImage: `url("${imageUrl.replace(/"/g, "%22")}")` }}
-    />
-  );
+  return <StudentAvatar displayName={displayName} imageUrl={imageUrl} className={className} />;
 }
 
 function studentNameInputValue(student: LibraryStudent) {
@@ -3815,6 +4155,36 @@ function libraryStudentPrefill(student: LibraryStudent, t: (key: string) => stri
     fee: student.fee_amount ? String(student.fee_amount) : "",
     searchLabel: `${studentDisplayRollNumber(student)} · ${studentDisplayName(student, t)}`,
   };
+}
+
+function addDaysIsoDate(value: string, days: number) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function subscriptionRenewalDateRange(previousEndDate: string | null | undefined) {
+  if (!previousEndDate) {
+    return { startDate: todayIso(), endDate: addMonthsIso() };
+  }
+
+  const startDate = addDaysIsoDate(previousEndDate, 1);
+  const monthEndBase = startDate ? addMonthsIso(new Date(`${startDate}T00:00:00.000Z`)) : null;
+  const endDate = monthEndBase ? addDaysIsoDate(monthEndBase, -1) : null;
+  return {
+    startDate: startDate ?? todayIso(),
+    endDate: endDate ?? addMonthsIso(),
+  };
+}
+
+function libraryRenewalDateRange(student: LibraryStudent | null | undefined) {
+  return subscriptionRenewalDateRange(student?.subscription_end_date);
+}
+
+function courseRenewalDateRange(record: CourseStudentRecord | null | undefined) {
+  return subscriptionRenewalDateRange(record?.subscriptionEndDate);
 }
 
 function isRealLibraryStudentId(value: string) {
@@ -3870,6 +4240,109 @@ function latestLibrarySubscriptionPayment(payments: Payment[]) {
     .sort((a, b) => libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)))[0] ?? null;
 }
 
+function LibraryStudentSummaryCard({
+  student,
+  expired,
+  onEditPhoto,
+  compact = false,
+}: {
+  student: LibraryStudent;
+  expired: boolean;
+  onEditPhoto?: () => void;
+  compact?: boolean;
+}) {
+  const { t } = useLanguage();
+  const displayName = studentDisplayName(student, t);
+  const callHref = studentPhoneHref(student.phone_number);
+
+  return (
+    <section className={`library-student-summary-card ${expired ? "expired" : ""} ${compact ? "compact" : ""}`}>
+      <div className="library-student-summary-top">
+        <div className="library-student-summary-person">
+          <div className="library-student-photo-frame">
+            <StudentPhoto student={student} displayName={displayName} className="hero" />
+            {onEditPhoto ? (
+              <button className="library-photo-edit-button" type="button" onClick={onEditPhoto} aria-label={`${t("editTransaction")} ${t("studentPhoto")}`}>
+                <Pencil size={14} />
+              </button>
+            ) : null}
+          </div>
+          <div className="min-w-0">
+            <span className={`status-chip ${expired ? "status-pending" : student.active ? "status-approved" : "status-rejected"}`}>
+              {expired ? t("expiredSubscription") : student.active ? t("active") : t("inactiveStudents")}
+            </span>
+            <h3>{displayName}</h3>
+          </div>
+        </div>
+        <div className="library-subscription-highlight">
+          <span>{t("expiresOn")}</span>
+          <strong>{displayDate(student.subscription_end_date)}</strong>
+        </div>
+      </div>
+
+      <div className="library-student-key-numbers">
+        <div>
+          <span>{t("rollNumber")}</span>
+          <strong>{studentDisplayRollNumber(student)}</strong>
+        </div>
+        <div className="featured">
+          <span>{t("phone")}</span>
+          {callHref ? <a href={callHref}>{displayTextValue(student.phone_number)}</a> : <strong>{displayTextValue(student.phone_number)}</strong>}
+        </div>
+        <div>
+          <span>{t("seatNumber")}</span>
+          <strong>{displayTextValue(student.seat_number)}</strong>
+        </div>
+      </div>
+
+      <div className="library-student-summary-grid">
+        <div className="important">
+          <span>{t("subscriptionPeriod")}</span>
+          <strong>{displayDateRange(student.subscription_start_date, student.subscription_end_date, t)}</strong>
+        </div>
+        <div>
+          <span>{t("timing")}</span>
+          <strong>{displayTimeRange(student.start_time, student.end_time)}</strong>
+          <small>{student.slot_hours ? `${student.slot_hours}h` : "-"}</small>
+        </div>
+        <div>
+          <span>{t("lockerNumber")}</span>
+          <strong>{displayTextValue(student.locker_number)}</strong>
+        </div>
+        <div>
+          <span>{t("lastPayment")}</span>
+          <strong>{displayDate(student.last_payment_date)}</strong>
+        </div>
+        <div className="wide">
+          <span>{t("address")}</span>
+          <strong>{displayTextValue(student.address)}</strong>
+        </div>
+        <div>
+          <span>{t("aadharNumber")}</span>
+          <strong>{displayTextValue(student.aadhar_number)}</strong>
+        </div>
+        <div>
+          <span>{t("aadharCardPhoto")}</span>
+          {student.aadhar_photo_url ? (
+            <a className="library-document-link" href={student.aadhar_photo_url} target="_blank" rel="noreferrer">
+              {t("viewPhoto")}
+            </a>
+          ) : (
+            <strong>{displayTextValue(null)}</strong>
+          )}
+        </div>
+      </div>
+
+      <div className="library-student-summary-money">
+        <span>{t("fee")} <strong>{displayMoneyValue(student.fee_amount)}</strong></span>
+        <span>{t("paid")} <strong>{displayMoneyValue(student.paid_amount)}</strong></span>
+        <span>{t("dues")} <strong>{displayMoneyValue(student.dues_amount)}</strong></span>
+        <span>{t("advance")} <strong>{displayMoneyValue(student.advance_amount)}</strong></span>
+      </div>
+    </section>
+  );
+}
+
 function libraryStudentWithLatestSubscription(student: LibraryStudent, payments: Payment[]) {
   const latestPayment = latestLibrarySubscriptionPayment(payments);
   if (!latestPayment) return student;
@@ -3908,29 +4381,154 @@ function mergePaymentHistory(...groups: Payment[][]) {
   );
 }
 
+function studentRecordSourceId(course: Course) {
+  return `${course.kind === "skill" ? "skill" : "course"}:${course.id}`;
+}
+
+function studentRecordSources(courses: Course[], t: (key: string) => string): StudentRecordSource[] {
+  const visibleCourses = courses.filter((course) => course.active);
+  return [
+    { id: "library", type: "library", label: t("library") },
+    ...visibleCourses.map((course): StudentRecordSource => ({
+      id: studentRecordSourceId(course),
+      type: course.kind === "skill" ? "skillCourse" : "mainCourse",
+      label: course.kind === "skill" ? `${course.name} (${t("skill")})` : course.name,
+      course,
+    })),
+  ];
+}
+
+function paymentMatchesStudentRecordSource(payment: Payment, source: CourseStudentRecordSource) {
+  if (payment.business_type !== "course" || payment.record_status !== "active") return false;
+  return source.type === "skillCourse"
+    ? payment.skill_course_id === source.course.id
+    : payment.course_id === source.course.id;
+}
+
+function courseStudentIdentityKey(payment: Payment) {
+  const rollKey = libraryRollKey(payment.roll_number);
+  if (rollKey) return `roll:${rollKey}`;
+
+  const nameKey = payment.customer_name?.trim().toLowerCase();
+  if (nameKey) return `name:${nameKey}`;
+
+  return `payment:${payment.id}`;
+}
+
+function courseStudentRecordFromPayment(payment: Payment, source: CourseStudentRecordSource, today: string): CourseStudentRecord {
+  const endMs = isoDateUtcMs(payment.end_date);
+  const todayMs = isoDateUtcMs(today);
+  const active = endMs === null || todayMs === null || endMs >= todayMs;
+
+  return {
+    id: `${source.id}:${courseStudentIdentityKey(payment)}`,
+    displayName: payment.customer_name?.trim() || "",
+    rollNumber: normalizeLibraryRollNumberForView(payment.roll_number),
+    courseName: source.course.name,
+    seatNumber: payment.seat_number,
+    startTime: payment.start_time,
+    endTime: payment.end_time,
+    subscriptionStartDate: payment.start_date,
+    subscriptionEndDate: payment.end_date,
+    lastPaymentDate: payment.payment_date,
+    feeAmount: payment.fee_amount,
+    paidAmount: payment.paid_amount,
+    duesAmount: payment.dues_amount,
+    advanceAmount: payment.advance_amount,
+    active,
+  };
+}
+
+function courseStudentRecordsForSource(payments: Payment[], source: CourseStudentRecordSource, today: string) {
+  const latestPayments = new Map<string, Payment>();
+
+  payments
+    .filter((payment) => paymentMatchesStudentRecordSource(payment, source))
+    .forEach((payment) => {
+      const key = courseStudentIdentityKey(payment);
+      const current = latestPayments.get(key);
+      if (!current || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(current)) {
+        latestPayments.set(key, payment);
+      }
+    });
+
+  return [...latestPayments.values()].map((payment) => courseStudentRecordFromPayment(payment, source, today));
+}
+
+function courseStudentDisplayName(record: CourseStudentRecord, t: (key: string) => string) {
+  return record.displayName || (record.rollNumber ? `${t("roll")} ${record.rollNumber}` : t("unknown"));
+}
+
+function courseStudentPrefill(record: CourseStudentRecord, t: (key: string) => string) {
+  const displayName = courseStudentDisplayName(record, t);
+  return {
+    id: record.id,
+    name: displayName,
+    rollNumber: record.rollNumber ?? "",
+    seatNumber: record.seatNumber ?? "",
+    startTime: (record.startTime ?? "06:00").slice(0, 5),
+    endTime: (record.endTime ?? "07:00").slice(0, 5),
+    fee: record.feeAmount ? String(record.feeAmount) : "",
+    searchLabel: `${record.rollNumber ?? "-"} · ${displayName}`,
+  };
+}
+
+function compareCourseStudentRecordsByExpiry(a: CourseStudentRecord, b: CourseStudentRecord, t: (key: string) => string) {
+  const aExpiry = isoDateUtcMs(a.subscriptionEndDate);
+  const bExpiry = isoDateUtcMs(b.subscriptionEndDate);
+  if (aExpiry !== null && bExpiry !== null && aExpiry !== bExpiry) return aExpiry - bExpiry;
+  if (aExpiry !== null && bExpiry === null) return -1;
+  if (aExpiry === null && bExpiry !== null) return 1;
+
+  return (
+    compareLibraryRollNumbers(a.rollNumber, b.rollNumber) ||
+    courseStudentDisplayName(a, t).localeCompare(courseStudentDisplayName(b, t), undefined, { sensitivity: "base" })
+  );
+}
+
 function LibraryStudentsView({
   students,
   payments,
+  courses,
   setNotice,
   startTransition,
 }: {
   students: LibraryStudent[];
   payments: Payment[];
+  courses: Course[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
-  const [listMode, setListMode] = useState<"active" | "inactive">("active");
+  const [listMode, setListMode] = useState<LibraryStudentListMode>("active");
+  const [currentMinute, setCurrentMinute] = useState(() => currentMinuteOfDay());
+  const [selectedSourceId, setSelectedSourceId] = useState<StudentRecordSource["id"]>("library");
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
   const today = todayIso();
+  const sources = useMemo(() => studentRecordSources(courses, t), [courses, t]);
+  const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? sources[0];
+  const selectedSourceValue = selectedSource.id;
+  const showingLibraryStudents = selectedSource.type === "library";
   const activeStudents = students.filter((student) => student.active && !student.placeholder);
+  const liveStudents = activeStudents.filter((student) => isLibraryStudentLiveNow(student, currentMinute));
   const inactiveStudents = students.filter((student) => !student.active && !student.placeholder);
+  const courseStudents = useMemo(
+    () => selectedSource.type === "library" ? [] : courseStudentRecordsForSource(payments, selectedSource, today),
+    [payments, selectedSource, today],
+  );
+  const activeCourseStudents = courseStudents.filter((record) => record.active);
+  const liveCourseStudents = activeCourseStudents.filter((record) => isTimeRangeLiveNow(record.startTime, record.endTime, currentMinute));
+  const inactiveCourseStudents = courseStudents.filter((record) => !record.active);
   const expired = (student: LibraryStudent) => isExpiredLibraryStudent(student, today);
-  const sourceStudents = listMode === "active" ? activeStudents : inactiveStudents;
+  const sourceStudents = listMode === "live" ? liveStudents : listMode === "active" ? activeStudents : inactiveStudents;
+  const sourceCourseStudents = listMode === "live" ? liveCourseStudents : listMode === "active" ? activeCourseStudents : inactiveCourseStudents;
+  const activeCount = showingLibraryStudents ? activeStudents.length : activeCourseStudents.length;
+  const liveCount = showingLibraryStudents ? liveStudents.length : liveCourseStudents.length;
+  const inactiveCount = showingLibraryStudents ? inactiveStudents.length : inactiveCourseStudents.length;
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleStudents = sourceStudents
+  const visibleStudents = showingLibraryStudents ? sourceStudents
     .filter((student) => {
       if (!normalizedQuery) return true;
       return [studentDisplayRollNumber(student), studentDisplayName(student, t), student.phone_number, student.seat_number, student.locker_number]
@@ -3938,15 +4536,32 @@ function LibraryStudentsView({
         .some((value) => String(value).toLowerCase().includes(normalizedQuery));
     })
     .sort((a, b) => {
-      const aExpired = isExpiredLibraryStudent(a, today);
-      const bExpired = isExpiredLibraryStudent(b, today);
-      if (listMode === "active" && aExpired !== bExpired) return aExpired ? -1 : 1;
-      return (
-        compareLibraryRollNumbers(studentDisplayRollNumber(a), studentDisplayRollNumber(b)) ||
-        studentDisplayName(a, t).localeCompare(studentDisplayName(b, t), undefined, { sensitivity: "base" })
-      );
-    });
-  const baseSelectedStudent = students.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null;
+      return compareLibraryStudentsByExpiry(a, b, t);
+    }) : [];
+  const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
+    .filter((record) => {
+      if (!normalizedQuery) return true;
+      return [record.rollNumber, courseStudentDisplayName(record, t), record.courseName, record.seatNumber, displayTimeRange(record.startTime, record.endTime)]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+    })
+    .sort((a, b) => compareCourseStudentRecordsByExpiry(a, b, t));
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentMinute(currentMinuteOfDay());
+    }, 60000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const baseSelectedStudent = showingLibraryStudents ? students.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null : null;
+  const changeStudentSource = (nextSourceId: string) => {
+    setSelectedSourceId(nextSourceId);
+    setQuery("");
+    setListMode("active");
+    setSelectedId("");
+    setEditingStudent(false);
+  };
   const openStudentDetails = (studentId: string) => {
     setSelectedId(studentId);
     setEditingStudent(false);
@@ -3974,31 +4589,49 @@ function LibraryStudentsView({
     [baseSelectedStudent, historyPayments],
   );
   return (
-    <section className="space-y-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="eyebrow">{t("library")}</p>
-          <h2 className="font-headline text-2xl font-bold text-on-surface">{t("studentRecords")}</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <section className="library-students-view">
+      <div className="library-student-source-bar">
+        <h1 className="library-student-page-title">{t("libraryStudents")}</h1>
+        <label className="library-student-source-select">
+          {showingLibraryStudents ? <BookOpen size={20} /> : <GraduationCap size={20} />}
+          <select
+            aria-label={t("selectCourse")}
+            value={selectedSourceValue}
+            onChange={(event) => changeStudentSource(event.target.value)}
+          >
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="library-student-filter-row">
           <button
             type="button"
             className={`filter-chip ${listMode === "active" ? "active" : ""}`}
             onClick={() => setListMode("active")}
           >
-            {t("activeStudents")} · {activeStudents.length}
+            ACTIVE · {activeCount}
+          </button>
+          <button
+            type="button"
+            className={`filter-chip ${listMode === "live" ? "active" : ""}`}
+            onClick={() => setListMode("live")}
+          >
+            LIVE · {liveCount}
           </button>
           <button
             type="button"
             className={`filter-chip ${listMode === "inactive" ? "active" : ""}`}
             onClick={() => setListMode("inactive")}
           >
-            {t("inactiveStudents")} · {inactiveStudents.length}
+            INACTIVE · {inactiveCount}
           </button>
         </div>
       </div>
 
-      <section className="rounded-lg border border-outline-variant/30 bg-surface-container-low p-4">
+      <section className="library-student-list-panel">
         <label className="form-grid block">
           <span className="mb-2 block text-sm font-bold text-on-surface-variant">{t("studentSearch")}</span>
           <span className="input-with-icon">
@@ -4006,71 +4639,103 @@ function LibraryStudentsView({
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`${t("rollNumber")} / ${t("name")}`} />
           </span>
         </label>
-        <div className="mt-4 max-h-[68vh] space-y-2 overflow-y-auto pr-1">
+        <div className={`library-student-list-scroll ${listMode === "live" && showingLibraryStudents ? "library-live-student-grid" : "space-y-4"}`}>
           {visibleStudents.map((student) => {
+            if (listMode === "live") {
+              const displayName = studentDisplayName(student, t);
+              const rollNumber = studentDisplayRollNumber(student);
+              const slotTime = displayTimeRange(student.start_time, student.end_time);
+              return (
+                <article key={student.id} className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => openStudentDetails(student.id)}
+                    className={`library-live-student-card ${selectedStudent?.id === student.id ? "selected" : ""} ${expired(student) ? "expired" : ""}`}
+                    aria-label={`${displayName}, ${t("rollNumber")} ${rollNumber}, ${t("timing")} ${slotTime}`}
+                  >
+                    <div className="library-live-avatar-wrap">
+                      <StudentPhoto student={student} displayName={displayName} className="live" />
+                      <span className="library-live-roll-badge">#{rollNumber}</span>
+                    </div>
+                    <strong>{displayName}</strong>
+                    <small className="library-live-slot">{slotTime}</small>
+                  </button>
+                </article>
+              );
+            }
+
             const callHref = studentPhoneHref(student.phone_number);
+            const expiryLabel = libraryExpiryStatusLabel(student, today, t);
+            const displayName = studentDisplayName(student, t);
+            const rollNumber = studentDisplayRollNumber(student);
             return (
               <article
                 key={student.id}
-                className={`relative rounded-lg border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                  selectedStudent?.id === student.id ? "border-primary bg-primary-container/60" : "border-outline-variant/25 bg-surface"
-                } ${expired(student) ? "border-yellow-400 bg-yellow-50" : ""}`}
+                className={`library-student-list-card ${selectedStudent?.id === student.id ? "selected" : ""} ${expired(student) ? "expired" : ""} ${callHref ? "" : "without-call"}`}
               >
+                <span className={`library-expiry-chip library-list-expiry ${expired(student) ? "expired" : ""}`}>{expiryLabel}</span>
                 <button
                   type="button"
                   onClick={() => openStudentDetails(student.id)}
-                  className="group w-full border-0 bg-transparent p-3 pr-14 text-left"
+                  className={`library-student-list-main ${callHref ? "" : "without-call"}`}
+                  aria-label={`${displayName}, ${t("rollNumber")} ${rollNumber}, ${expiryLabel}`}
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <StudentPhoto student={student} displayName={studentDisplayName(student, t)} className="list" />
-                      <div className="min-w-0">
-                        <span className="inline-flex rounded-full bg-surface-container-high px-2 py-0.5 text-xs font-bold text-on-surface-variant">
-                          #{studentDisplayRollNumber(student)}
-                        </span>
-                        <strong className="mt-2 block truncate text-base text-on-surface">{studentDisplayName(student, t)}</strong>
-                      </div>
-                    </div>
-                    <span className={`status-chip ${expired(student) ? "status-pending" : student.active ? "status-approved" : "status-rejected"}`}>
-                      {expired(student) ? t("expiredSubscription") : student.active ? t("active") : t("inactiveStudents")}
-                    </span>
+                  <div className="library-list-avatar-wrap">
+                    <StudentPhoto student={student} displayName={displayName} className="list" />
+                    <span className="library-list-roll-badge">#{rollNumber}</span>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-on-surface-variant sm:grid-cols-2">
-                    <span className="rounded-lg bg-surface-container-low px-3 py-2">
-                      <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("timing")}</strong>
-                      <span className="text-sm font-semibold text-on-surface">{displayTimeRange(student.start_time, student.end_time)}</span>
-                    </span>
-                    <span className="rounded-lg bg-surface-container-low px-3 py-2">
-                      <strong className="block text-[11px] uppercase tracking-wide text-on-surface-variant">{t("subscriptionPeriod")}</strong>
-                      <span className="text-sm font-semibold text-on-surface">{displayDateRange(student.subscription_start_date, student.subscription_end_date, t)}</span>
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-on-surface-variant">
-                    <span>{student.phone_number ?? t("unknown")}</span>
-                    <span>·</span>
-                    <span>{t("seat")} {student.seat_number ?? "-"}</span>
-                    {student.locker_number ? (
-                      <>
-                        <span>·</span>
-                        <span>{t("lockerNumber")} {student.locker_number}</span>
-                      </>
-                    ) : null}
+                  <div className="library-list-info">
+                    <strong>{displayName}</strong>
+                    <span>{student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}</span>
                   </div>
                 </button>
                 {callHref ? (
                   <a
-                    className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-primary/20 bg-surface text-primary shadow-sm transition hover:bg-primary hover:text-on-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                    className="library-list-call-button"
                     href={callHref}
-                    aria-label={`${t("callStudent")}: ${studentDisplayName(student, t)}`}
+                    aria-label={`${t("callStudent")}: ${displayName}`}
                     title={t("callStudent")}
                   >
-                    <PhoneCall size={17} />
+                    <PhoneCall size={22} />
                   </a>
                 ) : null}
               </article>
             );
           })}
-          {visibleStudents.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
+          {visibleCourseStudents.map((record) => {
+            const displayName = courseStudentDisplayName(record, t);
+            const expiryLabel = subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t);
+            const timeRange = displayTimeRange(record.startTime, record.endTime);
+            const meta = [
+              record.courseName,
+              record.seatNumber ? `${t("seat")} ${record.seatNumber}` : null,
+              timeRange !== "-" ? timeRange : null,
+              `${t("lastPayment")} ${displayDate(record.lastPaymentDate)}`,
+            ].filter(Boolean).join(" · ");
+
+            return (
+              <article
+                key={record.id}
+                className={`library-student-list-card without-call ${record.active ? "" : "expired"}`}
+              >
+                <span className={`library-expiry-chip library-list-expiry ${record.active ? "" : "expired"}`}>{expiryLabel}</span>
+                <div
+                  className="library-student-list-main without-call"
+                  aria-label={`${displayName}, ${record.courseName}, ${expiryLabel}`}
+                >
+                  <div className="library-list-avatar-wrap">
+                    <StudentAvatar displayName={displayName} className="list" />
+                    <span className="library-list-roll-badge">#{record.rollNumber ?? "-"}</span>
+                  </div>
+                  <div className="library-list-info">
+                    <strong>{displayName}</strong>
+                    <span>{meta}</span>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+          {(showingLibraryStudents ? visibleStudents.length : visibleCourseStudents.length) === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
         </div>
       </section>
 
@@ -4080,11 +4745,8 @@ function LibraryStudentsView({
           <section className="action-sheet library-student-sheet">
             <header className="sheet-header">
               <div>
-                <p className="eyebrow">{t("studentDetails")}</p>
-                <h2>{studentDisplayName(selectedStudent, t)}</h2>
-                <p className="text-sm text-on-surface-variant">
-                  {t("rollNumber")} {studentDisplayRollNumber(selectedStudent)} · {t("phone")} {selectedStudent.phone_number ?? "-"} · {t("seat")} {selectedStudent.seat_number ?? "-"}
-                </p>
+                <p className="eyebrow">{t("libraryStudent")}</p>
+                <h2>{t("studentDetails")}</h2>
               </div>
               <div className="flex items-center gap-2">
                 <button className="secondary-button" type="button" onClick={() => setEditingStudent((value) => !value)}>
@@ -4100,83 +4762,11 @@ function LibraryStudentsView({
             <div className="space-y-5">
               {!editingStudent ? (
                 <div className="library-student-detail-view">
-                  <section className={`library-student-hero-card ${expired(selectedStudent) ? "expired" : ""}`}>
-                    <div className="flex min-w-0 items-center gap-4">
-                      <StudentPhoto student={selectedStudent} displayName={studentDisplayName(selectedStudent, t)} className="hero" />
-                      <div className="min-w-0">
-                        <span className={`status-chip ${expired(selectedStudent) ? "status-pending" : selectedStudent.active ? "status-approved" : "status-rejected"}`}>
-                          {expired(selectedStudent) ? t("expiredSubscription") : selectedStudent.active ? t("active") : t("inactiveStudents")}
-                        </span>
-                        <h3>{studentDisplayName(selectedStudent, t)}</h3>
-                        <p>
-                          #{studentDisplayRollNumber(selectedStudent)} · {t("phone")} {displayTextValue(selectedStudent.phone_number)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="library-student-hero-meta">
-                      <span>{t("lastPayment")}</span>
-                      <strong>{displayDate(selectedStudent.last_payment_date)}</strong>
-                    </div>
-                  </section>
-
-                  <section className="library-profile-panel">
-                    <div>
-                      <span>{t("name")}</span>
-                      <strong>{studentDisplayName(selectedStudent, t)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("rollNumber")}</span>
-                      <strong>{studentDisplayRollNumber(selectedStudent)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("phone")}</span>
-                      <strong>{displayTextValue(selectedStudent.phone_number)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("seatNumber")}</span>
-                      <strong>{displayTextValue(selectedStudent.seat_number)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("lockerNumber")}</span>
-                      <strong>{displayTextValue(selectedStudent.locker_number)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("address")}</span>
-                      <strong>{displayTextValue(selectedStudent.address)}</strong>
-                    </div>
-                  </section>
-
-                  <section className="library-student-detail-grid">
-                    <article className="library-detail-card">
-                      <span>{t("timing")}</span>
-                      <strong>{displayTimeRange(selectedStudent.start_time, selectedStudent.end_time)}</strong>
-                      <p>{selectedStudent.slot_hours ? `${selectedStudent.slot_hours}h` : "-"}</p>
-                    </article>
-                    <article className="library-detail-card">
-                      <span>{t("subscriptionPeriod")}</span>
-                      <strong>{displayDateRange(selectedStudent.subscription_start_date, selectedStudent.subscription_end_date, t)}</strong>
-                      <p>{t("expiresOn")} {displayDate(selectedStudent.subscription_end_date)}</p>
-                    </article>
-                  </section>
-
-                  <section className="library-student-money-grid">
-                    <div>
-                      <span>{t("fee")}</span>
-                      <strong>{displayMoneyValue(selectedStudent.fee_amount)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("paid")}</span>
-                      <strong>{displayMoneyValue(selectedStudent.paid_amount)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("dues")}</span>
-                      <strong>{displayMoneyValue(selectedStudent.dues_amount)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("advance")}</span>
-                      <strong>{displayMoneyValue(selectedStudent.advance_amount)}</strong>
-                    </div>
-                  </section>
+                  <LibraryStudentSummaryCard
+                    student={selectedStudent}
+                    expired={expired(selectedStudent)}
+                    onEditPhoto={() => setEditingStudent(true)}
+                  />
                 </div>
               ) : null}
 
@@ -4226,6 +4816,18 @@ function LibraryStudentsView({
                     <input name="address" defaultValue={selectedStudent.address ?? ""} />
                   </label>
                   <label>
+                    {t("aadharNumber")}
+                    <input name="aadhar_number" defaultValue={selectedStudent.aadhar_number ?? ""} inputMode="numeric" />
+                  </label>
+                  <label>
+                    {t("aadharCardPhoto")}
+                    <span className="camera-field">
+                      <Camera size={16} />
+                      {t("addImage")}
+                      <input name="aadhar_photo" type="file" accept="image/*" />
+                    </span>
+                  </label>
+                  <label>
                     {t("seatNumber")}
                     <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
                   </label>
@@ -4251,7 +4853,9 @@ function LibraryStudentsView({
               <div className="rounded-lg bg-surface-container-low p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <Plus size={16} />
-                  <h4 className="font-headline text-base font-bold">{t("addSubscription")}</h4>
+                  <h4 className="font-headline text-base font-bold">
+                    {Number(selectedStudent.dues_amount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}
+                  </h4>
                 </div>
                 <PaymentForm
                   key={`${selectedStudent.id}-${selectedStudent.last_payment_id ?? selectedStudent.updated_at}`}
@@ -4260,6 +4864,7 @@ function LibraryStudentsView({
                   mainCourses={[]}
                   skillCourses={[]}
                   referrals={[]}
+                  payments={payments}
                   libraryStudents={students}
                   initialLibraryStudent={selectedStudent}
                   setNotice={setNotice}
@@ -4312,6 +4917,7 @@ function ActionSheet({
   mainCourses,
   skillCourses,
   referrals,
+  payments,
   libraryStudents,
   moneyMovementProfiles,
   settlementDate,
@@ -4331,6 +4937,7 @@ function ActionSheet({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
+  payments: Payment[];
   libraryStudents: LibraryStudent[];
   moneyMovementProfiles: Profile[];
   settlementDate: string;
@@ -4404,6 +5011,7 @@ function ActionSheet({
               mainCourses={mainCourses}
               skillCourses={skillCourses}
               referrals={referrals}
+              payments={payments}
               libraryStudents={libraryStudents}
               setNotice={setNotice}
               startTransition={startTransition}
@@ -4477,6 +5085,7 @@ function PaymentForm({
   mainCourses,
   skillCourses,
   referrals,
+  payments,
   libraryStudents,
   initialLibraryStudent,
   setNotice,
@@ -4488,6 +5097,7 @@ function PaymentForm({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
+  payments: Payment[];
   libraryStudents: LibraryStudent[];
   initialLibraryStudent?: LibraryStudent | null;
   setNotice: (notice: ActionResult | null) => void;
@@ -4495,17 +5105,25 @@ function PaymentForm({
   onSuccess?: () => void;
 }) {
   const { t } = useLanguage();
+  const today = todayIso();
   const initialLibraryPrefill = type === "library" && initialLibraryStudent ? libraryStudentPrefill(initialLibraryStudent, t) : null;
+  const initialLibraryRenewalRange = type === "library" && initialLibraryStudent ? libraryRenewalDateRange(initialLibraryStudent) : null;
+  const initialLibraryDueAmount = type === "library" && initialLibraryStudent ? Math.max(Number(initialLibraryStudent.dues_amount ?? 0), 0) : 0;
   const defaultNewLibraryRollNumber = type === "library" ? nextLibraryRollNumber(libraryStudents) : "";
+  const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? "");
-  const [paid, setPaid] = useState("");
+  const [paid, setPaid] = useState(initialLibraryDueAmount > 0 ? String(initialLibraryDueAmount) : "");
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("cash");
   const [cashCollection, setCashCollection] = useState("");
   const [onlineCollection, setOnlineCollection] = useState("");
   const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? "06:00");
   const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? "07:00");
-  const [courseName, setCourseName] = useState("");
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedSkillCourseId, setSelectedSkillCourseId] = useState("");
+  const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(null);
+  const [courseSearch, setCourseSearch] = useState("");
+  const [selectedCourseStudentId, setSelectedCourseStudentId] = useState("");
   const [librarySearch, setLibrarySearch] = useState(initialLibraryPrefill?.searchLabel ?? "");
   const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState(initialLibraryPrefill?.id ?? "");
   const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? "");
@@ -4514,18 +5132,70 @@ function PaymentForm({
   const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
   const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? "");
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
-  const [subscriptionStartDate, setSubscriptionStartDate] = useState(todayIso());
-  const [subscriptionEndDate, setSubscriptionEndDate] = useState(addMonthsIso());
+  const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? todayIso());
+  const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? addMonthsIso());
+  const selectedLibraryStudent = useMemo(() => {
+    if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
+    return libraryStudents.find((student) => student.id === selectedLibraryStudentId) ?? null;
+  }, [initialLibraryStudent, libraryStudents, selectedLibraryStudentId]);
+  const selectedMainCourse = useMemo(
+    () => mainCourses.find((course) => course.id === selectedCourseId) ?? null,
+    [mainCourses, selectedCourseId],
+  );
+  const courseNeedsSkill = selectedMainCourse?.name === "Skills";
+  const selectedSkillCourse = useMemo(
+    () => skillCourses.find((course) => course.id === selectedSkillCourseId) ?? null,
+    [selectedSkillCourseId, skillCourses],
+  );
+  const selectedCourseSource = useMemo<CourseStudentRecordSource | null>(() => {
+    if (courseNeedsSkill) {
+      if (!selectedSkillCourse) return null;
+      return {
+        id: studentRecordSourceId(selectedSkillCourse),
+        type: "skillCourse",
+        label: `${selectedSkillCourse.name} (${t("skill")})`,
+        course: selectedSkillCourse,
+      };
+    }
+
+    if (!selectedMainCourse) return null;
+    return {
+      id: studentRecordSourceId(selectedMainCourse),
+      type: "mainCourse",
+      label: selectedMainCourse.name,
+      course: selectedMainCourse,
+    };
+  }, [courseNeedsSkill, selectedMainCourse, selectedSkillCourse, t]);
+  const courseStudentRecords = useMemo(
+    () => selectedCourseSource ? courseStudentRecordsForSource(payments, selectedCourseSource, today) : [],
+    [payments, selectedCourseSource, today],
+  );
+  const sortedCourseStudentRecords = useMemo(
+    () => [...courseStudentRecords].sort((a, b) => compareCourseStudentRecordsByExpiry(a, b, t)),
+    [courseStudentRecords, t],
+  );
+  const selectedCourseStudent = useMemo(
+    () => sortedCourseStudentRecords.find((record) => record.id === selectedCourseStudentId) ?? null,
+    [selectedCourseStudentId, sortedCourseStudentRecords],
+  );
+  const libraryDueAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.dues_amount ?? 0), 0) : 0;
+  const libraryPaidAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.paid_amount ?? 0), 0) : 0;
+  const collectingLibraryDues = type === "library" && libraryMemberMode === "existing" && Boolean(selectedLibraryStudent) && libraryDueAmount > 0;
   const feeNumber = Number(fee || 0);
   const paidNumber = Number(paid || 0);
   const amountNumber = Number(amount || 0);
   const splitCollectionNumber = Number(cashCollection || 0) + Number(onlineCollection || 0);
   const collectedNumber = mode === "mixed" ? splitCollectionNumber : paidNumber;
-  const splitTotal = type === "library" || type === "course" ? feeNumber : amountNumber;
+  const splitTotal = collectingLibraryDues ? libraryDueAmount : type === "library" || type === "course" ? feeNumber : amountNumber;
   const splitRemaining = Math.max(splitTotal - splitCollectionNumber, 0);
-  const dues = Math.max(feeNumber - collectedNumber, 0);
-  const advance = Math.max(collectedNumber - feeNumber, 0);
+  const dues = collectingLibraryDues ? Math.max(libraryDueAmount - collectedNumber, 0) : Math.max(feeNumber - collectedNumber, 0);
+  const advance = collectingLibraryDues ? Math.max(collectedNumber - libraryDueAmount, 0) : Math.max(collectedNumber - feeNumber, 0);
   const slotHours = Math.max((Number(endTime.slice(0, 2)) || 0) - (Number(startTime.slice(0, 2)) || 0), 0);
+  const libraryMemberChoicePending = type === "library" && !initialLibraryStudent && !libraryMemberMode;
+  const libraryExistingMemberPending = type === "library" && libraryMemberMode === "existing" && !selectedLibraryStudentId;
+  const libraryPaymentFieldsReady = type !== "library" || (!libraryMemberChoicePending && !libraryExistingMemberPending);
+  const coursePaymentFieldsReady = type !== "course" || Boolean(selectedCourseSource && courseMemberMode && (courseMemberMode !== "existing" || selectedCourseStudent));
+  const paymentFieldsReady = libraryPaymentFieldsReady && coursePaymentFieldsReady;
   const searchableLibraryStudents = useMemo(() => {
     if (type !== "library") return [];
     const query = librarySearch.trim().toLowerCase();
@@ -4539,10 +5209,28 @@ function PaymentForm({
       })
       .slice(0, 40);
   }, [librarySearch, libraryStudents, t, type]);
-  const selectedLibraryStudent = useMemo(() => {
-    if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
-    return libraryStudents.find((student) => student.id === selectedLibraryStudentId) ?? null;
-  }, [initialLibraryStudent, libraryStudents, selectedLibraryStudentId]);
+  const selectedLibrarySearchLabel = selectedLibraryStudent ? libraryStudentPrefill(selectedLibraryStudent, t).searchLabel : "";
+  const showLibrarySearchResults = libraryMemberMode === "existing" && (!selectedLibraryStudent || librarySearch !== selectedLibrarySearchLabel);
+  const searchableCourseStudents = useMemo(() => {
+    if (type !== "course" || !selectedCourseSource) return [];
+    const query = courseSearch.trim().toLowerCase();
+    return sortedCourseStudentRecords
+      .filter((record) => {
+        if (!query) return true;
+        return [
+          record.rollNumber,
+          courseStudentDisplayName(record, t),
+          record.courseName,
+          record.seatNumber,
+          displayTimeRange(record.startTime, record.endTime),
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(query));
+      })
+      .slice(0, 40);
+  }, [courseSearch, selectedCourseSource, sortedCourseStudentRecords, t, type]);
+  const selectedCourseSearchLabel = selectedCourseStudent ? courseStudentPrefill(selectedCourseStudent, t).searchLabel : "";
+  const showCourseSearchResults = courseMemberMode === "existing" && (!selectedCourseStudent || courseSearch !== selectedCourseSearchLabel);
   const duplicateLibraryRollStudent = useMemo(() => {
     if (type !== "library") return null;
     const rollKey = libraryRollKey(rollNumber);
@@ -4554,9 +5242,17 @@ function PaymentForm({
     }) ?? null;
   }, [libraryStudents, rollNumber, selectedLibraryStudentId, type]);
   const duplicateLibraryRollError = duplicateLibraryRollStudent ? t("rollNumberAlreadyExist") : "";
+  const duplicateCourseRollStudent = useMemo(() => {
+    if (type !== "course" || courseMemberMode !== "new") return null;
+    const rollKey = libraryRollKey(rollNumber);
+    if (!rollKey) return null;
+
+    return courseStudentRecords.find((record) => libraryRollKey(record.rollNumber) === rollKey) ?? null;
+  }, [courseMemberMode, courseStudentRecords, rollNumber, type]);
+  const duplicateCourseRollError = duplicateCourseRollStudent ? t("rollNumberAlreadyExist") : "";
 
   function handlePaymentSubmit(event: FormEvent<HTMLFormElement>) {
-    if (duplicateLibraryRollStudent) {
+    if (duplicateLibraryRollStudent || duplicateCourseRollStudent) {
       event.preventDefault();
       setNotice({ ok: false, message: t("rollNumberAlreadyExist") });
       return;
@@ -4570,8 +5266,59 @@ function PaymentForm({
     submitWith(event, createPaymentAction, setNotice, startTransition);
   }
 
+  function resetLibraryFieldsForNewStudent() {
+    setSelectedLibraryStudentId("");
+    setStudentName("");
+    setRollNumber(defaultNewLibraryRollNumber);
+    setPhoneNumber("");
+    setAddress("");
+    setSeatNumber("");
+    setLockerNumber("");
+    setStartTime("06:00");
+    setEndTime("07:00");
+    setFee("");
+    setLibrarySearch("");
+    setSubscriptionStartDate(todayIso());
+    setSubscriptionEndDate(addMonthsIso());
+    setPaid("");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
+  }
+
+  function clearExistingLibrarySelection() {
+    setSelectedLibraryStudentId("");
+    setStudentName("");
+    setRollNumber("");
+    setPhoneNumber("");
+    setAddress("");
+    setSeatNumber("");
+    setLockerNumber("");
+    setStartTime("06:00");
+    setEndTime("07:00");
+    setFee("");
+    setLibrarySearch("");
+    setSubscriptionStartDate(todayIso());
+    setSubscriptionEndDate(addMonthsIso());
+    setPaid("");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
+  }
+
+  function chooseLibraryMemberMode(mode: LibraryMemberMode) {
+    setLibraryMemberMode(mode);
+    if (mode === "new") {
+      resetLibraryFieldsForNewStudent();
+      return;
+    }
+    clearExistingLibrarySelection();
+  }
+
   function applyLibraryStudentPrefill(student: LibraryStudent) {
     const values = libraryStudentPrefill(student, t);
+    const renewalRange = libraryRenewalDateRange(student);
+    const pendingDue = Math.max(Number(student.dues_amount ?? 0), 0);
     setSelectedLibraryStudentId(values.id);
     setStudentName(values.name);
     setRollNumber(values.rollNumber);
@@ -4582,6 +5329,12 @@ function PaymentForm({
     setStartTime(values.startTime);
     setEndTime(values.endTime);
     setFee(values.fee);
+    setSubscriptionStartDate(renewalRange.startDate);
+    setSubscriptionEndDate(renewalRange.endDate);
+    setPaid(pendingDue > 0 ? String(pendingDue) : "");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
   }
 
   function selectLibraryStudent(studentId: string) {
@@ -4598,6 +5351,8 @@ function PaymentForm({
       setEndTime("07:00");
       setFee("");
       setLibrarySearch("");
+      setSubscriptionStartDate(todayIso());
+      setSubscriptionEndDate(addMonthsIso());
       return;
     }
     applyLibraryStudentPrefill(student);
@@ -4609,6 +5364,139 @@ function PaymentForm({
     const selected = libraryStudents.find((student) => student.id === selectedLibraryStudentId);
     if (selected && value !== libraryStudentPrefill(selected, t).searchLabel) {
       setSelectedLibraryStudentId("");
+    }
+  }
+
+  function courseSourceForIds(courseId: string, skillCourseId: string): CourseStudentRecordSource | null {
+    const mainCourse = mainCourses.find((course) => course.id === courseId) ?? null;
+    if (!mainCourse) return null;
+
+    if (mainCourse.name === "Skills") {
+      const skillCourse = skillCourses.find((course) => course.id === skillCourseId) ?? null;
+      if (!skillCourse) return null;
+      return {
+        id: studentRecordSourceId(skillCourse),
+        type: "skillCourse",
+        label: `${skillCourse.name} (${t("skill")})`,
+        course: skillCourse,
+      };
+    }
+
+    return {
+      id: studentRecordSourceId(mainCourse),
+      type: "mainCourse",
+      label: mainCourse.name,
+      course: mainCourse,
+    };
+  }
+
+  function nextCourseRollNumberForSource(source: CourseStudentRecordSource | null) {
+    if (!source) return "";
+    return nextCourseRollNumber(courseStudentRecordsForSource(payments, source, today));
+  }
+
+  function resetCourseFieldsForNewStudent(source: CourseStudentRecordSource | null) {
+    setSelectedCourseStudentId("");
+    setCourseSearch("");
+    setStudentName("");
+    setRollNumber(nextCourseRollNumberForSource(source));
+    setPhoneNumber("");
+    setAddress("");
+    setSeatNumber("");
+    setLockerNumber("");
+    setStartTime("06:00");
+    setEndTime("07:00");
+    setFee("");
+    setSubscriptionStartDate(today);
+    setSubscriptionEndDate(addMonthsIso());
+    setPaid("");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
+  }
+
+  function clearExistingCourseSelection() {
+    setSelectedCourseStudentId("");
+    setCourseSearch("");
+    setStudentName("");
+    setRollNumber("");
+    setPhoneNumber("");
+    setAddress("");
+    setSeatNumber("");
+    setLockerNumber("");
+    setStartTime("06:00");
+    setEndTime("07:00");
+    setFee("");
+    setSubscriptionStartDate(today);
+    setSubscriptionEndDate(addMonthsIso());
+    setPaid("");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
+  }
+
+  function resetCourseMemberFlow(source: CourseStudentRecordSource | null) {
+    setCourseMemberMode(null);
+    resetCourseFieldsForNewStudent(source);
+  }
+
+  function handleCourseChange(courseId: string) {
+    setSelectedCourseId(courseId);
+    setSelectedSkillCourseId("");
+    resetCourseMemberFlow(courseSourceForIds(courseId, ""));
+  }
+
+  function handleSkillCourseChange(skillCourseId: string) {
+    setSelectedSkillCourseId(skillCourseId);
+    resetCourseMemberFlow(courseSourceForIds(selectedCourseId, skillCourseId));
+  }
+
+  function chooseCourseMemberMode(mode: LibraryMemberMode) {
+    setCourseMemberMode(mode);
+    if (mode === "new") {
+      resetCourseFieldsForNewStudent(selectedCourseSource);
+      return;
+    }
+    clearExistingCourseSelection();
+  }
+
+  function applyCourseStudentPrefill(record: CourseStudentRecord) {
+    const values = courseStudentPrefill(record, t);
+    const renewalRange = courseRenewalDateRange(record);
+    setSelectedCourseStudentId(values.id);
+    setStudentName(values.name);
+    setRollNumber(values.rollNumber);
+    setPhoneNumber("");
+    setAddress("");
+    setSeatNumber(values.seatNumber);
+    setLockerNumber("");
+    setStartTime(values.startTime);
+    setEndTime(values.endTime);
+    setFee(values.fee);
+    setSubscriptionStartDate(renewalRange.startDate);
+    setSubscriptionEndDate(renewalRange.endDate);
+    setPaid("");
+    setCashCollection("");
+    setOnlineCollection("");
+    setMode("cash");
+  }
+
+  function selectCourseStudent(recordId: string) {
+    setSelectedCourseStudentId(recordId);
+    const record = sortedCourseStudentRecords.find((item) => item.id === recordId);
+    if (!record) {
+      clearExistingCourseSelection();
+      return;
+    }
+    applyCourseStudentPrefill(record);
+    setCourseSearch(courseStudentPrefill(record, t).searchLabel);
+  }
+
+  function handleCourseSearchChange(value: string) {
+    setCourseSearch(value);
+    const selected = sortedCourseStudentRecords.find((record) => record.id === selectedCourseStudentId);
+    if (selected && value !== courseStudentPrefill(selected, t).searchLabel) {
+      setSelectedCourseStudentId("");
     }
   }
 
@@ -4641,6 +5529,7 @@ function PaymentForm({
 
       {type === "library" && initialLibraryStudent ? (
         <>
+          <input type="hidden" name="library_payment_kind" value={collectingLibraryDues ? "dues" : "renewal"} />
           <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
           <input type="hidden" name="customer_name" value={studentName} />
           <input type="hidden" name="roll_number" value={rollNumber} />
@@ -4648,277 +5537,310 @@ function PaymentForm({
           <input type="hidden" name="address" value={address} />
           <input type="hidden" name="seat_number" value={seatNumber} />
           <input type="hidden" name="locker_number" value={lockerNumber} />
-          <div className="library-selected-profile full-span with-photo">
-            {selectedLibraryStudent ? (
-              <StudentPhoto student={selectedLibraryStudent} displayName={studentDisplayName(selectedLibraryStudent, t)} className="selected" />
-            ) : null}
-            <div>
-              <span>{t("libraryStudent")}</span>
-              <strong>{studentName || t("unknown")}</strong>
-              <small>
-                {t("rollNumber")} {rollNumber || "-"} · {t("phone")} {phoneNumber || "-"} · {t("seat")} {seatNumber || "-"}
-              </small>
-            </div>
-          </div>
-          <label className="full-span">
-            {t("studentPhoto")}
-            <span className="camera-field">
-              <Camera size={16} />
-              {t("addImage")}
-              <input name="student_photo" type="file" accept="image/*" />
-            </span>
-          </label>
-          <label>
-            {t("paymentDate")}
-            <input name="payment_date" type="date" defaultValue={todayIso()} required />
-          </label>
-          <label>
-            {t("startDate")}
-            <input
-              name="start_date"
-              type="date"
-              value={subscriptionStartDate}
-              onChange={(event) => setSubscriptionStartDate(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("endDate")}
-            <input
-              name="end_date"
-              type="date"
-              value={subscriptionEndDate}
-              onChange={(event) => setSubscriptionEndDate(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("startTime")}
-            <input
-              name="start_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={startTime}
-              onChange={(event) => setStartTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("endTime")}
-            <input
-              name="end_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={endTime}
-              onChange={(event) => setEndTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("slotHours")}
-            <input name="slot_hours" value={slotHours} readOnly />
-          </label>
+          {collectingLibraryDues ? (
+            <>
+              <input type="hidden" name="previous_due_amount" value={libraryDueAmount} />
+              <input type="hidden" name="previous_paid_amount" value={libraryPaidAmount} />
+              <input type="hidden" name="start_date" value={selectedLibraryStudent?.subscription_start_date ?? ""} />
+              <input type="hidden" name="end_date" value={selectedLibraryStudent?.subscription_end_date ?? ""} />
+              <input type="hidden" name="start_time" value={selectedLibraryStudent?.start_time?.slice(0, 5) ?? ""} />
+              <input type="hidden" name="end_time" value={selectedLibraryStudent?.end_time?.slice(0, 5) ?? ""} />
+              <input type="hidden" name="slot_hours" value={selectedLibraryStudent?.slot_hours ?? ""} />
+              <label>
+                {t("paymentDate")}
+                <input name="payment_date" type="date" defaultValue={todayIso()} required />
+              </label>
+              <div className="library-due-collection-card full-span">
+                <span>{t("pendingDues")}</span>
+                <strong>{formatMoney(libraryDueAmount)}</strong>
+                <small>{t("duesCollectionHelp")}</small>
+              </div>
+            </>
+          ) : (
+            <>
+              <label>
+                {t("paymentDate")}
+                <input name="payment_date" type="date" defaultValue={todayIso()} required />
+              </label>
+              <label>
+                {t("startDate")}
+                <input
+                  name="start_date"
+                  type="date"
+                  value={subscriptionStartDate}
+                  onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("endDate")}
+                <input
+                  name="end_date"
+                  type="date"
+                  value={subscriptionEndDate}
+                  onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("startTime")}
+                <input
+                  name="start_time"
+                  type="time"
+                  min="06:00"
+                  max="22:00"
+                  step="3600"
+                  value={startTime}
+                  onChange={(event) => setStartTime(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("endTime")}
+                <input
+                  name="end_time"
+                  type="time"
+                  min="06:00"
+                  max="22:00"
+                  step="3600"
+                  value={endTime}
+                  onChange={(event) => setEndTime(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("slotHours")}
+                <input name="slot_hours" value={slotHours} readOnly />
+              </label>
+            </>
+          )}
         </>
       ) : type === "library" ? (
         <>
-          <label className="full-span">
-            {t("studentSearch")}
-            <span className="input-with-icon">
-              <Search size={16} />
-              <input
-                type="search"
-                value={librarySearch}
-                onChange={(event) => handleLibrarySearchChange(event.target.value)}
-                placeholder={`${t("rollNumber")} / ${t("name")}`}
-              />
-            </span>
-          </label>
-          <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
-            {searchableLibraryStudents.slice(0, 8).map((student) => (
-              <button
-                key={student.id}
-                type="button"
-                className={selectedLibraryStudentId === student.id ? "selected" : ""}
-                onClick={() => selectLibraryStudent(student.id)}
-              >
-                <div className="library-search-result-main">
-                  <StudentPhoto student={student} displayName={studentDisplayName(student, t)} className="picker" />
-                  <span>
-                    <strong>{studentDisplayRollNumber(student)} · {studentDisplayName(student, t)}</strong>
-                    <small>
-                      {student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}
-                      {student.subscription_end_date ? ` · ${t("expiresOn")} ${displayDate(student.subscription_end_date)}` : ""}
-                    </small>
-                  </span>
-                </div>
-                {!student.active ? <em>{t("inactiveStudents")}</em> : null}
-              </button>
-            ))}
-            {librarySearch.trim() && searchableLibraryStudents.length === 0 ? <p>{t("newStudent")}</p> : null}
+          <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
+            <button
+              type="button"
+              className={libraryMemberMode === "new" ? "selected" : ""}
+              onClick={() => chooseLibraryMemberMode("new")}
+            >
+              <UserPlus size={18} />
+              <span>{t("newStudent")}</span>
+            </button>
+            <button
+              type="button"
+              className={libraryMemberMode === "existing" ? "selected" : ""}
+              onClick={() => chooseLibraryMemberMode("existing")}
+            >
+              <UserCheck size={18} />
+              <span>{t("existingMember")}</span>
+            </button>
           </div>
-          <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
-          <label>
-            {t("name")}
-            <input name="customer_name" value={studentName} onChange={(event) => setStudentName(event.target.value)} required />
-          </label>
-          <label>
-            {t("rollNumber")}
-            <input
-              name="roll_number"
-              value={rollNumber}
-              onChange={(event) => setRollNumber(event.target.value)}
-              aria-invalid={duplicateLibraryRollStudent ? "true" : undefined}
-              aria-describedby={duplicateLibraryRollStudent ? "library-roll-number-error" : undefined}
-              required
-            />
-            {duplicateLibraryRollError ? (
-              <span id="library-roll-number-error" className="text-xs font-semibold text-error" role="alert">
-                {duplicateLibraryRollError}
-              </span>
-            ) : null}
-          </label>
-          <label>
-            {t("phone")}
-            <input name="phone_number" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="tel" />
-          </label>
-          <label className="full-span">
-            {t("address")}
-            <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
-          </label>
-          <label className="full-span">
-            {t("studentPhoto")}
-            <span className="camera-field">
-              <Camera size={16} />
-              {t("addImage")}
-              <input name="student_photo" type="file" accept="image/*" />
-            </span>
-          </label>
-          <label>
-            {t("paymentDate")}
-            <input name="payment_date" type="date" defaultValue={todayIso()} required />
-          </label>
-          <label>
-            {t("startDate")}
-            <input
-              name="start_date"
-              type="date"
-              value={subscriptionStartDate}
-              onChange={(event) => setSubscriptionStartDate(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("endDate")}
-            <input
-              name="end_date"
-              type="date"
-              value={subscriptionEndDate}
-              onChange={(event) => setSubscriptionEndDate(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("seatNumber")}
-            <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
-          </label>
-          <label>
-            {t("lockerNumber")}
-            <input name="locker_number" value={lockerNumber} onChange={(event) => setLockerNumber(event.target.value)} />
-          </label>
-          <label>
-            {t("startTime")}
-            <input
-              name="start_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={startTime}
-              onChange={(event) => setStartTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("endTime")}
-            <input
-              name="end_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={endTime}
-              onChange={(event) => setEndTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("slotHours")}
-            <input name="slot_hours" value={slotHours} readOnly />
-          </label>
+          {libraryMemberMode === "existing" ? (
+            <>
+              <label className="full-span">
+                {t("studentSearch")}
+                <span className="input-with-icon">
+                  <Search size={16} />
+                  <input
+                    type="search"
+                    value={librarySearch}
+                    onChange={(event) => handleLibrarySearchChange(event.target.value)}
+                    placeholder={`${t("rollNumber")} / ${t("name")}`}
+                  />
+                </span>
+              </label>
+              {showLibrarySearchResults ? (
+                <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
+                  {searchableLibraryStudents.slice(0, 8).map((student) => (
+                    <button
+                      key={student.id}
+                      type="button"
+                      className={selectedLibraryStudentId === student.id ? "selected" : ""}
+                      onClick={() => selectLibraryStudent(student.id)}
+                    >
+                      <div className="library-search-result-main">
+                        <StudentPhoto student={student} displayName={studentDisplayName(student, t)} className="picker" />
+                        <span>
+                          <strong>{studentDisplayRollNumber(student)} · {studentDisplayName(student, t)}</strong>
+                          <small>
+                            {student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}
+                            {student.subscription_end_date ? ` · ${t("expiresOn")} ${displayDate(student.subscription_end_date)}` : ""}
+                          </small>
+                        </span>
+                      </div>
+                      {!student.active ? <em>{t("inactiveStudents")}</em> : null}
+                    </button>
+                  ))}
+                  {librarySearch.trim() && searchableLibraryStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {libraryPaymentFieldsReady ? (
+            <>
+              <input type="hidden" name="library_payment_kind" value={collectingLibraryDues ? "dues" : "renewal"} />
+              <input type="hidden" name="library_student_id" value={selectedLibraryStudentId} />
+              {libraryMemberMode === "existing" && selectedLibraryStudent ? (
+                <>
+                  <div className="full-span">
+                    <LibraryStudentSummaryCard
+                      student={selectedLibraryStudent}
+                      expired={isExpiredLibraryStudent(selectedLibraryStudent, todayIso())}
+                      compact
+                    />
+                  </div>
+                  <input type="hidden" name="customer_name" value={studentName} />
+                  <input type="hidden" name="roll_number" value={rollNumber} />
+                  <input type="hidden" name="phone_number" value={phoneNumber} />
+                  <input type="hidden" name="address" value={address} />
+                  <input type="hidden" name="aadhar_number" value={selectedLibraryStudent.aadhar_number ?? ""} />
+                  <input type="hidden" name="seat_number" value={seatNumber} />
+                  <input type="hidden" name="locker_number" value={lockerNumber} />
+                </>
+              ) : null}
+              {libraryMemberMode === "new" ? (
+                <>
+                  <label>
+                    {t("name")}
+                    <input name="customer_name" value={studentName} onChange={(event) => setStudentName(event.target.value)} required />
+                  </label>
+                  <label>
+                    {t("rollNumber")}
+                    <input
+                      name="roll_number"
+                      value={rollNumber}
+                      onChange={(event) => setRollNumber(event.target.value)}
+                      aria-invalid={duplicateLibraryRollStudent ? "true" : undefined}
+                      aria-describedby={duplicateLibraryRollStudent ? "library-roll-number-error" : undefined}
+                      required
+                    />
+                    {duplicateLibraryRollError ? (
+                      <span id="library-roll-number-error" className="text-xs font-semibold text-error" role="alert">
+                        {duplicateLibraryRollError}
+                      </span>
+                    ) : null}
+                  </label>
+                  <label>
+                    {t("phone")}
+                    <input name="phone_number" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="tel" />
+                  </label>
+                  <label className="full-span">
+                    {t("address")}
+                    <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
+                  </label>
+                  <label className="full-span">
+                    {t("studentPhoto")}
+                    <span className="camera-field">
+                      <Camera size={16} />
+                      {t("addImage")}
+                      <input name="student_photo" type="file" accept="image/*" />
+                    </span>
+                  </label>
+                </>
+              ) : null}
+              {collectingLibraryDues ? (
+                <>
+                  <input type="hidden" name="previous_due_amount" value={libraryDueAmount} />
+                  <input type="hidden" name="previous_paid_amount" value={libraryPaidAmount} />
+                  <input type="hidden" name="start_date" value={selectedLibraryStudent?.subscription_start_date ?? ""} />
+                  <input type="hidden" name="end_date" value={selectedLibraryStudent?.subscription_end_date ?? ""} />
+                  <input type="hidden" name="start_time" value={selectedLibraryStudent?.start_time?.slice(0, 5) ?? ""} />
+                  <input type="hidden" name="end_time" value={selectedLibraryStudent?.end_time?.slice(0, 5) ?? ""} />
+                  <input type="hidden" name="slot_hours" value={selectedLibraryStudent?.slot_hours ?? ""} />
+                  <label>
+                    {t("paymentDate")}
+                    <input name="payment_date" type="date" defaultValue={todayIso()} required />
+                  </label>
+                  <div className="library-due-collection-card full-span">
+                    <span>{t("pendingDues")}</span>
+                    <strong>{formatMoney(libraryDueAmount)}</strong>
+                    <small>{t("duesCollectionHelp")}</small>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label>
+                    {t("paymentDate")}
+                    <input name="payment_date" type="date" defaultValue={todayIso()} required />
+                  </label>
+                  <label>
+                    {t("startDate")}
+                    <input
+                      name="start_date"
+                      type="date"
+                      value={subscriptionStartDate}
+                      onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("endDate")}
+                    <input
+                      name="end_date"
+                      type="date"
+                      value={subscriptionEndDate}
+                      onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                  {libraryMemberMode === "new" ? (
+                    <>
+                      <label>
+                        {t("seatNumber")}
+                        <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
+                      </label>
+                      <label>
+                        {t("lockerNumber")}
+                        <input name="locker_number" value={lockerNumber} onChange={(event) => setLockerNumber(event.target.value)} />
+                      </label>
+                    </>
+                  ) : null}
+                  <label>
+                    {t("startTime")}
+                    <input
+                      name="start_time"
+                      type="time"
+                      min="06:00"
+                      max="22:00"
+                      step="3600"
+                      value={startTime}
+                      onChange={(event) => setStartTime(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("endTime")}
+                    <input
+                      name="end_time"
+                      type="time"
+                      min="06:00"
+                      max="22:00"
+                      step="3600"
+                      value={endTime}
+                      onChange={(event) => setEndTime(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("slotHours")}
+                    <input name="slot_hours" value={slotHours} readOnly />
+                  </label>
+                </>
+              )}
+            </>
+          ) : null}
         </>
       ) : null}
 
       {type === "course" ? (
         <>
-          <label>
-            {t("name")}
-            <input name="customer_name" required />
-          </label>
-          <label>
-            {t("rollNumber")}
-            <input name="roll_number" />
-          </label>
-          <DatePair subscription />
-          <label>
-            {t("paymentDate")}
-            <input name="payment_date" type="date" defaultValue={todayIso()} required />
-          </label>
-          <label>
-            {t("seatNumber")}
-            <input name="seat_number" />
-          </label>
-          <label>
-            {t("startTime")}
-            <input
-              name="start_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={startTime}
-              onChange={(event) => setStartTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("endTime")}
-            <input
-              name="end_time"
-              type="time"
-              min="06:00"
-              max="22:00"
-              step="3600"
-              value={endTime}
-              onChange={(event) => setEndTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            {t("slotHours")}
-            <input name="slot_hours" value={slotHours} readOnly />
-          </label>
-          <label>
+          <label className="full-span">
             {t("course")}
             <select
               name="course_id"
               required
-              onChange={(event) =>
-                setCourseName(mainCourses.find((course) => course.id === event.target.value)?.name ?? "")
-              }
+              value={selectedCourseId}
+              onChange={(event) => handleCourseChange(event.target.value)}
             >
               <option value="">{t("selectCourse")}</option>
               {mainCourses.map((course) => (
@@ -4928,10 +5850,15 @@ function PaymentForm({
               ))}
             </select>
           </label>
-          {courseName === "Skills" ? (
-            <label>
+          {courseNeedsSkill ? (
+            <label className="full-span">
               {t("skill")}
-              <select name="skill_course_id" required>
+              <select
+                name="skill_course_id"
+                required
+                value={selectedSkillCourseId}
+                onChange={(event) => handleSkillCourseChange(event.target.value)}
+              >
                 <option value="">{t("selectSkill")}</option>
                 {skillCourses.map((course) => (
                   <option key={course.id} value={course.id}>
@@ -4941,19 +5868,219 @@ function PaymentForm({
               </select>
             </label>
           ) : null}
+          {selectedCourseSource ? (
+            <>
+              <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
+                <button
+                  type="button"
+                  className={courseMemberMode === "new" ? "selected" : ""}
+                  onClick={() => chooseCourseMemberMode("new")}
+                >
+                  <UserPlus size={18} />
+                  <span>{t("newStudent")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={courseMemberMode === "existing" ? "selected" : ""}
+                  onClick={() => chooseCourseMemberMode("existing")}
+                >
+                  <UserCheck size={18} />
+                  <span>{t("existingMember")}</span>
+                </button>
+              </div>
+
+              {courseMemberMode === "existing" ? (
+                <>
+                  <label className="full-span">
+                    {t("studentSearch")}
+                    <span className="input-with-icon">
+                      <Search size={16} />
+                      <input
+                        type="search"
+                        value={courseSearch}
+                        onChange={(event) => handleCourseSearchChange(event.target.value)}
+                        placeholder={`${t("rollNumber")} / ${t("name")}`}
+                      />
+                    </span>
+                  </label>
+                  {showCourseSearchResults ? (
+                    <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
+                      {searchableCourseStudents.slice(0, 8).map((record) => {
+                        const displayName = courseStudentDisplayName(record, t);
+                        return (
+                          <button
+                            key={record.id}
+                            type="button"
+                            className={selectedCourseStudentId === record.id ? "selected" : ""}
+                            onClick={() => selectCourseStudent(record.id)}
+                          >
+                            <div className="library-search-result-main">
+                              <StudentAvatar displayName={displayName} className="picker" />
+                              <span>
+                                <strong>{record.rollNumber ?? "-"} · {displayName}</strong>
+                                <small>
+                                  {record.courseName} · {t("seat")} {record.seatNumber ?? "-"}
+                                  {record.subscriptionEndDate ? ` · ${t("expiresOn")} ${displayDate(record.subscriptionEndDate)}` : ""}
+                                </small>
+                              </span>
+                            </div>
+                            {!record.active ? <em>{t("inactiveStudents")}</em> : null}
+                          </button>
+                        );
+                      })}
+                      {courseSearch.trim() && searchableCourseStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {coursePaymentFieldsReady ? (
+                <>
+                  {courseMemberMode === "existing" && selectedCourseStudent ? (
+                    <>
+                      <div className="library-selected-profile with-photo full-span">
+                        <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="selected" />
+                        <span>
+                          <strong>{courseStudentDisplayName(selectedCourseStudent, t)}</strong>
+                          <small>
+                            #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName} · {t("seat")} {selectedCourseStudent.seatNumber ?? "-"}
+                          </small>
+                        </span>
+                      </div>
+                      <input type="hidden" name="customer_name" value={studentName} />
+                      <input type="hidden" name="roll_number" value={rollNumber} />
+                      <input type="hidden" name="seat_number" value={seatNumber} />
+                    </>
+                  ) : null}
+                  {courseMemberMode === "new" ? (
+                    <>
+                      <label>
+                        {t("name")}
+                        <input name="customer_name" value={studentName} onChange={(event) => setStudentName(event.target.value)} required />
+                      </label>
+                      <label>
+                        {t("rollNumber")}
+                        <input
+                          name="roll_number"
+                          value={rollNumber}
+                          onChange={(event) => setRollNumber(event.target.value)}
+                          aria-invalid={duplicateCourseRollStudent ? "true" : undefined}
+                          aria-describedby={duplicateCourseRollStudent ? "course-roll-number-error" : undefined}
+                          required
+                        />
+                        {duplicateCourseRollError ? (
+                          <span id="course-roll-number-error" className="text-xs font-semibold text-error" role="alert">
+                            {duplicateCourseRollError}
+                          </span>
+                        ) : null}
+                      </label>
+                      <label>
+                        {t("seatNumber")}
+                        <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
+                      </label>
+                    </>
+                  ) : null}
+                  <label>
+                    {t("paymentDate")}
+                    <input name="payment_date" type="date" defaultValue={today} required />
+                  </label>
+                  <label>
+                    {t("startDate")}
+                    <input
+                      name="start_date"
+                      type="date"
+                      value={subscriptionStartDate}
+                      onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("endDate")}
+                    <input
+                      name="end_date"
+                      type="date"
+                      value={subscriptionEndDate}
+                      onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("startTime")}
+                    <input
+                      name="start_time"
+                      type="time"
+                      min="06:00"
+                      max="22:00"
+                      step="3600"
+                      value={startTime}
+                      onChange={(event) => setStartTime(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("endTime")}
+                    <input
+                      name="end_time"
+                      type="time"
+                      min="06:00"
+                      max="22:00"
+                      step="3600"
+                      value={endTime}
+                      onChange={(event) => setEndTime(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("slotHours")}
+                    <input name="slot_hours" value={slotHours} readOnly />
+                  </label>
+                  <label>
+                    {t("referralCode")}
+                    <input name="referral_code" list="referral-codes" />
+                    <datalist id="referral-codes">
+                      {referrals.map((referral) => (
+                        <option key={referral.code} value={referral.code} />
+                      ))}
+                    </datalist>
+                  </label>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {type === "library" && libraryPaymentFieldsReady && collectingLibraryDues ? (
+        <>
+          <input type="hidden" name="fee_amount" value={fee} />
+          {mode === "mixed" ? (
+            <input type="hidden" name="paid_amount" value={splitCollectionNumber} />
+          ) : (
+            <label>
+              {t("collectDue")}
+              <input
+                name="paid_amount"
+                type="number"
+                min="0"
+                step="1"
+                value={paid}
+                onChange={(event) => setPaid(event.target.value)}
+                required
+              />
+            </label>
+          )}
           <label>
-            {t("referralCode")}
-            <input name="referral_code" list="referral-codes" />
-            <datalist id="referral-codes">
-              {referrals.map((referral) => (
-                <option key={referral.code} value={referral.code} />
-              ))}
-            </datalist>
+            {t("dues")}
+            <input value={dues} readOnly />
+          </label>
+          <label>
+            {t("advance")}
+            <input value={advance} readOnly />
           </label>
         </>
       ) : null}
 
-      {type === "library" || type === "course" ? (
+      {(type === "course" && coursePaymentFieldsReady) || (type === "library" && libraryPaymentFieldsReady && !collectingLibraryDues) ? (
         <>
           <label>
             {t("fee")}
@@ -5003,61 +6130,65 @@ function PaymentForm({
         </>
       ) : null}
 
-      <label>
-        {t("mode")}
-        <select name="mode" value={mode} onChange={(event) => setMode(event.target.value as PaymentMode)}>
-          <option value="cash">{t("cash")}</option>
-          <option value="online">{t("online")}</option>
-          <option value="mixed">{t("mixed")}</option>
-        </select>
-      </label>
-      {mode === "mixed" ? (
+      {paymentFieldsReady ? (
         <>
           <label>
-            {t("cashCollection")}
-            <input
-              name="cash_collection"
-              type="number"
-              min="0"
-              step="1"
-              value={cashCollection}
-              onChange={(event) => setCashCollection(event.target.value)}
-              required
-            />
+            {t("mode")}
+            <select name="mode" value={mode} onChange={(event) => setMode(event.target.value as PaymentMode)}>
+              <option value="cash">{t("cash")}</option>
+              <option value="online">{t("online")}</option>
+              <option value="mixed">{t("mixed")}</option>
+            </select>
           </label>
+          {mode === "mixed" ? (
+            <>
+              <label>
+                {t("cashCollection")}
+                <input
+                  name="cash_collection"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={cashCollection}
+                  onChange={(event) => setCashCollection(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("onlineCollection")}
+                <input
+                  name="online_collection"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={onlineCollection}
+                  onChange={(event) => setOnlineCollection(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                {t("remaining")}
+                <input value={splitRemaining} readOnly />
+              </label>
+            </>
+          ) : null}
           <label>
-            {t("onlineCollection")}
-            <input
-              name="online_collection"
-              type="number"
-              min="0"
-              step="1"
-              value={onlineCollection}
-              onChange={(event) => setOnlineCollection(event.target.value)}
-              required
-            />
+            {t("photo")}
+            <span className="camera-field">
+              <Camera size={16} />
+              {t("addImage")}
+              <input name="photo" type="file" accept="image/*" capture="environment" />
+            </span>
           </label>
-          <label>
-            {t("remaining")}
-            <input value={splitRemaining} readOnly />
+          <label className="full-span">
+            {t("remark")}
+            <textarea name="remark" rows={3} />
           </label>
+          <button className="primary-button full-span" type="submit" disabled={Boolean(duplicateLibraryRollStudent || duplicateCourseRollStudent)}>
+            {collectingLibraryDues ? t("collectDue") : t("collectPayment")}
+          </button>
         </>
       ) : null}
-      <label>
-        {t("photo")}
-        <span className="camera-field">
-          <Camera size={16} />
-          {t("addImage")}
-          <input name="photo" type="file" accept="image/*" capture="environment" />
-        </span>
-      </label>
-      <label className="full-span">
-        {t("remark")}
-        <textarea name="remark" rows={3} />
-      </label>
-      <button className="primary-button full-span" type="submit" disabled={Boolean(duplicateLibraryRollStudent)}>
-        {t("collectPayment")}
-      </button>
     </form>
   );
 }
@@ -5291,7 +6422,7 @@ function MiniAction({
   reasonRequired?: boolean;
   tone?: "neutral" | "approve" | "reject" | "cancel";
   icon?: ReactNode;
-  action: (formData: FormData) => Promise<ActionResult>;
+  action: ClientAction;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -5344,6 +6475,7 @@ function ClosingView({
 }) {
   const { t } = useLanguage();
   const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
+  const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
   const visibleSummaries = owner
     ? summaries.filter((summary) => summary.profile.active && summary.profile.role === "staff")
     : summaries.filter((summary) => summary.profile.id === profile.id);
@@ -5437,6 +6569,12 @@ function ClosingView({
         <div className="closing-user-grid">
           {visibleSummaries.map((summary) => {
             const pendingSummary = pendingReviewSummary(summary);
+            const cashToReceive = Math.max(summary.closing, 0);
+            const settlementEntryKey = `${date}:${summary.profile.id}`;
+            const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey] ?? (cashToReceive > 0 ? String(cashToReceive) : "");
+            const settlementEntryNumber = numberValue(settlementEntryAmount);
+            const receiveInputDisabled = pendingSummary.count > 0 || cashToReceive <= 0;
+            const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
             return (
               <article
                 className="closing-user-card"
@@ -5453,6 +6591,10 @@ function ClosingView({
                   </span>
                 </div>
                 <div className="closing-ledger-parts">
+                  <span>
+                    <small>{t("openingBalance")}</small>
+                    <strong>{formatMoney(summary.opening)}</strong>
+                  </span>
                   <span className="positive">
                     <small>{t("cashIn")}</small>
                     <strong>{formatMoney(summary.collected + summary.received)}</strong>
@@ -5473,9 +6615,44 @@ function ClosingView({
                   <strong>{formatMoney(summary.closing)}</strong>
                 </div>
                 {owner ? (
-                  <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
-                    {t("reviewAndSettle")}
-                  </button>
+                  <div className="closing-staff-actions">
+                    <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
+                      {t("reviewAndSettle")}
+                    </button>
+                    <form
+                      className="closing-receive-form"
+                      onSubmit={(event) =>
+                        submitAndClose(event, settleCashAction, setNotice, startTransition, () =>
+                          setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: "" })),
+                        )
+                      }
+                    >
+                      <input type="hidden" name="settlement_direction" value="received_from_user" />
+                      <input type="hidden" name="profile_id" value={summary.profile.id} />
+                      <input type="hidden" name="settlement_date" value={date} />
+                      <label className="closing-receive-field">
+                        <span>{t("amountReceived")}</span>
+                        <input
+                          name="amount"
+                          type="number"
+                          min="1"
+                          max={cashToReceive || undefined}
+                          step="0.01"
+                          value={settlementEntryAmount}
+                          onChange={(event) =>
+                            setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: event.target.value }))
+                          }
+                          placeholder={cashToReceive ? String(cashToReceive) : "0"}
+                          disabled={receiveInputDisabled}
+                          required
+                        />
+                      </label>
+                      <button type="submit" disabled={!canReceiveCash}>
+                        <ShieldCheck size={18} />
+                        {t("received")}
+                      </button>
+                    </form>
+                  </div>
                 ) : null}
               </article>
             );
@@ -5577,12 +6754,6 @@ function ClosingReviewDetail({
     pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
-  const actionableRecords = pendingRecords;
-  const settlementAmount = Math.abs(summary.closing);
-  const settlementDirection: SettlementDirection = summary.closing >= 0 ? "received_from_user" : "sent_to_user";
-  const [settlementEntryAmount, setSettlementEntryAmount] = useState("");
-  const settlementEntryNumber = numberValue(settlementEntryAmount);
-  const canFinalize = actionableRecords.length === 0 && settlementAmount > 0 && settlementEntryNumber > 0 && settlementEntryNumber <= settlementAmount;
   const createdTime = (createdAt: string) => createdAt.slice(11, 16);
   const reviewInCash = summary.collected + summary.received;
   const reviewInOnline = 0;
@@ -5729,35 +6900,6 @@ function ClosingReviewDetail({
           ) : null}
         </div>
       </section>
-
-      <form
-        className="review-settle-bar"
-        onSubmit={(event) => submitAndClose(event, settleCashAction, setNotice, startTransition, close)}
-      >
-        <input type="hidden" name="settlement_direction" value={settlementDirection} />
-        <input type="hidden" name="profile_id" value={summary.profile.id} />
-        <input type="hidden" name="settlement_date" value={date} />
-        <label className="review-settle-amount">
-          <span>{settlementDirection === "received_from_user" ? t("amountReceived") : t("amount")}</span>
-          <input
-            name="amount"
-            type="number"
-            min="1"
-            max={settlementAmount}
-            step="0.01"
-            value={settlementEntryAmount}
-            onChange={(event) => setSettlementEntryAmount(event.target.value)}
-            placeholder={settlementAmount ? String(settlementAmount) : ""}
-            disabled={actionableRecords.length > 0 || settlementAmount <= 0}
-            required
-          />
-          <small>{t("cashToSettle")}: {formatMoney(settlementAmount)} · {t("settlementAmountHelp")}</small>
-        </label>
-        <button type="submit" disabled={!canFinalize}>
-          <ShieldCheck size={18} />
-          {actionableRecords.length > 0 ? t("reviewPendingFirst") : t("finalizeAndSettle")}
-        </button>
-      </form>
     </div>
   );
 }
