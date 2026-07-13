@@ -2087,8 +2087,8 @@ const handlers = {
       .single();
     const recipient = typedData<{ id: string; active: boolean; role: string; full_name: string }>(recipientResponse);
     if (recipientResponse.error || !recipient) throw new Error(recipientResponse.error?.message ?? "Receiving staff not found.");
-    if (!recipient.active || isOwnerish(recipient.role)) {
-      return fail("Choose an active non-owner staff member.");
+    if (!recipient.active || recipient.role !== "staff") {
+      return fail("Choose an active staff member.");
     }
 
     const permissionResponse = await admin
@@ -2437,8 +2437,8 @@ const handlers = {
     if (!selectedProfile?.active) {
       return fail("Choose an active user.");
     }
-    if (isSalesAgent(selectedProfile.role)) {
-      return fail("Sales agents do not manage cash settlements.");
+    if (isSalesAgent(selectedProfile.role) && !isOwnerish(profile.role)) {
+      return fail("Only an owner can send or receive money with a sales agent.");
     }
 
     const actorOwnerish = isOwnerish(profile.role);

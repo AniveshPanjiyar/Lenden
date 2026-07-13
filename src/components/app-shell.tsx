@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useState, useTransition } from "react";
+import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -233,6 +233,7 @@ const messages: Record<Language, Record<string, string>> = {
     active: "Active",
     address: "Address",
     aadharCardPhoto: "Aadhar card photo",
+    aadharPhotoPreview: "Aadhar card preview",
     aadharNumber: "Aadhar number",
     addSubscription: "Add subscription",
     addCourse: "Add course",
@@ -434,6 +435,9 @@ const messages: Record<Language, Record<string, string>> = {
     pendingIncentive: "Pending incentive",
     pendingReview: "Pending review",
     photo: "Photo",
+    photoPreview: "Photo preview",
+    photoReady: "Photo ready to upload",
+    compressingPhoto: "Compressing photo…",
     phone: "Phone",
     callStudent: "Call student",
     personalSummary: "Personal collection summary",
@@ -496,6 +500,7 @@ const messages: Record<Language, Record<string, string>> = {
     selectSkill: "Select skill",
     selectStaff: "Select staff",
     selectUser: "Select user",
+    searchUser: "Search user",
     sendPayout: "Pay incentive",
     sendMoney: "Send money",
     sendFormTitle: "SEND",
@@ -574,6 +579,7 @@ const messages: Record<Language, Record<string, string>> = {
     active: "चालू",
     address: "पता",
     aadharCardPhoto: "आधार कार्ड फोटो",
+    aadharPhotoPreview: "आधार कार्ड प्रीव्यू",
     aadharNumber: "आधार नंबर",
     addSubscription: "सब्सक्रिप्शन जोड़ें",
     addCourse: "कोर्स जोड़ें",
@@ -775,6 +781,9 @@ const messages: Record<Language, Record<string, string>> = {
     pendingIncentive: "बाकी कमिशन",
     pendingReview: "बाकी जांच",
     photo: "फोटो",
+    photoPreview: "फोटो प्रीव्यू",
+    photoReady: "फोटो अपलोड के लिए तैयार है",
+    compressingPhoto: "फोटो को छोटा किया जा रहा है…",
     phone: "फोन",
     callStudent: "छात्र को कॉल करें",
     personalSummary: "मेरे कलेक्शन का हिसाब",
@@ -837,6 +846,7 @@ const messages: Record<Language, Record<string, string>> = {
     selectSkill: "स्किल चुनें",
     selectStaff: "स्टाफ चुनें",
     selectUser: "यूजर चुनें",
+    searchUser: "यूजर खोजें",
     sendPayout: "कमिशन दें",
     sendMoney: "पैसा भेजें",
     sendFormTitle: "भेजें",
@@ -1099,11 +1109,25 @@ function createActionRequestKey() {
   return `act_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
+const pendingFilePreparations = new WeakMap<HTMLInputElement, Promise<void>>();
+const preparedPhotoFiles = new WeakMap<HTMLInputElement, File>();
+
+async function waitForPendingFilePreparations(form: HTMLFormElement) {
+  const preparations = [...form.querySelectorAll<HTMLInputElement>('input[type="file"]')]
+    .map((input) => pendingFilePreparations.get(input))
+    .filter((preparation): preparation is Promise<void> => Boolean(preparation));
+  if (preparations.length > 0) await Promise.all(preparations);
+}
+
 function formDataWithIdempotencyKey(form: HTMLFormElement) {
   const existingKey = form.dataset.idempotencyKey;
   const key = existingKey && existingKey.trim() ? existingKey : createActionRequestKey();
   form.dataset.idempotencyKey = key;
   const formData = new FormData(form);
+  form.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input) => {
+    const preparedFile = preparedPhotoFiles.get(input);
+    if (input.name && preparedFile) formData.set(input.name, preparedFile);
+  });
   formData.set(actionIdempotencyField, key);
   return formData;
 }
@@ -1126,13 +1150,14 @@ function submitWith(
     return;
   }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
-  const formData = formDataWithIdempotencyKey(form);
-  const refreshDetail = mutationRefreshDetail(action, formData);
+  const refreshDetail = mutationRefreshDetail(action, new FormData(form));
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
+      await waitForPendingFilePreparations(form);
+      const formData = formDataWithIdempotencyKey(form);
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
@@ -1169,13 +1194,14 @@ function submitAndClose(
     return;
   }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
-  const formData = formDataWithIdempotencyKey(form);
-  const refreshDetail = mutationRefreshDetail(action, formData);
+  const refreshDetail = mutationRefreshDetail(action, new FormData(form));
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
+      await waitForPendingFilePreparations(form);
+      const formData = formDataWithIdempotencyKey(form);
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
@@ -1719,8 +1745,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     (profile) => profile.active && profile.role === "staff" && profile.id !== appData.profile.id,
   );
   const moneyMovementProfiles = appData.profiles.filter((item) => {
-    if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id || item.role === "sales_agent") return false;
-    if (owner) return item.role === "staff";
+    if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
+    if (owner) return item.role === "staff" || item.role === "sales_agent";
     return isOwnerish(item.role);
   });
   const permissionsByProfile = useMemo(() => {
@@ -3156,7 +3182,7 @@ function TransactionsView({
           ? profiles.filter((item) =>
               item.active &&
               item.id !== (payment.current_holder_id ?? payment.collected_by) &&
-              !isOwnerish(item.role) &&
+              item.role === "staff" &&
               (permissionsByProfile[item.id] ?? []).includes(requiredPermission),
             )
           : [];
@@ -3684,16 +3710,11 @@ function TransactionsView({
                             {record.canRequestTransfer ? (
                               <form onSubmit={(event) => submitWith(event, requestPaymentTransferAction, setNotice, startTransition, false)}>
                                 <input type="hidden" name="payment_id" value={record.id} />
-                                <label>
-                                  {t("transferToStaff")}
-                                  <select name="to_profile_id" required>
-                                    {record.transferRecipients?.map((recipient) => (
-                                      <option key={recipient.id} value={recipient.id}>
-                                        {recipient.full_name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
+                                <SearchableProfileSelect
+                                  label={t("transferToStaff")}
+                                  name="to_profile_id"
+                                  profiles={record.transferRecipients ?? []}
+                                />
                                 <label>
                                   {t("note")}
                                   <input name="note" placeholder={t("optional")} />
@@ -4135,6 +4156,165 @@ function StudentPhoto({
 }) {
   const imageUrl = getProfileImage(displayName, student.photo_url);
   return <StudentAvatar displayName={displayName} imageUrl={imageUrl} className={className} />;
+}
+
+async function compressUploadImage(file: File) {
+  if (!file.type.startsWith("image/")) return file;
+
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const maxDimension = 1280;
+    const scale = Math.min(maxDimension / bitmap.width, maxDimension / bitmap.height, 1);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+    let compressedBlob: Blob | null = null;
+    for (const quality of [0.82, 0.72, 0.62]) {
+      compressedBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (compressedBlob && compressedBlob.size <= 1024 * 1024) break;
+    }
+    if (!compressedBlob || compressedBlob.size >= file.size) return file;
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "student-photo";
+    return new File([compressedBlob], `${baseName}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  } finally {
+    bitmap?.close();
+  }
+}
+
+function CompressedImageInput({
+  inputName,
+  label,
+  previewLabel,
+  displayName = "",
+  initialImageUrl,
+  variant,
+}: {
+  inputName: "student_photo" | "aadhar_photo";
+  label: string;
+  previewLabel: string;
+  displayName?: string;
+  initialImageUrl?: string | null;
+  variant: "student" | "document";
+}) {
+  const { t } = useLanguage();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState(initialImageUrl ?? null);
+  const [preparing, setPreparing] = useState(false);
+  const [hasSelectedPhoto, setHasSelectedPhoto] = useState(false);
+
+  function releaseObjectUrl() {
+    if (!objectUrlRef.current) return;
+    URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+  }
+
+  function showFilePreview(file: File) {
+    releaseObjectUrl();
+    const nextUrl = URL.createObjectURL(file);
+    objectUrlRef.current = nextUrl;
+    setPreviewUrl(nextUrl);
+  }
+
+  useEffect(() => {
+    const input = inputRef.current;
+    const form = input?.form;
+    const resetPreview = () => {
+      releaseObjectUrl();
+      setPreviewUrl(initialImageUrl ?? null);
+      setPreparing(false);
+      setHasSelectedPhoto(false);
+      if (input) preparedPhotoFiles.delete(input);
+    };
+    form?.addEventListener("reset", resetPreview);
+    return () => {
+      form?.removeEventListener("reset", resetPreview);
+      releaseObjectUrl();
+    };
+  }, [initialImageUrl]);
+
+  function handlePhotoChange(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file) {
+      preparedPhotoFiles.delete(input);
+      releaseObjectUrl();
+      setPreviewUrl(initialImageUrl ?? null);
+      setHasSelectedPhoto(false);
+      return;
+    }
+
+    showFilePreview(file);
+    preparedPhotoFiles.delete(input);
+    setHasSelectedPhoto(true);
+    setPreparing(true);
+    const preparation = compressUploadImage(file)
+      .then((preparedFile) => {
+        if (input.files?.[0] !== file) return;
+        if (preparedFile !== file) {
+          preparedPhotoFiles.set(input, preparedFile);
+          showFilePreview(preparedFile);
+        }
+      })
+      .finally(() => {
+        if (pendingFilePreparations.get(input) === preparation) {
+          pendingFilePreparations.delete(input);
+          setPreparing(false);
+        }
+      });
+    pendingFilePreparations.set(input, preparation);
+  }
+
+  return (
+    <div className="image-upload-preview-field full-span">
+      <div className="image-upload-preview-card">
+        {variant === "student" ? (
+          <StudentAvatar
+            displayName={displayName || t("libraryStudent")}
+            imageUrl={previewUrl}
+            className="upload-preview"
+          />
+        ) : (
+          <span
+            className={`document-upload-preview ${previewUrl ? "has-image" : ""}`}
+            role="img"
+            aria-label={previewLabel}
+            style={previewUrl ? { backgroundImage: `url("${previewUrl.replace(/"/g, "%22")}")` } : undefined}
+          >
+            {!previewUrl ? <ClipboardList size={30} /> : null}
+          </span>
+        )}
+        <div>
+          <strong>{previewLabel}</strong>
+          <span>{preparing ? t("compressingPhoto") : hasSelectedPhoto ? t("photoReady") : label}</span>
+        </div>
+      </div>
+      <label>
+        {label}
+        <span className="camera-field">
+          <Camera size={16} />
+          {t("addImage")}
+          <input
+            ref={inputRef}
+            name={inputName}
+            type="file"
+            accept="image/*"
+            onChange={(event) => handlePhotoChange(event.currentTarget)}
+          />
+        </span>
+      </label>
+    </div>
+  );
 }
 
 function studentNameInputValue(student: LibraryStudent) {
@@ -4791,14 +4971,14 @@ function LibraryStudentsView({
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
                   <h3 className="full-span section-title">{t("studentProfile")}</h3>
-                  <label className="full-span">
-                    {t("studentPhoto")}
-                    <span className="camera-field">
-                      <Camera size={16} />
-                      {t("addImage")}
-                      <input name="student_photo" type="file" accept="image/*" />
-                    </span>
-                  </label>
+                  <CompressedImageInput
+                    inputName="student_photo"
+                    label={t("studentPhoto")}
+                    previewLabel={t("photoPreview")}
+                    displayName={studentNameInputValue(selectedStudent)}
+                    initialImageUrl={selectedStudent.photo_url}
+                    variant="student"
+                  />
                   <label>
                     {t("name")}
                     <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
@@ -4819,14 +4999,13 @@ function LibraryStudentsView({
                     {t("aadharNumber")}
                     <input name="aadhar_number" defaultValue={selectedStudent.aadhar_number ?? ""} inputMode="numeric" />
                   </label>
-                  <label>
-                    {t("aadharCardPhoto")}
-                    <span className="camera-field">
-                      <Camera size={16} />
-                      {t("addImage")}
-                      <input name="aadhar_photo" type="file" accept="image/*" />
-                    </span>
-                  </label>
+                  <CompressedImageInput
+                    inputName="aadhar_photo"
+                    label={t("aadharCardPhoto")}
+                    previewLabel={t("aadharPhotoPreview")}
+                    initialImageUrl={selectedStudent.aadhar_photo_url}
+                    variant="document"
+                  />
                   <label>
                     {t("seatNumber")}
                     <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
@@ -5728,14 +5907,13 @@ function PaymentForm({
                     {t("address")}
                     <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
                   </label>
-                  <label className="full-span">
-                    {t("studentPhoto")}
-                    <span className="camera-field">
-                      <Camera size={16} />
-                      {t("addImage")}
-                      <input name="student_photo" type="file" accept="image/*" />
-                    </span>
-                  </label>
+                  <CompressedImageInput
+                    inputName="student_photo"
+                    label={t("studentPhoto")}
+                    previewLabel={t("photoPreview")}
+                    displayName={studentName}
+                    variant="student"
+                  />
                 </>
               ) : null}
               {collectingLibraryDues ? (
@@ -6302,22 +6480,14 @@ function MoneySettlementForm({
     >
       <input type="hidden" name="settlement_direction" value={direction} />
       <input type="hidden" name="settlement_date" value={settlementDate} />
-      <label>
-        {t("user")}
-        <select
-          name="profile_id"
-          required
-          value={selectedProfileId}
-          onChange={(event) => setSelectedProfileId(event.target.value)}
-        >
-          <option value="">{t("selectUser")}</option>
-          {profiles.map((profile) => (
-            <option key={profile.id} value={profile.id}>
-              {profile.full_name} · {t(roleLabelKeys[profile.role] ?? profile.role)}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SearchableProfileSelect
+        label={t("user")}
+        name="profile_id"
+        profiles={profiles}
+        value={selectedProfileId}
+        onChange={setSelectedProfileId}
+        includeEmptyOption
+      />
       <label>
         {t("amount")}
         <input
@@ -6342,6 +6512,69 @@ function MoneySettlementForm({
         {isReceived ? t("receivedFormTitle") : t("sendFormTitle")}
       </button>
     </form>
+  );
+}
+
+function SearchableProfileSelect({
+  label,
+  name,
+  profiles,
+  value,
+  onChange,
+  includeEmptyOption = false,
+}: {
+  label: string;
+  name: string;
+  profiles: Profile[];
+  value?: string;
+  onChange?: (profileId: string) => void;
+  includeEmptyOption?: boolean;
+}) {
+  const { t } = useLanguage();
+  const selectId = useId();
+  const [search, setSearch] = useState("");
+  const [internalSelectedProfileId, setInternalSelectedProfileId] = useState(value ?? profiles[0]?.id ?? "");
+  const selectedProfileId = value ?? internalSelectedProfileId;
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleProfiles = profiles.filter((profile) => {
+    if (profile.id === selectedProfileId) return true;
+    if (!normalizedSearch) return true;
+    const role = t(roleLabelKeys[profile.role] ?? profile.role);
+    return `${profile.full_name} ${profile.email} ${role}`.toLocaleLowerCase().includes(normalizedSearch);
+  });
+
+  return (
+    <div className="searchable-profile-select">
+      <label htmlFor={selectId}>{label}</label>
+      <span className="input-with-icon">
+        <Search size={16} />
+        <input
+          type="search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t("searchUser")}
+          aria-label={t("searchUser")}
+        />
+      </span>
+      <select
+        id={selectId}
+        name={name}
+        required
+        value={selectedProfileId}
+        onChange={(event) => {
+          setInternalSelectedProfileId(event.target.value);
+          onChange?.(event.target.value);
+        }}
+      >
+        {includeEmptyOption ? <option value="">{t("selectUser")}</option> : null}
+        {visibleProfiles.map((profile) => (
+          <option key={profile.id} value={profile.id}>
+            {profile.full_name} · {t(roleLabelKeys[profile.role] ?? profile.role)}
+          </option>
+        ))}
+        {visibleProfiles.length === 0 ? <option value="" disabled>{t("noRecords")}</option> : null}
+      </select>
+    </div>
   );
 }
 

@@ -303,6 +303,18 @@ form[aria-busy="true"] textarea {
   font-weight: 700;
 }
 
+.searchable-profile-select {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.searchable-profile-select > label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea,
@@ -3489,6 +3501,66 @@ summary::-webkit-details-marker {
   cursor: pointer;
 }
 
+.image-upload-preview-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.image-upload-preview-field > label {
+  display: grid;
+  gap: 7px;
+}
+
+.image-upload-preview-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(47, 111, 94, 0.22);
+  border-radius: 12px;
+  background: rgba(47, 111, 94, 0.07);
+  padding: 10px;
+}
+
+.library-student-photo.upload-preview {
+  width: 84px;
+  height: 98px;
+  border-radius: 12px;
+}
+
+.image-upload-preview-card div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.image-upload-preview-card strong {
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.image-upload-preview-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.document-upload-preview {
+  width: 118px;
+  height: 84px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 2px solid rgba(255, 253, 248, 0.95);
+  border-radius: 10px;
+  background-color: rgba(47, 111, 94, 0.12);
+  background-position: center;
+  background-size: cover;
+  color: var(--brand);
+  box-shadow: 0 8px 18px rgba(49, 66, 57, 0.16);
+}
+
 /* ── Bottom Actions / FAB ── */
 .bottom-actions {
   position: fixed;
@@ -5731,6 +5803,10 @@ option {
 }
 
 @media (max-width: 720px) {
+  .image-upload-preview-field {
+    grid-template-columns: 1fr;
+  }
+
   .app-root {
     padding-bottom: calc(96px + env(safe-area-inset-bottom));
   }
