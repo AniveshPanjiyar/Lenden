@@ -256,6 +256,7 @@ export type AppData = {
   courses: Course[];
   referrals: ReferralCode[];
   libraryStudents: LibraryStudent[];
+  studentPayments: Payment[];
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
@@ -274,6 +275,7 @@ export type BootstrapPayload = Pick<
 export type DashboardPayload = Pick<
   AppData,
   | "libraryStudents"
+  | "studentPayments"
   | "payments"
   | "expenses"
   | "movements"

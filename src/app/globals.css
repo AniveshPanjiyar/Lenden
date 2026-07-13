@@ -2221,6 +2221,32 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   justify-self: end;
 }
 
+.history-card-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-card-controls .mini-action,
+.history-approve-button {
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 18px rgba(47, 111, 94, 0.2);
+}
+
+.history-approve-button.blocked {
+  border: 1px solid rgba(47, 111, 94, 0.18);
+  background: rgba(47, 111, 94, 0.08);
+  color: rgba(47, 111, 94, 0.45);
+  box-shadow: none;
+}
+
 .history-actions-menu summary {
   width: 36px;
   height: 32px;
@@ -2263,7 +2289,49 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
 }
 
 .transaction-options-menu {
-  min-width: 240px;
+  min-width: 220px;
+  padding: 8px;
+  gap: 4px;
+}
+
+.transaction-option-button {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--foreground);
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  text-align: left;
+  font-weight: 800;
+}
+
+.transaction-option-button:hover,
+.transaction-option-button:focus-visible {
+  background: rgba(47, 111, 94, 0.08);
+}
+
+.transaction-option-button.danger {
+  color: var(--bad);
+}
+
+.transaction-action-sheet {
+  width: min(560px, calc(100vw - 24px));
+}
+
+.transaction-action-sheet .sheet-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.primary-button.danger {
+  background: var(--bad);
+  border-color: var(--bad);
 }
 
 .inline-actions form {
@@ -3508,6 +3576,10 @@ summary::-webkit-details-marker {
   gap: 12px;
 }
 
+.image-upload-preview-field.without-preview {
+  grid-template-columns: 1fr;
+}
+
 .image-upload-preview-field > label {
   display: grid;
   gap: 7px;
@@ -3559,6 +3631,18 @@ summary::-webkit-details-marker {
   background-size: cover;
   color: var(--brand);
   box-shadow: 0 8px 18px rgba(49, 66, 57, 0.16);
+}
+
+.library-document-preview-link {
+  display: inline-grid;
+  width: fit-content;
+  gap: 4px;
+  color: var(--brand-strong);
+  text-decoration: none;
+}
+
+.library-document-preview-link small {
+  font-weight: 700;
 }
 
 /* ── Bottom Actions / FAB ── */

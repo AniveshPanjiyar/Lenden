@@ -898,6 +898,37 @@ async function saveLibraryStudentRecord(
   if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
 
   const studentId = normalizeLibraryStudentId(params.id);
+  if (studentId) {
+    const currentResponse = await admin
+      .from("library_students")
+      .select("subscription_start_date, subscription_end_date, last_payment_date")
+      .eq("id", studentId)
+      .single();
+    const current = typedData<{
+      subscription_start_date: string | null;
+      subscription_end_date: string | null;
+      last_payment_date: string | null;
+    }>(currentResponse);
+    if (currentResponse.error || !current) {
+      if (isMissingLibraryStudentSchemaError(currentResponse.error)) {
+        throw new Error("Apply the library student migration before saving student records.");
+      }
+      throw new Error(currentResponse.error?.message ?? "Could not load library student.");
+    }
+
+    const currentSubscriptionKey = [
+      current.subscription_end_date ?? "",
+      current.subscription_start_date ?? "",
+      current.last_payment_date ?? "",
+    ].join("|");
+    const nextSubscriptionKey = [
+      params.fields.subscriptionEndDate ?? "",
+      params.fields.subscriptionStartDate ?? "",
+      params.lastPaymentDate ?? "",
+    ].join("|");
+    if (currentSubscriptionKey > nextSubscriptionKey) return studentId;
+  }
+
   const query = studentId
     ? admin.from("library_students").update(payload).eq("id", studentId)
     : admin.from("library_students").insert(payload);
@@ -1602,6 +1633,74 @@ const handlers = {
     return ok(active ? "Library student reactivated." : "Library student moved to inactive.");
   }),
 
+  saveCourseStudent: withErrors("Could not save course student.", async (formData, { admin, profile }) => {
+    if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
+      return fail("You do not have access to course students.");
+    }
+
+    const paymentId = asString(formData, "payment_id");
+    const customerName = asString(formData, "customer_name");
+    const rollNumber = normalizeLibraryRollNumber(asString(formData, "roll_number"));
+    const startDate = asString(formData, "start_date");
+    const endDate = asString(formData, "end_date");
+    const startTime = normalizeClockTime(asString(formData, "start_time"));
+    const endTime = normalizeClockTime(asString(formData, "end_time"));
+    const slotHours = slotHoursBetween(startTime, endTime);
+
+    if (!paymentId || !customerName || !rollNumber) {
+      return fail("Student name and roll number are required.");
+    }
+    if (!startDate || !endDate || !isIsoDate(startDate) || !isIsoDate(endDate) || endDate < startDate) {
+      return fail("Enter a valid subscription date range.");
+    }
+    if (!startTime || !endTime || slotHours === null) {
+      return fail("Enter a valid course time slot.");
+    }
+
+    const paymentResponse = await admin.from("payments").select("*").eq("id", paymentId).single();
+    const payment = typedData<Record<string, string | number | null>>(paymentResponse);
+    if (paymentResponse.error || !payment || payment.business_type !== "course" || payment.record_status !== "active") {
+      return fail("Course student was not found.");
+    }
+
+    const identityUpdates = {
+      customer_name: customerName,
+      roll_number: rollNumber,
+    };
+    let identityQuery = admin
+      .from("payments")
+      .update(identityUpdates)
+      .eq("business_type", "course")
+      .eq("record_status", "active");
+    if (typeof payment.skill_course_id === "string" && payment.skill_course_id) {
+      identityQuery = identityQuery.eq("skill_course_id", payment.skill_course_id);
+    } else if (typeof payment.course_id === "string" && payment.course_id) {
+      identityQuery = identityQuery.eq("course_id", payment.course_id).is("skill_course_id", null);
+    } else {
+      identityQuery = identityQuery.eq("id", paymentId);
+    }
+    identityQuery = typeof payment.roll_number === "string" && payment.roll_number.trim()
+      ? identityQuery.eq("roll_number", payment.roll_number)
+      : identityQuery.eq("id", paymentId);
+    const identityResult = await identityQuery;
+    if (identityResult.error) throw new Error(identityResult.error.message);
+
+    const { error } = await admin
+      .from("payments")
+      .update({
+        ...identityUpdates,
+        start_date: startDate,
+        end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        slot_hours: slotHours,
+      })
+      .eq("id", paymentId);
+    if (error) throw new Error(error.message);
+
+    return ok("Course student saved.");
+  }),
+
   createExpense: withErrors("Could not save expense.", async (formData, { admin, profile, idempotencyKey }) => {
     if (isSalesAgent(profile.role)) {
       return fail("Sales agents have read-only incentive access.");
@@ -1704,6 +1803,10 @@ const handlers = {
     const decision = asString(formData, "decision") as ApprovalDecision;
     if (!id || !recordType || !decision) return fail("Missing approval details.");
     if (recordType !== "payment" && recordType !== "expense") return fail("Invalid record type.");
+    if (decision !== "approved" && decision !== "rejected") return fail("Invalid approval decision.");
+    if (recordType === "payment" && decision !== "approved") {
+      return fail("Collections can only be approved. Use Delete transaction when the collection must be removed.");
+    }
 
     const table = recordType === "expense" ? "expenses" : "payments";
     const existingResponse = await admin.from(table).select("*").eq("id", id).single();
@@ -1840,7 +1943,7 @@ const handlers = {
     if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
 
     const recordOwnerId = recordOwnerProfileId(recordType, record);
-    if (recordOwnerId !== profile.id) {
+    if (recordOwnerId !== profile.id && !isOwnerish(profile.role)) {
       return fail("You can edit only your own transactions.");
     }
     if (String(record.record_status ?? "active") !== "active" || await recordIsEffectivelyApproved(admin, recordType, record)) {
@@ -1893,7 +1996,7 @@ const handlers = {
     if (error) throw new Error(error.message);
 
     await createNotifications(admin, {
-      recipientIds: await ownerRecipientIds(admin, profile.id),
+      recipientIds: recordOwnerId === profile.id ? await ownerRecipientIds(admin, profile.id) : [recordOwnerId],
       actorId: profile.id,
       title: `${recordType === "expense" ? "Expense" : "Payment"} updated`,
       body: `${profile.full_name} updated a pending ${recordType} transaction.`,
@@ -2073,7 +2176,9 @@ const handlers = {
     if (String(payment.record_status ?? "active") !== "active" || !canTransferPaymentStatus(String(payment.approval_status ?? ""))) {
       return fail("Only active transactions before owner approval can be transferred.");
     }
-    if (payment.current_holder_id !== profile.id) {
+    const currentHolderId = String(payment.current_holder_id ?? payment.collected_by ?? "");
+    if (!currentHolderId) return fail("This transaction does not have a current cash holder.");
+    if (!isOwnerish(profile.role) && currentHolderId !== profile.id) {
       return fail("Only the current cash holder can transfer this transaction.");
     }
 
@@ -2117,7 +2222,7 @@ const handlers = {
       requested_by: string;
     }>(pendingResponse);
     if (pendingTransfer) {
-      return pendingTransfer.from_profile_id === profile.id &&
+      return pendingTransfer.from_profile_id === currentHolderId &&
         pendingTransfer.to_profile_id === toProfileId &&
         pendingTransfer.requested_by === profile.id
         ? ok("Transaction transfer requested.")
@@ -2131,7 +2236,7 @@ const handlers = {
         mode: "cash",
         amount: cashAmount,
         payment_id: paymentId,
-        from_profile_id: profile.id,
+        from_profile_id: currentHolderId,
         to_profile_id: toProfileId,
         requested_by: profile.id,
         client_request_id: requestKey,
@@ -2142,8 +2247,14 @@ const handlers = {
     const movement = typedData<{ id: string }>(movementResult);
     if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not request transfer.");
 
+    const notificationRecipients = new Set([
+      ...(await ownerRecipientIds(admin, profile.id)),
+      currentHolderId,
+      toProfileId,
+    ]);
+    notificationRecipients.delete(profile.id);
     await createNotifications(admin, {
-      recipientIds: [...(await ownerRecipientIds(admin, profile.id)), toProfileId],
+      recipientIds: [...notificationRecipients],
       actorId: profile.id,
       title: "Transaction transfer requested",
       body: `${profile.full_name} requested to transfer ${cashAmount} cash to ${recipient.full_name}.`,

@@ -245,6 +245,7 @@ async function loadDashboard(
   const salesAgent = isSalesAgent(bootstrap.profile.role);
   const accessibleBusinesses = accessibleBusinessTypes(bootstrap.profile.role, bootstrap.permissions);
   const canViewLibraryStudents = !salesAgent && (ownerish || accessibleBusinesses.has("library"));
+  const canViewStudentPayments = !salesAgent && (ownerish || accessibleBusinesses.has("library") || accessibleBusinesses.has("course"));
   const range = viewState?.dateRange ?? rangeForPreset("today");
   const closingDate = range.to;
 
@@ -297,7 +298,7 @@ async function loadDashboard(
 
   const [
     libraryStudentsResult,
-    libraryStudentPaymentsResult,
+    studentPaymentsResult,
     paymentsResult,
     expensesResult,
     pendingPaymentsResult,
@@ -318,14 +319,15 @@ async function loadDashboard(
           .order("roll_number")
           .limit(1200)
       : Promise.resolve({ data: [], error: null }),
-    canViewLibraryStudents
+    canViewStudentPayments
       ? supabase
           .from("payments")
           .select("*")
-          .eq("business_type", "library")
-          .order("payment_date", { ascending: false })
+          .in("business_type", ["library", "course"])
+          .eq("record_status", "active")
+          .order("end_date", { ascending: false })
           .order("created_at", { ascending: false })
-          .limit(1200)
+          .limit(5000)
       : Promise.resolve({ data: [], error: null }),
     paymentsQuery,
     expensesQuery,
@@ -360,14 +362,15 @@ async function loadDashboard(
   const libraryStudentRows = isMissingLibraryStudentSchemaError(libraryStudentsResult.error)
     ? []
     : (libraryStudentsResult.data ?? []) as LibraryStudent[];
-  const libraryStudentPaymentRows = isMissingLibraryStudentSchemaError(libraryStudentPaymentsResult.error)
-    ? []
-    : (libraryStudentPaymentsResult.data ?? []) as Payment[];
+  const studentPaymentRows = (studentPaymentsResult.data ?? []) as Payment[];
+  const visibleStudentPayments = visibleData(studentPaymentRows, (payment) =>
+    ownerish || accessibleBusinesses.has(payment.business_type) || payment.collected_by === userId,
+  );
 
   const libraryStudents = canViewLibraryStudents
     ? mergeLibraryStudentsFromPayments(
         libraryStudentRows,
-        libraryStudentPaymentRows,
+        visibleStudentPayments,
       )
     : [];
   const paymentRows = mergeById((paymentsResult.data ?? []) as Payment[], (pendingPaymentsResult.data ?? []) as Payment[]);
@@ -375,6 +378,7 @@ async function loadDashboard(
 
   return {
     libraryStudents,
+    studentPayments: visibleStudentPayments,
     payments: visibleData(paymentRows, (payment) =>
       salesAgent
         ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition, WheelEvent } from "react";
 import { useFormStatus } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -56,6 +56,7 @@ import {
   markNotificationsReadAction,
   reviewChangeRequestAction,
   requestPaymentTransferAction,
+  saveCourseStudentAction,
   saveLibraryStudentAction,
   saveCourseAction,
   saveReferralAction,
@@ -87,6 +88,7 @@ type MutationRefreshDetail = {
   refreshingMessageKey: string;
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
+type TransactionActionKind = "transfer" | "edit" | "delete";
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive";
 type StudentRecordSource =
@@ -95,6 +97,8 @@ type StudentRecordSource =
 type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "mainCourse" | "skillCourse" }>;
 type CourseStudentRecord = {
   id: string;
+  paymentId: string;
+  identityKey: string;
   displayName: string;
   rollNumber: string | null;
   courseName: string;
@@ -1021,6 +1025,7 @@ const bootstrapRefreshActions = new Set<ClientAction>([
 ]);
 
 const libraryRefreshActions = new Set<ClientAction>([
+  saveCourseStudentAction,
   saveLibraryStudentAction,
   setLibraryStudentStatusAction,
 ]);
@@ -1079,6 +1084,13 @@ function formValidationMessage(form: HTMLFormElement) {
   return invalid?.validationMessage || "Please fix the highlighted field and try again.";
 }
 
+function disableNumberInputWheelChange(event: WheelEvent<HTMLElement>) {
+  const input = event.target;
+  if (input instanceof HTMLInputElement && input.type === "number" && document.activeElement === input) {
+    input.blur();
+  }
+}
+
 function setFormSubmitting(form: HTMLFormElement, submitting: boolean) {
   form.dataset.submitting = submitting ? "true" : "false";
   form.setAttribute("aria-busy", submitting ? "true" : "false");
@@ -1124,12 +1136,16 @@ function formDataWithIdempotencyKey(form: HTMLFormElement) {
   const key = existingKey && existingKey.trim() ? existingKey : createActionRequestKey();
   form.dataset.idempotencyKey = key;
   const formData = new FormData(form);
+  applyPreparedPhotoFiles(form, formData);
+  formData.set(actionIdempotencyField, key);
+  return formData;
+}
+
+function applyPreparedPhotoFiles(form: HTMLFormElement, formData: FormData) {
   form.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input) => {
     const preparedFile = preparedPhotoFiles.get(input);
     if (input.name && preparedFile) formData.set(input.name, preparedFile);
   });
-  formData.set(actionIdempotencyField, key);
-  return formData;
 }
 
 function clearFormIdempotencyKey(form: HTMLFormElement) {
@@ -1150,14 +1166,15 @@ function submitWith(
     return;
   }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
-  const refreshDetail = mutationRefreshDetail(action, new FormData(form));
+  const formData = formDataWithIdempotencyKey(form);
+  const refreshDetail = mutationRefreshDetail(action, formData);
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
       await waitForPendingFilePreparations(form);
-      const formData = formDataWithIdempotencyKey(form);
+      applyPreparedPhotoFiles(form, formData);
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
@@ -1194,14 +1211,15 @@ function submitAndClose(
     return;
   }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
-  const refreshDetail = mutationRefreshDetail(action, new FormData(form));
+  const formData = formDataWithIdempotencyKey(form);
+  const refreshDetail = mutationRefreshDetail(action, formData);
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
   setFormSubmitting(form, true);
   startTransition(async () => {
     try {
       await waitForPendingFilePreparations(form);
-      const formData = formDataWithIdempotencyKey(form);
+      applyPreparedPhotoFiles(form, formData);
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
@@ -1449,6 +1467,7 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
 function dashboardFromAppData(data: AppData): DashboardPayload {
   return {
     libraryStudents: data.libraryStudents,
+    studentPayments: data.studentPayments,
     payments: data.payments,
     expenses: data.expenses,
     movements: data.movements,
@@ -1560,9 +1579,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const owner = isOwnerish(appData.profile.role);
   const permissions = activePermissions(appData.profile.role, appData.permissions);
   const canViewLibraryStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_library"));
+  const canViewStudentRecords = canViewLibraryStudents || (!currentUserIsSalesAgent && permissions.includes("collect_course"));
   const visibleTabItems = currentUserIsSalesAgent
     ? tabItems.filter((item) => item.id === "home" || item.id === "payments")
-    : tabItems.filter((item) => item.id !== "library_students" || canViewLibraryStudents);
+    : tabItems.filter((item) => item.id !== "library_students" || canViewStudentRecords);
   const bottomTabItems = visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing");
 
   const pushNotice = useCallback((notice: ActionResult | null) => {
@@ -1904,7 +1924,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   function changeTab(nextTab: Tab) {
     if (currentUserIsSalesAgent && (nextTab === "closing" || nextTab === "settings" || nextTab === "library_students")) {
       setTab("home");
-    } else if (nextTab === "library_students" && !canViewLibraryStudents) {
+    } else if (nextTab === "library_students" && !canViewStudentRecords) {
       setTab("home");
     } else {
       setTab(nextTab);
@@ -1932,7 +1952,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
-    <div className="app-root bg-surface text-on-surface antialiased min-h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container pb-24 md:pb-0">
+    <div
+      className="app-root bg-surface text-on-surface antialiased min-h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container pb-24 md:pb-0"
+      onWheelCapture={disableNumberInputWheelChange}
+    >
       <header className="app-header bg-surface dark:bg-surface flex justify-between items-center px-4 py-3 w-full sticky top-0 z-40 transition-shadow border-b border-outline-variant/10 shadow-xs" id="main-header">
         <div className="app-header-brand flex items-center gap-3">
           <button type="button" aria-label="Open Menu" className="mobile-menu-button header-icon-button text-primary dark:text-inverse-primary hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors rounded-full p-2 scale-95 duration-100 ease-in-out md:hidden cursor-pointer" onClick={() => setSidebarOpen(true)}>
@@ -2002,7 +2025,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           </div>
         </aside>
 
-        <main className="app-main flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8 w-full" onInvalidCapture={handleInvalid}>
+        <main
+          className="app-main flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8 w-full"
+          onInvalidCapture={handleInvalid}
+        >
           <div className="app-main-inner max-w-4xl mx-auto space-y-8">
             {showPageHeadingRow ? (
               <div className="page-heading-row flex justify-between items-center">
@@ -2136,11 +2162,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {tab === "library_students" && canViewLibraryStudents ? (
+            {tab === "library_students" && canViewStudentRecords ? (
               <LibraryStudentsView
                 students={appData.libraryStudents}
-                payments={appData.payments}
+                payments={appData.studentPayments ?? appData.payments}
                 courses={appData.courses}
+                includeLibrary={canViewLibraryStudents}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -2212,7 +2239,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
-          payments={appData.payments}
+          payments={appData.studentPayments ?? appData.payments}
           libraryStudents={appData.libraryStudents}
           moneyMovementProfiles={moneyMovementProfiles}
           settlementDate={closingDate}
@@ -2400,15 +2427,17 @@ function PendingReviewSheet({
                 </strong>
                 {canReview ? (
                   <div className="pending-review-actions">
-                    <MiniAction
-                      hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
-                      label={t("reject")}
-                      tone="reject"
-                      icon={<X size={18} />}
-                      action={approveRecordAction}
-                      setNotice={setNotice}
-                      startTransition={startTransition}
-                    />
+                    {record.recordType === "expense" ? (
+                      <MiniAction
+                        hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                        label={t("reject")}
+                        tone="reject"
+                        icon={<X size={18} />}
+                        action={approveRecordAction}
+                        setNotice={setNotice}
+                        startTransition={startTransition}
+                      />
+                    ) : null}
                     {record.hasPendingTransfer ? (
                       <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
                         <Check size={18} />
@@ -3068,6 +3097,10 @@ function TransactionsView({
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
+  const [transactionAction, setTransactionAction] = useState<{
+    kind: TransactionActionKind;
+    recordKey: string;
+  } | null>(null);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
   const effectiveTransactionFilter = owner && transactionFilter === "pending" ? "transactions" : transactionFilter;
@@ -3118,6 +3151,8 @@ function TransactionsView({
       canRequestTransfer?: boolean;
       incomingTransferId?: string | null;
       pendingApproval?: boolean;
+      canApprove?: boolean;
+      approvalBlockedByTransfer?: boolean;
     };
     const selectedUserId = canUseProfileFilter ? transactionProfileId : profile.id;
     const userMatches = (userId: string | null | undefined) => selectedUserId === "all" || userId === selectedUserId;
@@ -3187,7 +3222,7 @@ function TransactionsView({
             )
           : [];
         const canRequestTransfer =
-          payment.current_holder_id === profile.id &&
+          (owner || payment.current_holder_id === profile.id) &&
           effectivePaymentPending &&
           cashImpact > 0 &&
           !pendingTransfer &&
@@ -3209,13 +3244,15 @@ function TransactionsView({
           recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
-          canEdit: payment.collected_by === profile.id && effectivePaymentPending && !activeTransfer,
+          canEdit: (owner || payment.collected_by === profile.id) && effectivePaymentPending && !activeTransfer,
           canDelete: owner && !effectivePaymentApproved,
           transferLines: transferSummaryLines(linkedTransfers, profiles, t),
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
           pendingApproval: effectivePaymentPending || Boolean(pendingTransfer),
+          canApprove: owner && effectivePaymentPending && !pendingTransfer,
+          approvalBlockedByTransfer: owner && effectivePaymentPending && Boolean(pendingTransfer),
           icon: payment.business_type === "guest_house"
             ? <Hotel size={24} />
             : payment.business_type === "library"
@@ -3389,45 +3426,6 @@ function TransactionsView({
       const pendingMovement = movement.status === "pending";
 
       if (owner) {
-        const selectedProfile = selectedUserId !== "all" ? profiles.find((item) => item.id === selectedUserId) : null;
-        if (selectedProfile && !isOwnerish(selectedProfile.role)) {
-          const selectedStaffAmount = movement.from_profile_id === selectedUserId
-            ? -movementAmount
-            : movement.to_profile_id === selectedUserId
-              ? movementAmount
-              : 0;
-          if (selectedStaffAmount === 0) return [];
-          const counterpartyId = selectedStaffAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
-          const entry = pendingMovement ? null : movementEntry(movement, selectedStaffAmount, selectedUserId);
-          const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
-          if (!historyDateInScope(date, pendingMovement)) return [];
-          const staffCashIn = selectedStaffAmount > 0;
-          const incomingOwnerCash = selectedStaffAmount > 0 && fromOwnerish && !toOwnerish;
-          const outgoingOwnerSettlement = selectedStaffAmount < 0 && toOwnerish;
-          return [{
-            id: `movement-${movement.id}`,
-            kind: staffCashIn ? "collection" : "settlement",
-            filter: staffCashIn ? "cash_in" : "cash_out",
-            date,
-            sortAt: movement.responded_at ?? movement.created_at,
-            amount: selectedStaffAmount,
-            cashAmount: movementAmount,
-            onlineAmount: 0,
-            title: staffCashIn ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
-            meta: `${selectedStaffAmount < 0 ? t("to") : t("from")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
-            status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
-            statusTone: movement.status,
-            modeLabel: staffCashIn ? t("cashIn") : labelForMode(movement.mode, t),
-            recordStatus: "active",
-            ownerId: selectedUserId,
-            description: entry?.description ?? "",
-            remark: movement.note ?? "",
-            reason: null,
-            pendingApproval: pendingMovement,
-            icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
-          }];
-        }
-
         const ownerFacingAmount = !fromOwnerish && toOwnerish ? movementAmount : fromOwnerish && !toOwnerish ? -movementAmount : 0;
         if (ownerFacingAmount === 0) return [];
         const ownerReceivedSettlement = ownerFacingAmount > 0;
@@ -3533,6 +3531,14 @@ function TransactionsView({
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
   }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
+  const selectedTransactionActionRecord = transactionAction
+    ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
+    : null;
+  const closeTransactionAction = () => setTransactionAction(null);
+  const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
+    trigger.closest("details")?.removeAttribute("open");
+    setTransactionAction({ kind, recordKey });
+  };
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
     if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
     if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
@@ -3701,61 +3707,62 @@ function TransactionsView({
                         </span>
                       ) : null}
                       {record.kind === "settlement" ? <span>{record.filter === "cash_in" ? t("cashIn") : t("cashOut")}</span> : null}
-                      {record.recordType && (record.canEdit || record.canDelete || record.canRequestTransfer) ? (
-                        <details className="history-actions-menu">
-                          <summary aria-label={t("moreOptions")}>
-                            <MoreHorizontal size={18} />
-                          </summary>
-                          <div className="details-menu transaction-options-menu">
-                            {record.canRequestTransfer ? (
-                              <form onSubmit={(event) => submitWith(event, requestPaymentTransferAction, setNotice, startTransition, false)}>
-                                <input type="hidden" name="payment_id" value={record.id} />
-                                <SearchableProfileSelect
-                                  label={t("transferToStaff")}
-                                  name="to_profile_id"
-                                  profiles={record.transferRecipients ?? []}
-                                />
-                                <label>
-                                  {t("note")}
-                                  <input name="note" placeholder={t("optional")} />
-                                </label>
-                                <button type="submit">{t("transferTransaction")}</button>
-                              </form>
-                            ) : null}
-                            {record.canEdit ? (
-                              <form onSubmit={(event) => submitWith(event, updateRecordAction, setNotice, startTransition, false)}>
-                                <input type="hidden" name="record_type" value={record.recordType} />
-                                <input type="hidden" name="id" value={record.id} />
-                                <label>
-                                  {t("amount")}
-                                  <input name="amount" type="number" min="1" step="0.01" defaultValue={record.editAmount} required />
-                                </label>
-                                <label>
-                                  {record.recordType === "payment" ? t("paymentDate") : t("expenseDate")}
-                                  <input name="date" type="date" defaultValue={record.editDate} required />
-                                </label>
-                                <label>
-                                  {t("description")}
-                                  <input name="description" defaultValue={record.description} required={record.recordType === "expense"} />
-                                </label>
-                                <label>
-                                  {t("remark")}
-                                  <input name="remark" defaultValue={record.remark} />
-                                </label>
-                                <button type="submit">{t("editTransaction")}</button>
-                              </form>
-                            ) : null}
-                            {record.canDelete ? (
-                              <form onSubmit={(event) => submitWith(event, cancelRecordAction, setNotice, startTransition, false)}>
-                                <input type="hidden" name="record_type" value={record.recordType} />
-                                <input type="hidden" name="id" value={record.id} />
-                                <input name="reason" placeholder={t("reasonRequired")} required />
-                                <button className="tone-cancel" type="submit">{t("deleteTransaction")}</button>
-                              </form>
-                            ) : null}
-                          </div>
-                        </details>
-                      ) : null}
+                      <div className="history-card-controls">
+                        {record.canApprove && record.recordType ? (
+                          <MiniAction
+                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                            label={t("approve")}
+                            tone="approve"
+                            icon={<Check size={20} strokeWidth={3} />}
+                            action={approveRecordAction}
+                            setNotice={setNotice}
+                            startTransition={startTransition}
+                          />
+                        ) : record.approvalBlockedByTransfer ? (
+                          <button className="history-approve-button blocked" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
+                            <Check size={20} strokeWidth={3} />
+                          </button>
+                        ) : null}
+                        {record.recordType && (record.canEdit || record.canDelete || record.canRequestTransfer) ? (
+                          <details className="history-actions-menu">
+                            <summary aria-label={t("moreOptions")}>
+                              <MoreHorizontal size={18} />
+                            </summary>
+                            <div className="details-menu transaction-options-menu">
+                              {record.canRequestTransfer ? (
+                                <button
+                                  className="transaction-option-button"
+                                  type="button"
+                                  onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}
+                                >
+                                  <ArrowUp size={18} />
+                                  <span>{t("transferTransaction")}</span>
+                                </button>
+                              ) : null}
+                              {record.canEdit ? (
+                                <button
+                                  className="transaction-option-button"
+                                  type="button"
+                                  onClick={(event) => openTransactionAction("edit", `${record.kind}-${record.id}`, event.currentTarget)}
+                                >
+                                  <Pencil size={18} />
+                                  <span>{t("editTransaction")}</span>
+                                </button>
+                              ) : null}
+                              {record.canDelete ? (
+                                <button
+                                  className="transaction-option-button danger"
+                                  type="button"
+                                  onClick={(event) => openTransactionAction("delete", `${record.kind}-${record.id}`, event.currentTarget)}
+                                >
+                                  <Trash2 size={18} />
+                                  <span>{t("deleteTransaction")}</span>
+                                </button>
+                              ) : null}
+                            </div>
+                          </details>
+                        ) : null}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -3766,6 +3773,100 @@ function TransactionsView({
           <p className="muted">{t("noRecordsForFilter")}</p>
         )}
       </section>
+
+      {transactionAction && selectedTransactionActionRecord?.recordType ? (
+        <div
+          className="modal-layer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : t("deleteTransaction")}
+        >
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeTransactionAction} />
+          <section className="action-sheet transaction-action-sheet">
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{selectedTransactionActionRecord.title}</p>
+                <h2>
+                  {transactionAction.kind === "transfer"
+                    ? t("transferTransaction")
+                    : transactionAction.kind === "edit"
+                      ? t("editTransaction")
+                      : t("deleteTransaction")}
+                </h2>
+                <span>{selectedTransactionActionRecord.meta} · {formatMoney(Math.abs(selectedTransactionActionRecord.amount))}</span>
+              </div>
+              <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeTransactionAction}>
+                <X size={18} />
+              </button>
+            </header>
+
+            {transactionAction.kind === "transfer" ? (
+              <form
+                className="form-grid"
+                onSubmit={(event) => submitAndClose(event, requestPaymentTransferAction, setNotice, startTransition, closeTransactionAction)}
+              >
+                <input type="hidden" name="payment_id" value={selectedTransactionActionRecord.id} />
+                <SearchableProfileSelect
+                  label={t("transferToStaff")}
+                  name="to_profile_id"
+                  profiles={selectedTransactionActionRecord.transferRecipients ?? []}
+                />
+                <label className="full-span">
+                  {t("note")}
+                  <input name="note" placeholder={t("optional")} />
+                </label>
+                <button className="primary-button full-span" type="submit">{t("transferTransaction")}</button>
+              </form>
+            ) : null}
+
+            {transactionAction.kind === "edit" ? (
+              <form
+                className="form-grid"
+                onSubmit={(event) => submitAndClose(event, updateRecordAction, setNotice, startTransition, closeTransactionAction)}
+              >
+                <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
+                <input type="hidden" name="id" value={selectedTransactionActionRecord.id} />
+                <label>
+                  {t("amount")}
+                  <input name="amount" type="number" min="1" step="0.01" defaultValue={selectedTransactionActionRecord.editAmount} required />
+                </label>
+                <label>
+                  {selectedTransactionActionRecord.recordType === "payment" ? t("paymentDate") : t("expenseDate")}
+                  <input name="date" type="date" defaultValue={selectedTransactionActionRecord.editDate} required />
+                </label>
+                <label className="full-span">
+                  {t("description")}
+                  <input
+                    name="description"
+                    defaultValue={selectedTransactionActionRecord.description}
+                    required={selectedTransactionActionRecord.recordType === "expense"}
+                  />
+                </label>
+                <label className="full-span">
+                  {t("remark")}
+                  <input name="remark" defaultValue={selectedTransactionActionRecord.remark} />
+                </label>
+                <button className="primary-button full-span" type="submit">{t("editTransaction")}</button>
+              </form>
+            ) : null}
+
+            {transactionAction.kind === "delete" ? (
+              <form
+                className="form-grid"
+                onSubmit={(event) => submitAndClose(event, cancelRecordAction, setNotice, startTransition, closeTransactionAction)}
+              >
+                <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
+                <input type="hidden" name="id" value={selectedTransactionActionRecord.id} />
+                <label className="full-span">
+                  {t("reasonRequired")}
+                  <input name="reason" placeholder={t("reasonRequired")} required autoFocus />
+                </label>
+                <button className="primary-button danger full-span" type="submit">{t("deleteTransaction")}</button>
+              </form>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
     </div>
   );
@@ -4199,13 +4300,15 @@ function CompressedImageInput({
   displayName = "",
   initialImageUrl,
   variant,
+  capture = false,
 }: {
-  inputName: "student_photo" | "aadhar_photo";
+  inputName: "student_photo" | "aadhar_photo" | "photo";
   label: string;
   previewLabel: string;
   displayName?: string;
   initialImageUrl?: string | null;
   variant: "student" | "document";
+  capture?: boolean;
 }) {
   const { t } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -4276,29 +4379,29 @@ function CompressedImageInput({
   }
 
   return (
-    <div className="image-upload-preview-field full-span">
-      <div className="image-upload-preview-card">
-        {variant === "student" ? (
-          <StudentAvatar
-            displayName={displayName || t("libraryStudent")}
-            imageUrl={previewUrl}
-            className="upload-preview"
-          />
-        ) : (
-          <span
-            className={`document-upload-preview ${previewUrl ? "has-image" : ""}`}
-            role="img"
-            aria-label={previewLabel}
-            style={previewUrl ? { backgroundImage: `url("${previewUrl.replace(/"/g, "%22")}")` } : undefined}
-          >
-            {!previewUrl ? <ClipboardList size={30} /> : null}
-          </span>
-        )}
-        <div>
-          <strong>{previewLabel}</strong>
-          <span>{preparing ? t("compressingPhoto") : hasSelectedPhoto ? t("photoReady") : label}</span>
+    <div className={`image-upload-preview-field full-span ${previewUrl ? "has-preview" : "without-preview"}`}>
+      {previewUrl ? (
+        <div className="image-upload-preview-card">
+          {variant === "student" ? (
+            <StudentAvatar
+              displayName={displayName || t("libraryStudent")}
+              imageUrl={previewUrl}
+              className="upload-preview"
+            />
+          ) : (
+            <span
+              className="document-upload-preview has-image"
+              role="img"
+              aria-label={previewLabel}
+              style={{ backgroundImage: `url("${previewUrl.replace(/"/g, "%22")}")` }}
+            />
+          )}
+          <div>
+            <strong>{previewLabel}</strong>
+            <span>{preparing ? t("compressingPhoto") : hasSelectedPhoto ? t("photoReady") : label}</span>
+          </div>
         </div>
-      </div>
+      ) : null}
       <label>
         {label}
         <span className="camera-field">
@@ -4309,6 +4412,7 @@ function CompressedImageInput({
             name={inputName}
             type="file"
             accept="image/*"
+            capture={capture ? "environment" : undefined}
             onChange={(event) => handlePhotoChange(event.currentTarget)}
           />
         </span>
@@ -4504,8 +4608,20 @@ function LibraryStudentSummaryCard({
         <div>
           <span>{t("aadharCardPhoto")}</span>
           {student.aadhar_photo_url ? (
-            <a className="library-document-link" href={student.aadhar_photo_url} target="_blank" rel="noreferrer">
-              {t("viewPhoto")}
+            <a
+              className="library-document-preview-link"
+              href={student.aadhar_photo_url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={t("viewPhoto")}
+            >
+              <span
+                className="document-upload-preview has-image"
+                role="img"
+                aria-label={t("aadharPhotoPreview")}
+                style={{ backgroundImage: `url("${student.aadhar_photo_url.replace(/"/g, "%22")}")` }}
+              />
+              <small>{t("viewPhoto")}</small>
             </a>
           ) : (
             <strong>{displayTextValue(null)}</strong>
@@ -4565,10 +4681,10 @@ function studentRecordSourceId(course: Course) {
   return `${course.kind === "skill" ? "skill" : "course"}:${course.id}`;
 }
 
-function studentRecordSources(courses: Course[], t: (key: string) => string): StudentRecordSource[] {
+function studentRecordSources(courses: Course[], t: (key: string) => string, includeLibrary: boolean): StudentRecordSource[] {
   const visibleCourses = courses.filter((course) => course.active);
   return [
-    { id: "library", type: "library", label: t("library") },
+    ...(includeLibrary ? [{ id: "library", type: "library", label: t("library") } satisfies StudentRecordSource] : []),
     ...visibleCourses.map((course): StudentRecordSource => ({
       id: studentRecordSourceId(course),
       type: course.kind === "skill" ? "skillCourse" : "mainCourse",
@@ -4582,7 +4698,7 @@ function paymentMatchesStudentRecordSource(payment: Payment, source: CourseStude
   if (payment.business_type !== "course" || payment.record_status !== "active") return false;
   return source.type === "skillCourse"
     ? payment.skill_course_id === source.course.id
-    : payment.course_id === source.course.id;
+    : payment.course_id === source.course.id && !payment.skill_course_id;
 }
 
 function courseStudentIdentityKey(payment: Payment) {
@@ -4602,6 +4718,8 @@ function courseStudentRecordFromPayment(payment: Payment, source: CourseStudentR
 
   return {
     id: `${source.id}:${courseStudentIdentityKey(payment)}`,
+    paymentId: payment.id,
+    identityKey: courseStudentIdentityKey(payment),
     displayName: payment.customer_name?.trim() || "",
     rollNumber: normalizeLibraryRollNumberForView(payment.roll_number),
     courseName: source.course.name,
@@ -4670,12 +4788,14 @@ function LibraryStudentsView({
   students,
   payments,
   courses,
+  includeLibrary,
   setNotice,
   startTransition,
 }: {
   students: LibraryStudent[];
   payments: Payment[];
   courses: Course[];
+  includeLibrary: boolean;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -4687,8 +4807,11 @@ function LibraryStudentsView({
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
   const today = todayIso();
-  const sources = useMemo(() => studentRecordSources(courses, t), [courses, t]);
-  const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? sources[0];
+  const sources = useMemo(() => studentRecordSources(courses, t, includeLibrary), [courses, includeLibrary, t]);
+  const selectedSource = useMemo(
+    () => sources.find((source) => source.id === selectedSourceId) ?? sources[0] ?? { id: "library", type: "library", label: t("library") } satisfies StudentRecordSource,
+    [selectedSourceId, sources, t],
+  );
   const selectedSourceValue = selectedSource.id;
   const showingLibraryStudents = selectedSource.type === "library";
   const activeStudents = students.filter((student) => student.active && !student.placeholder);
@@ -4735,6 +4858,7 @@ function LibraryStudentsView({
   }, []);
 
   const baseSelectedStudent = showingLibraryStudents ? students.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null : null;
+  const selectedCourseStudent = showingLibraryStudents ? null : courseStudents.find((record) => record.id === selectedId) ?? null;
   const changeStudentSource = (nextSourceId: string) => {
     setSelectedSourceId(nextSourceId);
     setQuery("");
@@ -4768,6 +4892,15 @@ function LibraryStudentsView({
     () => baseSelectedStudent ? libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments) : null,
     [baseSelectedStudent, historyPayments],
   );
+  const courseHistoryPayments = useMemo(() => {
+    if (!selectedCourseStudent || selectedSource.type === "library") return [];
+    return payments
+      .filter((payment) =>
+        paymentMatchesStudentRecordSource(payment, selectedSource) &&
+        courseStudentIdentityKey(payment) === selectedCourseStudent.identityKey,
+      )
+      .sort((a, b) => libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)));
+  }, [payments, selectedCourseStudent, selectedSource]);
   return (
     <section className="library-students-view">
       <div className="library-student-source-bar">
@@ -4888,7 +5021,6 @@ function LibraryStudentsView({
             const timeRange = displayTimeRange(record.startTime, record.endTime);
             const meta = [
               record.courseName,
-              record.seatNumber ? `${t("seat")} ${record.seatNumber}` : null,
               timeRange !== "-" ? timeRange : null,
               `${t("lastPayment")} ${displayDate(record.lastPaymentDate)}`,
             ].filter(Boolean).join(" · ");
@@ -4896,10 +5028,12 @@ function LibraryStudentsView({
             return (
               <article
                 key={record.id}
-                className={`library-student-list-card without-call ${record.active ? "" : "expired"}`}
+                className={`library-student-list-card without-call ${selectedCourseStudent?.id === record.id ? "selected" : ""} ${record.active ? "" : "expired"}`}
               >
                 <span className={`library-expiry-chip library-list-expiry ${record.active ? "" : "expired"}`}>{expiryLabel}</span>
-                <div
+                <button
+                  type="button"
+                  onClick={() => openStudentDetails(record.id)}
                   className="library-student-list-main without-call"
                   aria-label={`${displayName}, ${record.courseName}, ${expiryLabel}`}
                 >
@@ -4911,7 +5045,7 @@ function LibraryStudentsView({
                     <strong>{displayName}</strong>
                     <span>{meta}</span>
                   </div>
-                </div>
+                </button>
               </article>
             );
           })}
@@ -5074,6 +5208,127 @@ function LibraryStudentsView({
                     </div>
                   ))}
                   {historyPayments.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {selectedCourseStudent ? (
+        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={courseStudentDisplayName(selectedCourseStudent, t)}>
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
+          <section className="action-sheet library-student-sheet">
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{selectedCourseStudent.courseName}</p>
+                <h2>{t("studentDetails")}</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button className="secondary-button" type="button" onClick={() => setEditingStudent((value) => !value)}>
+                  {editingStudent ? <X size={16} /> : <Pencil size={16} />}
+                  {editingStudent ? t("cancel") : t("editTransaction")}
+                </button>
+                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeStudentDetails}>
+                  <X size={18} />
+                </button>
+              </div>
+            </header>
+
+            <div className="space-y-5">
+              {!editingStudent ? (
+                <section className="library-student-summary-card">
+                  <div className="library-student-summary-top">
+                    <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="detail" />
+                    <div className="library-student-summary-identity">
+                      <span className="library-student-roll-badge">#{selectedCourseStudent.rollNumber ?? "-"}</span>
+                      <h3>{courseStudentDisplayName(selectedCourseStudent, t)}</h3>
+                      <p>{selectedCourseStudent.courseName}</p>
+                    </div>
+                    <span className={`library-expiry-chip ${selectedCourseStudent.active ? "" : "expired"}`}>
+                      {subscriptionExpiryStatusLabel(selectedCourseStudent.subscriptionEndDate, today, t)}
+                    </span>
+                  </div>
+                  <div className="library-student-summary-grid">
+                    <div className="important">
+                      <span>{t("subscriptionPeriod")}</span>
+                      <strong>{displayDateRange(selectedCourseStudent.subscriptionStartDate, selectedCourseStudent.subscriptionEndDate, t)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("timing")}</span>
+                      <strong>{displayTimeRange(selectedCourseStudent.startTime, selectedCourseStudent.endTime)}</strong>
+                    </div>
+                    <div>
+                      <span>{t("lastPayment")}</span>
+                      <strong>{displayDate(selectedCourseStudent.lastPaymentDate)}</strong>
+                    </div>
+                  </div>
+                  <div className="library-student-summary-money">
+                    <span>{t("fee")} <strong>{displayMoneyValue(selectedCourseStudent.feeAmount)}</strong></span>
+                    <span>{t("paid")} <strong>{displayMoneyValue(selectedCourseStudent.paidAmount)}</strong></span>
+                    <span>{t("dues")} <strong>{displayMoneyValue(selectedCourseStudent.duesAmount)}</strong></span>
+                    <span>{t("advance")} <strong>{displayMoneyValue(selectedCourseStudent.advanceAmount)}</strong></span>
+                  </div>
+                </section>
+              ) : (
+                <form
+                  key={selectedCourseStudent.paymentId}
+                  className="form-grid two"
+                  onSubmit={(event) => submitWith(event, saveCourseStudentAction, setNotice, startTransition, false)}
+                >
+                  <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId} />
+                  <label>
+                    {t("name")}
+                    <input name="customer_name" defaultValue={courseStudentDisplayName(selectedCourseStudent, t)} required />
+                  </label>
+                  <label>
+                    {t("rollNumber")}
+                    <input name="roll_number" defaultValue={selectedCourseStudent.rollNumber ?? ""} required />
+                  </label>
+                  <label>
+                    {t("startDate")}
+                    <input name="start_date" type="date" defaultValue={selectedCourseStudent.subscriptionStartDate ?? ""} required />
+                  </label>
+                  <label>
+                    {t("endDate")}
+                    <input name="end_date" type="date" defaultValue={selectedCourseStudent.subscriptionEndDate ?? ""} required />
+                  </label>
+                  <label>
+                    {t("startTime")}
+                    <input name="start_time" type="time" defaultValue={selectedCourseStudent.startTime?.slice(0, 5) ?? "06:00"} required />
+                  </label>
+                  <label>
+                    {t("endTime")}
+                    <input name="end_time" type="time" defaultValue={selectedCourseStudent.endTime?.slice(0, 5) ?? "07:00"} required />
+                  </label>
+                  <div className="full-span flex flex-wrap gap-2">
+                    <button className="primary-button" type="submit">{t("save")}</button>
+                    <button className="secondary-button" type="button" onClick={() => setEditingStudent(false)}>{t("cancel")}</button>
+                  </div>
+                </form>
+              )}
+
+              <div className="rounded-lg bg-surface-container-low p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h4 className="font-headline text-base font-bold">{t("subscriptionHistory")}</h4>
+                  <span className="text-xs text-on-surface-variant">{courseHistoryPayments.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {courseHistoryPayments.slice(0, 8).map((payment) => (
+                    <div key={payment.id} className="subscription-history-row">
+                      <div className="min-w-0">
+                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
+                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)} · {paymentModeLabel(payment, t)}</p>
+                        <p>{t("paymentDate")} {displayDate(payment.payment_date)}</p>
+                      </div>
+                      <div className="subscription-amount-grid">
+                        <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
+                        <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
+                        <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
+                        <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -6097,7 +6352,7 @@ function PaymentForm({
                               <span>
                                 <strong>{record.rollNumber ?? "-"} · {displayName}</strong>
                                 <small>
-                                  {record.courseName} · {t("seat")} {record.seatNumber ?? "-"}
+                                  {record.courseName}
                                   {record.subscriptionEndDate ? ` · ${t("expiresOn")} ${displayDate(record.subscriptionEndDate)}` : ""}
                                 </small>
                               </span>
@@ -6121,13 +6376,12 @@ function PaymentForm({
                         <span>
                           <strong>{courseStudentDisplayName(selectedCourseStudent, t)}</strong>
                           <small>
-                            #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName} · {t("seat")} {selectedCourseStudent.seatNumber ?? "-"}
+                            #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName}
                           </small>
                         </span>
                       </div>
                       <input type="hidden" name="customer_name" value={studentName} />
                       <input type="hidden" name="roll_number" value={rollNumber} />
-                      <input type="hidden" name="seat_number" value={seatNumber} />
                     </>
                   ) : null}
                   {courseMemberMode === "new" ? (
@@ -6151,10 +6405,6 @@ function PaymentForm({
                             {duplicateCourseRollError}
                           </span>
                         ) : null}
-                      </label>
-                      <label>
-                        {t("seatNumber")}
-                        <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
                       </label>
                     </>
                   ) : null}
@@ -6350,14 +6600,13 @@ function PaymentForm({
               </label>
             </>
           ) : null}
-          <label>
-            {t("photo")}
-            <span className="camera-field">
-              <Camera size={16} />
-              {t("addImage")}
-              <input name="photo" type="file" accept="image/*" capture="environment" />
-            </span>
-          </label>
+          <CompressedImageInput
+            inputName="photo"
+            label={t("addImage")}
+            previewLabel={t("photoPreview")}
+            variant="document"
+            capture
+          />
           <label className="full-span">
             {t("remark")}
             <textarea name="remark" rows={3} />
@@ -7083,15 +7332,17 @@ function ClosingReviewDetail({
                 </strong>
                 {canReview ? (
                   <div className="review-transaction-actions">
-                    <MiniAction
-                      hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
-                      label={t("reject")}
-                      tone="reject"
-                      icon={<X size={18} />}
-                      action={approveRecordAction}
-                      setNotice={setNotice}
-                      startTransition={startTransition}
-                    />
+                    {record.recordType === "expense" ? (
+                      <MiniAction
+                        hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                        label={t("reject")}
+                        tone="reject"
+                        icon={<X size={18} />}
+                        action={approveRecordAction}
+                        setNotice={setNotice}
+                        startTransition={startTransition}
+                      />
+                    ) : null}
                     {record.hasPendingTransfer ? (
                       <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
                         <Check size={18} />
