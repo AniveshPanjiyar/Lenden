@@ -62,14 +62,13 @@ import {
   saveReferralAction,
   saveRoomAction,
   saveStaffPermissionsAction,
-  setLibraryStudentStatusAction,
   respondPaymentTransferAction,
   settleCashAction,
   updateRecordAction,
   updateProfileAction,
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
-import { addMonthsIso, businessLabels, businessPermissions, formatMoney, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
+import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
 import type { AgentSettlement, AppData, AppNotification, AppRole, ApprovalStatus, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
@@ -112,6 +111,8 @@ type CourseStudentRecord = {
   paidAmount: number | null;
   duesAmount: number | null;
   advanceAmount: number | null;
+  aadharPhotoUrl: string | null;
+  aadharBackPhotoUrl: string | null;
   active: boolean;
 };
 type NormalizedDateRange = {
@@ -237,7 +238,11 @@ const messages: Record<Language, Record<string, string>> = {
     active: "Active",
     address: "Address",
     aadharCardPhoto: "Aadhar card photo",
+    aadharFront: "Upload Aadhar front",
+    aadharBack: "Upload Aadhar back",
     aadharPhotoPreview: "Aadhar card preview",
+    aadharFrontPreview: "Aadhar front preview",
+    aadharBackPreview: "Aadhar back preview",
     aadharNumber: "Aadhar number",
     addSubscription: "Add subscription",
     addCourse: "Add course",
@@ -583,7 +588,11 @@ const messages: Record<Language, Record<string, string>> = {
     active: "चालू",
     address: "पता",
     aadharCardPhoto: "आधार कार्ड फोटो",
+    aadharFront: "आधार का आगे वाला भाग अपलोड करें",
+    aadharBack: "आधार का पीछे वाला भाग अपलोड करें",
     aadharPhotoPreview: "आधार कार्ड प्रीव्यू",
+    aadharFrontPreview: "आधार आगे का प्रीव्यू",
+    aadharBackPreview: "आधार पीछे का प्रीव्यू",
     aadharNumber: "आधार नंबर",
     addSubscription: "सब्सक्रिप्शन जोड़ें",
     addCourse: "कोर्स जोड़ें",
@@ -1027,7 +1036,6 @@ const bootstrapRefreshActions = new Set<ClientAction>([
 const libraryRefreshActions = new Set<ClientAction>([
   saveCourseStudentAction,
   saveLibraryStudentAction,
-  setLibraryStudentStatusAction,
 ]);
 
 function setDocumentAppBusy(busy: boolean) {
@@ -1259,6 +1267,22 @@ function paymentOnlineAmount(payment: Payment) {
   return payment.mode === "mixed" ? numberValue(payment.online_collection) : payment.mode === "online" ? numberValue(payment.amount) : 0;
 }
 
+function paymentComponentStatus(payment: Payment, component: "cash" | "online") {
+  const amount = component === "cash" ? paymentCashAmount(payment) : paymentOnlineAmount(payment);
+  if (amount <= 0) return null;
+  return (component === "cash" ? payment.cash_approval_status : payment.online_approval_status) ?? payment.approval_status;
+}
+
+function paymentHasApprovedComponent(payment: Payment) {
+  return paymentComponentStatus(payment, "cash") === "approved" || paymentComponentStatus(payment, "online") === "approved";
+}
+
+function paymentPendingApprovalAmount(payment: Payment) {
+  const pendingCash = paymentComponentStatus(payment, "cash") === "approved" ? 0 : paymentCashAmount(payment);
+  const pendingOnline = paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment);
+  return pendingCash + pendingOnline;
+}
+
 function paymentReviewProfileId(payment: Payment) {
   return paymentCashAmount(payment) > 0 ? payment.current_holder_id ?? payment.collected_by : payment.collected_by;
 }
@@ -1334,7 +1358,7 @@ function isEffectivelyPendingExpense(expense: Expense, ownerIds: Set<string>) {
 }
 
 function movementDate(movement: MoneyMovement) {
-  return (movement.responded_at ?? movement.created_at).slice(0, 10);
+  return indiaDateIso(movement.responded_at ?? movement.created_at);
 }
 
 function ownerCashTransferInAmount(
@@ -2295,6 +2319,7 @@ function formatNotificationTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-IN", {
+    timeZone: INDIA_TIME_ZONE,
     day: "2-digit",
     month: "short",
     hour: "2-digit",
@@ -2590,7 +2615,7 @@ function HomeView({
       (movement) =>
         movement.status === "pending" &&
         movement.type === "settlement" &&
-        pendingInScope(movement.created_at) &&
+        pendingInScope(indiaDateIso(movement.created_at)) &&
         (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
     );
     const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
@@ -2614,7 +2639,7 @@ function HomeView({
         movement.status === "accepted" &&
         movement.type === "settlement" &&
         !movement.payment_id &&
-        dateInRange(movement.responded_at ?? movement.created_at, dateRange) &&
+        dateInRange(indiaDateIso(movement.responded_at ?? movement.created_at), dateRange) &&
         (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
     );
     const myOwnerCashIn = ownerCashTransferInAmount(data.movements, data.profiles, profileId, dateRange);
@@ -2632,7 +2657,7 @@ function HomeView({
     const myInAmount = myInCash + myInOnline;
     const myOutCash = myExpenseAmount + mySettlementOut;
     const myPendingAmount =
-      myPendingPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+      myPendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
       myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
       myPendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
     const myPendingCount = myPendingPayments.length + myPendingExpenses.length + myPendingSettlementMovements.length;
@@ -2792,7 +2817,7 @@ function HomeView({
                         {isPayment ? labelForBusiness((item as Payment).business_type, t) : item.description}
                       </p>
                       <p className="text-xs text-on-surface-variant">
-                        {isPayment ? t("collected") : t("spent")} · {item.created_at.slice(0, 10)}
+                        {isPayment ? t("collected") : t("spent")} · {indiaDateIso(item.created_at)}
                       </p>
                     </div>
                     <p className={`font-headline font-bold text-lg ${isPayment ? 'text-primary' : 'text-error'}`}>
@@ -2830,7 +2855,7 @@ function HomeView({
     (movement) =>
       movement.status === "accepted" &&
       !movement.payment_id &&
-      dateInRange(movement.responded_at ?? movement.created_at, dateRange),
+      dateInRange(indiaDateIso(movement.responded_at ?? movement.created_at), dateRange),
   );
   const ownerMovementIn = ownerCashMovements
     .filter((movement) => !ownerProfileIds.has(movement.from_profile_id) && ownerProfileIds.has(movement.to_profile_id ?? ""))
@@ -2839,17 +2864,17 @@ function HomeView({
     .filter((movement) => ownerProfileIds.has(movement.from_profile_id) && !ownerProfileIds.has(movement.to_profile_id ?? ""))
     .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const ownerAgentPayoutOut = data.agentSettlements
-    .filter((settlement) => settlement.status === "accepted" && dateInRange(settlement.responded_at ?? settlement.created_at, dateRange))
+    .filter((settlement) => settlement.status === "accepted" && dateInRange(indiaDateIso(settlement.responded_at ?? settlement.created_at), dateRange))
     .reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
   const ownerInCash = totals.cash + ownerMovementIn;
   const ownerInOnline = totals.online;
   const ownerInAmount = ownerInCash + ownerInOnline;
   const ownerOutCash = totals.expense + ownerMovementOut + ownerAgentPayoutOut;
   const pendingSettlementMovements = data.movements.filter(
-    (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(movement.created_at),
+    (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(indiaDateIso(movement.created_at)),
   );
   const pendingAgentSettlements = data.agentSettlements.filter(
-    (settlement) => settlement.status === "pending" && pendingInScope(settlement.created_at),
+    (settlement) => settlement.status === "pending" && pendingInScope(indiaDateIso(settlement.created_at)),
   );
   const pendingReviewRecords: PendingReviewRecord[] = [
     ...pendingPayments.map((payment): PendingReviewRecord => ({
@@ -2858,7 +2883,7 @@ function HomeView({
       transactionType: t("payments"),
       staffName: profileName(data.profiles, paymentReviewProfileId(payment), t),
       serviceType: labelForBusiness(payment.business_type, t),
-      amount: numberValue(payment.amount),
+      amount: paymentPendingApprovalAmount(payment),
       cashAmount: paymentCashAmount(payment),
       onlineAmount: paymentOnlineAmount(payment),
       date: payment.payment_date,
@@ -2896,7 +2921,7 @@ function HomeView({
         staffName: profileName(data.profiles, staffId, t),
         serviceType: t("settlementActivity"),
         amount: toOwner ? numberValue(movement.amount) : -numberValue(movement.amount),
-        date: movement.created_at.slice(0, 10),
+        date: indiaDateIso(movement.created_at),
         note: movement.note ?? t("noReason"),
         statusLabel: labelForStatus(movement.status, t),
         tone: toOwner ? "positive" : "negative",
@@ -2909,7 +2934,7 @@ function HomeView({
       staffName: profileName(data.profiles, settlement.agent_id, t),
       serviceType: t("agentPayoutLower"),
       amount: -numberValue(settlement.amount),
-      date: settlement.created_at.slice(0, 10),
+      date: indiaDateIso(settlement.created_at),
       note: settlement.note ?? t("noReason"),
       statusLabel: labelForStatus(settlement.status, t),
       tone: "negative",
@@ -2929,7 +2954,7 @@ function HomeView({
     const onlineCollection = businessPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
     const expenses = businessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
     const pendingBusinessAmount =
-      pendingBusinessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+      pendingBusinessPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
       pendingBusinessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
 
     return {
@@ -3196,6 +3221,8 @@ function TransactionsView({
         const ownerAuthoredPayment = isOwnerProfile(payment.collected_by);
         const effectivePaymentApproved = isEffectivelyApprovedPayment(payment, ownerProfileIds);
         const effectivePaymentPending = isEffectivelyPendingPayment(payment, ownerProfileIds);
+        const hasApprovedComponent = paymentHasApprovedComponent(payment);
+        const cashValueApproved = paymentComponentStatus(payment, "cash") === "approved";
         const onlineApproved = effectivePaymentApproved;
         const paymentStatus = ownerAuthoredPayment ? t("receivedStatus") : collectionStatus(payment);
         const paymentStatusTone = ownerAuthoredPayment ? "approved" : collectionStatusTone(payment);
@@ -3223,10 +3250,10 @@ function TransactionsView({
           : [];
         const canRequestTransfer =
           (owner || payment.current_holder_id === profile.id) &&
-          effectivePaymentPending &&
+          (effectivePaymentPending || (owner && effectivePaymentApproved)) &&
           cashImpact > 0 &&
-          !pendingTransfer &&
-          transferRecipients.length > 0;
+          (!cashValueApproved || owner) &&
+          !pendingTransfer;
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
         const baseRecord = {
           id: payment.id,
@@ -3244,8 +3271,10 @@ function TransactionsView({
           recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
-          canEdit: (owner || payment.collected_by === profile.id) && effectivePaymentPending && !activeTransfer,
-          canDelete: owner && !effectivePaymentApproved,
+          canEdit: owner
+            ? (effectivePaymentApproved || (effectivePaymentPending && !hasApprovedComponent)) && !activeTransfer
+            : payment.collected_by === profile.id && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
+          canDelete: owner,
           transferLines: transferSummaryLines(linkedTransfers, profiles, t),
           transferRecipients,
           canRequestTransfer,
@@ -3295,7 +3324,7 @@ function TransactionsView({
                 onlineTone: ownerOnlineAmount > 0 ? "online-approved" : "neutral",
                 meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
                 recordType: collectedByOwner ? "payment" : undefined,
-                canDelete: collectedByOwner && !effectivePaymentApproved,
+                canDelete: collectedByOwner,
                 transferLines: [],
                 transferRecipients: [],
                 canRequestTransfer: false,
@@ -3392,8 +3421,8 @@ function TransactionsView({
           recordType: "expense" as const,
           editDate: expense.expense_date,
           editAmount: numberValue(expense.amount),
-          canEdit: expense.spent_by === profile.id && pendingApproval,
-          canDelete: owner && !effectiveExpenseApproved,
+          canEdit: owner || (expense.spent_by === profile.id && pendingApproval),
+          canDelete: owner,
           pendingApproval,
           icon: <ReceiptText size={24} />,
         };
@@ -3432,7 +3461,7 @@ function TransactionsView({
         const counterpartyId = ownerFacingAmount > 0 ? movement.from_profile_id : movement.to_profile_id;
         if (!userMatches(counterpartyId)) return [];
         const entry = pendingMovement ? null : movementEntry(movement, ownerFacingAmount);
-        const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
+        const date = entry?.entry_date ?? indiaDateIso(movement.created_at);
         if (!historyDateInScope(date, pendingMovement)) return [];
         const counterpartyName = profileName(profiles, counterpartyId, t);
         return [{
@@ -3468,7 +3497,7 @@ function TransactionsView({
       if (!userMatches(profile.id)) return [];
       const counterpartyId = staffFacingAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
       const entry = pendingMovement ? null : movementEntry(movement, staffFacingAmount, profile.id);
-      const date = entry?.entry_date ?? movement.created_at.slice(0, 10);
+      const date = entry?.entry_date ?? indiaDateIso(movement.created_at);
       if (!historyDateInScope(date, pendingMovement)) return [];
       const staffCashIn = staffFacingAmount > 0;
       const incomingOwnerCash = staffFacingAmount > 0 && fromOwnerish && !toOwnerish;
@@ -3502,12 +3531,13 @@ function TransactionsView({
       const visibleToOwner = owner && userMatches(settlement.agent_id);
       const visibleToAgent = !owner && settlement.agent_id === profile.id && userMatches(settlement.agent_id);
       if (!visibleToOwner && !visibleToAgent) return [];
-      if (!historyDateInScope(settlement.created_at, settlement.status === "pending")) return [];
+      const settlementDate = indiaDateIso(settlement.created_at);
+      if (!historyDateInScope(settlementDate, settlement.status === "pending")) return [];
       return [{
         id: `agent-${settlement.id}`,
         kind: "agent_payout",
         filter: visibleToAgent ? "cash_in" : "cash_out",
-        date: settlement.created_at.slice(0, 10),
+        date: settlementDate,
         sortAt: settlement.responded_at ?? settlement.created_at,
         amount: visibleToOwner ? -amount : amount,
         cashAmount: amount,
@@ -3696,6 +3726,7 @@ function TransactionsView({
                       <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
                         {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
                       </strong>
+                      <time className="history-transaction-time" dateTime={record.sortAt}>{formatIndiaTime(record.sortAt)}</time>
                       {record.filter === "cash_in" && record.amount > 0 ? (
                         <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
                           {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
@@ -3729,16 +3760,6 @@ function TransactionsView({
                               <MoreHorizontal size={18} />
                             </summary>
                             <div className="details-menu transaction-options-menu">
-                              {record.canRequestTransfer ? (
-                                <button
-                                  className="transaction-option-button"
-                                  type="button"
-                                  onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}
-                                >
-                                  <ArrowUp size={18} />
-                                  <span>{t("transferTransaction")}</span>
-                                </button>
-                              ) : null}
                               {record.canEdit ? (
                                 <button
                                   className="transaction-option-button"
@@ -3747,6 +3768,16 @@ function TransactionsView({
                                 >
                                   <Pencil size={18} />
                                   <span>{t("editTransaction")}</span>
+                                </button>
+                              ) : null}
+                              {record.canRequestTransfer ? (
+                                <button
+                                  className="transaction-option-button"
+                                  type="button"
+                                  onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}
+                                >
+                                  <ArrowUp size={18} />
+                                  <span>{t("transferTransaction")}</span>
                                 </button>
                               ) : null}
                               {record.canDelete ? (
@@ -4038,8 +4069,7 @@ function timeToMinutes(value: string | null | undefined) {
 }
 
 function currentMinuteOfDay() {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
+  return indiaMinuteOfDay();
 }
 
 function isTimeRangeLiveNow(startTime: string | null | undefined, endTime: string | null | undefined, minuteOfDay: number) {
@@ -4096,8 +4126,16 @@ function libraryExpiryStatusLabel(student: LibraryStudent, today: string, t: (ke
 }
 
 function displayTimeRange(startTime: string | null, endTime: string | null) {
-  const start = displayTime(startTime);
-  const end = displayTime(endTime);
+  const asTwelveHourTime = (value: string | null) => {
+    const normalized = displayTime(value);
+    const minutes = timeToMinutes(normalized);
+    if (minutes === null) return "";
+    const hours = Math.floor(minutes / 60);
+    const minuteText = String(minutes % 60).padStart(2, "0");
+    return `${hours % 12 || 12}:${minuteText} ${hours < 12 ? "AM" : "PM"}`;
+  };
+  const start = asTwelveHourTime(startTime);
+  const end = asTwelveHourTime(endTime);
   if (start && end) return `${start}-${end}`;
   return start || end || "-";
 }
@@ -4302,7 +4340,7 @@ function CompressedImageInput({
   variant,
   capture = false,
 }: {
-  inputName: "student_photo" | "aadhar_photo" | "photo";
+  inputName: "student_photo" | "aadhar_photo" | "aadhar_back_photo" | "photo";
   label: string;
   previewLabel: string;
   displayName?: string;
@@ -4425,6 +4463,29 @@ function studentNameInputValue(student: LibraryStudent) {
   return studentHasSwappedRollAndName(student) ? student.roll_number : student.student_name ?? "";
 }
 
+function StudentDocumentPreview({ imageUrl, previewLabel }: { imageUrl: string | null | undefined; previewLabel: string }) {
+  const { t } = useLanguage();
+  if (!imageUrl) return <strong>{displayTextValue(null)}</strong>;
+
+  return (
+    <a
+      className="library-document-preview-link"
+      href={imageUrl}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`${t("viewPhoto")}: ${previewLabel}`}
+    >
+      <span
+        className="document-upload-preview has-image"
+        role="img"
+        aria-label={previewLabel}
+        style={{ backgroundImage: `url("${imageUrl.replace(/"/g, "%22")}")` }}
+      />
+      <small>{t("viewPhoto")}</small>
+    </a>
+  );
+}
+
 function libraryStudentPrefill(student: LibraryStudent, t: (key: string) => string) {
   return {
     id: student.id,
@@ -4469,10 +4530,6 @@ function libraryRenewalDateRange(student: LibraryStudent | null | undefined) {
 
 function courseRenewalDateRange(record: CourseStudentRecord | null | undefined) {
   return subscriptionRenewalDateRange(record?.subscriptionEndDate);
-}
-
-function isRealLibraryStudentId(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function rollNumberFromVirtualLibraryStudentId(value: string) {
@@ -4606,26 +4663,12 @@ function LibraryStudentSummaryCard({
           <strong>{displayTextValue(student.aadhar_number)}</strong>
         </div>
         <div>
-          <span>{t("aadharCardPhoto")}</span>
-          {student.aadhar_photo_url ? (
-            <a
-              className="library-document-preview-link"
-              href={student.aadhar_photo_url}
-              target="_blank"
-              rel="noreferrer"
-              aria-label={t("viewPhoto")}
-            >
-              <span
-                className="document-upload-preview has-image"
-                role="img"
-                aria-label={t("aadharPhotoPreview")}
-                style={{ backgroundImage: `url("${student.aadhar_photo_url.replace(/"/g, "%22")}")` }}
-              />
-              <small>{t("viewPhoto")}</small>
-            </a>
-          ) : (
-            <strong>{displayTextValue(null)}</strong>
-          )}
+          <span>{t("aadharFront")}</span>
+          <StudentDocumentPreview imageUrl={student.aadhar_photo_url} previewLabel={t("aadharFrontPreview")} />
+        </div>
+        <div>
+          <span>{t("aadharBack")}</span>
+          <StudentDocumentPreview imageUrl={student.aadhar_back_photo_url} previewLabel={t("aadharBackPreview")} />
         </div>
       </div>
 
@@ -4650,6 +4693,8 @@ function libraryStudentWithLatestSubscription(student: LibraryStudent, payments:
     ...student,
     student_name: latestPayment.customer_name ?? student.student_name,
     roll_number: normalizeLibraryRollNumberForView(latestPayment.roll_number) ?? student.roll_number,
+    aadhar_photo_url: latestPayment.aadhar_photo_url ?? student.aadhar_photo_url,
+    aadhar_back_photo_url: latestPayment.aadhar_back_photo_url ?? student.aadhar_back_photo_url,
     seat_number: latestPayment.seat_number ?? student.seat_number,
     start_time: latestPayment.start_time ?? student.start_time,
     end_time: latestPayment.end_time ?? student.end_time,
@@ -4733,12 +4778,16 @@ function courseStudentRecordFromPayment(payment: Payment, source: CourseStudentR
     paidAmount: payment.paid_amount,
     duesAmount: payment.dues_amount,
     advanceAmount: payment.advance_amount,
+    aadharPhotoUrl: payment.aadhar_photo_url,
+    aadharBackPhotoUrl: payment.aadhar_back_photo_url,
     active,
   };
 }
 
 function courseStudentRecordsForSource(payments: Payment[], source: CourseStudentRecordSource, today: string) {
   const latestPayments = new Map<string, Payment>();
+  const latestAadharFrontPayments = new Map<string, Payment>();
+  const latestAadharBackPayments = new Map<string, Payment>();
 
   payments
     .filter((payment) => paymentMatchesStudentRecordSource(payment, source))
@@ -4748,9 +4797,21 @@ function courseStudentRecordsForSource(payments: Payment[], source: CourseStuden
       if (!current || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(current)) {
         latestPayments.set(key, payment);
       }
+      const currentFront = latestAadharFrontPayments.get(key);
+      if (payment.aadhar_photo_url && (!currentFront || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(currentFront))) {
+        latestAadharFrontPayments.set(key, payment);
+      }
+      const currentBack = latestAadharBackPayments.get(key);
+      if (payment.aadhar_back_photo_url && (!currentBack || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(currentBack))) {
+        latestAadharBackPayments.set(key, payment);
+      }
     });
 
-  return [...latestPayments.values()].map((payment) => courseStudentRecordFromPayment(payment, source, today));
+  return [...latestPayments.entries()].map(([key, payment]) => ({
+    ...courseStudentRecordFromPayment(payment, source, today),
+    aadharPhotoUrl: latestAadharFrontPayments.get(key)?.aadhar_photo_url ?? null,
+    aadharBackPhotoUrl: latestAadharBackPayments.get(key)?.aadhar_back_photo_url ?? null,
+  }));
 }
 
 function courseStudentDisplayName(record: CourseStudentRecord, t: (key: string) => string) {
@@ -4806,6 +4867,7 @@ function LibraryStudentsView({
   const [selectedSourceId, setSelectedSourceId] = useState<StudentRecordSource["id"]>("library");
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
+  const [studentInactiveEdit, setStudentInactiveEdit] = useState(false);
   const today = todayIso();
   const sources = useMemo(() => studentRecordSources(courses, t, includeLibrary), [courses, includeLibrary, t]);
   const selectedSource = useMemo(
@@ -4865,14 +4927,18 @@ function LibraryStudentsView({
     setListMode("active");
     setSelectedId("");
     setEditingStudent(false);
+    setStudentInactiveEdit(false);
   };
   const openStudentDetails = (studentId: string) => {
     setSelectedId(studentId);
     setEditingStudent(false);
+    const libraryStudent = students.find((student) => libraryStudentMatchesSelection(student, studentId));
+    setStudentInactiveEdit(Boolean(libraryStudent && !libraryStudent.active));
   };
   const closeStudentDetails = () => {
     setSelectedId("");
     setEditingStudent(false);
+    setStudentInactiveEdit(false);
   };
   const historyQuery = useQuery({
     queryKey: ["library-student-history", baseSelectedStudent?.id ?? ""],
@@ -4981,6 +5047,7 @@ function LibraryStudentsView({
             const expiryLabel = libraryExpiryStatusLabel(student, today, t);
             const displayName = studentDisplayName(student, t);
             const rollNumber = studentDisplayRollNumber(student);
+            const slotTime = displayTimeRange(student.start_time, student.end_time);
             return (
               <article
                 key={student.id}
@@ -4991,7 +5058,7 @@ function LibraryStudentsView({
                   type="button"
                   onClick={() => openStudentDetails(student.id)}
                   className={`library-student-list-main ${callHref ? "" : "without-call"}`}
-                  aria-label={`${displayName}, ${t("rollNumber")} ${rollNumber}, ${expiryLabel}`}
+                  aria-label={`${displayName}, ${t("rollNumber")} ${rollNumber}, ${t("timing")} ${slotTime}, ${expiryLabel}`}
                 >
                   <div className="library-list-avatar-wrap">
                     <StudentPhoto student={student} displayName={displayName} className="list" />
@@ -4999,7 +5066,7 @@ function LibraryStudentsView({
                   </div>
                   <div className="library-list-info">
                     <strong>{displayName}</strong>
-                    <span>{student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"}</span>
+                    <span>{student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"} · {slotTime}</span>
                   </div>
                 </button>
                 {callHref ? (
@@ -5063,7 +5130,15 @@ function LibraryStudentsView({
                 <h2>{t("studentDetails")}</h2>
               </div>
               <div className="flex items-center gap-2">
-                <button className="secondary-button" type="button" onClick={() => setEditingStudent((value) => !value)}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    const nextEditing = !editingStudent;
+                    setEditingStudent(nextEditing);
+                    if (nextEditing) setStudentInactiveEdit(!selectedStudent.active);
+                  }}
+                >
                   {editingStudent ? <X size={16} /> : <Pencil size={16} />}
                   {editingStudent ? t("cancel") : t("editTransaction")}
                 </button>
@@ -5084,19 +5159,6 @@ function LibraryStudentsView({
                 </div>
               ) : null}
 
-              {isRealLibraryStudentId(selectedStudent.id) ? (
-                <div className="flex justify-end">
-                  <form onSubmit={(event) => submitWith(event, setLibraryStudentStatusAction, setNotice, startTransition, false)}>
-                    <input type="hidden" name="id" value={selectedStudent.id} />
-                    <input type="hidden" name="active" value={selectedStudent.active ? "false" : "true"} />
-                    <button className="secondary-button" type="submit">
-                      {selectedStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
-                      {selectedStudent.active ? t("markInactive") : t("reactivate")}
-                    </button>
-                  </form>
-                </div>
-              ) : null}
-
               {editingStudent ? (
                 <form
                   key={selectedStudent.id}
@@ -5104,6 +5166,7 @@ function LibraryStudentsView({
                   onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false)}
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
+                  <input type="hidden" name="inactive" value={studentInactiveEdit ? "true" : "false"} />
                   <h3 className="full-span section-title">{t("studentProfile")}</h3>
                   <CompressedImageInput
                     inputName="student_photo"
@@ -5135,9 +5198,16 @@ function LibraryStudentsView({
                   </label>
                   <CompressedImageInput
                     inputName="aadhar_photo"
-                    label={t("aadharCardPhoto")}
-                    previewLabel={t("aadharPhotoPreview")}
+                    label={t("aadharFront")}
+                    previewLabel={t("aadharFrontPreview")}
                     initialImageUrl={selectedStudent.aadhar_photo_url}
+                    variant="document"
+                  />
+                  <CompressedImageInput
+                    inputName="aadhar_back_photo"
+                    label={t("aadharBack")}
+                    previewLabel={t("aadharBackPreview")}
+                    initialImageUrl={selectedStudent.aadhar_back_photo_url}
                     variant="document"
                   />
                   <label>
@@ -5148,10 +5218,16 @@ function LibraryStudentsView({
                     {t("lockerNumber")}
                     <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
                   </label>
-                  <label className="flex-row items-center gap-2">
-                    <input name="inactive" type="checkbox" defaultChecked={!selectedStudent.active} />
-                    <span>{t("inactiveStudents")}</span>
-                  </label>
+                  <div className="full-span flex justify-end">
+                    <button
+                      className={studentInactiveEdit ? "secondary-button tone-approve" : "secondary-button tone-cancel"}
+                      type="button"
+                      onClick={() => setStudentInactiveEdit((value) => !value)}
+                    >
+                      {studentInactiveEdit ? <UserCheck size={16} /> : <UserX size={16} />}
+                      {studentInactiveEdit ? t("reactivate") : t("markInactive")}
+                    </button>
+                  </div>
                   <div className="full-span flex flex-wrap gap-2">
                     <button className="primary-button" type="submit">
                       {t("save")}
@@ -5262,6 +5338,14 @@ function LibraryStudentsView({
                       <span>{t("lastPayment")}</span>
                       <strong>{displayDate(selectedCourseStudent.lastPaymentDate)}</strong>
                     </div>
+                    <div>
+                      <span>{t("aadharFront")}</span>
+                      <StudentDocumentPreview imageUrl={selectedCourseStudent.aadharPhotoUrl} previewLabel={t("aadharFrontPreview")} />
+                    </div>
+                    <div>
+                      <span>{t("aadharBack")}</span>
+                      <StudentDocumentPreview imageUrl={selectedCourseStudent.aadharBackPhotoUrl} previewLabel={t("aadharBackPreview")} />
+                    </div>
                   </div>
                   <div className="library-student-summary-money">
                     <span>{t("fee")} <strong>{displayMoneyValue(selectedCourseStudent.feeAmount)}</strong></span>
@@ -5285,6 +5369,20 @@ function LibraryStudentsView({
                     {t("rollNumber")}
                     <input name="roll_number" defaultValue={selectedCourseStudent.rollNumber ?? ""} required />
                   </label>
+                  <CompressedImageInput
+                    inputName="aadhar_photo"
+                    label={t("aadharFront")}
+                    previewLabel={t("aadharFrontPreview")}
+                    initialImageUrl={selectedCourseStudent.aadharPhotoUrl}
+                    variant="document"
+                  />
+                  <CompressedImageInput
+                    inputName="aadhar_back_photo"
+                    label={t("aadharBack")}
+                    previewLabel={t("aadharBackPreview")}
+                    initialImageUrl={selectedCourseStudent.aadharBackPhotoUrl}
+                    variant="document"
+                  />
                   <label>
                     {t("startDate")}
                     <input name="start_date" type="date" defaultValue={selectedCourseStudent.subscriptionStartDate ?? ""} required />
@@ -5307,6 +5405,27 @@ function LibraryStudentsView({
                   </div>
                 </form>
               )}
+
+              <div className="rounded-lg bg-surface-container-low p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Plus size={16} />
+                  <h4 className="font-headline text-base font-bold">{t("addSubscription")}</h4>
+                </div>
+                <PaymentForm
+                  key={`course-renewal-${selectedCourseStudent.id}-${selectedCourseStudent.paymentId}`}
+                  type="course"
+                  rooms={[]}
+                  mainCourses={courses.filter((course) => course.kind === "main")}
+                  skillCourses={courses.filter((course) => course.kind === "skill")}
+                  referrals={[]}
+                  payments={payments}
+                  libraryStudents={students}
+                  initialCourseStudent={selectedCourseStudent}
+                  initialCourseSource={selectedSource.type === "library" ? null : selectedSource}
+                  setNotice={setNotice}
+                  startTransition={startTransition}
+                />
+              </div>
 
               <div className="rounded-lg bg-surface-container-low p-4">
                 <div className="mb-3 flex items-center justify-between">
@@ -5522,6 +5641,8 @@ function PaymentForm({
   payments,
   libraryStudents,
   initialLibraryStudent,
+  initialCourseStudent,
+  initialCourseSource,
   setNotice,
   startTransition,
   onSuccess,
@@ -5534,6 +5655,8 @@ function PaymentForm({
   payments: Payment[];
   libraryStudents: LibraryStudent[];
   initialLibraryStudent?: LibraryStudent | null;
+  initialCourseStudent?: CourseStudentRecord | null;
+  initialCourseSource?: CourseStudentRecordSource | null;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
   onSuccess?: () => void;
@@ -5543,31 +5666,38 @@ function PaymentForm({
   const initialLibraryPrefill = type === "library" && initialLibraryStudent ? libraryStudentPrefill(initialLibraryStudent, t) : null;
   const initialLibraryRenewalRange = type === "library" && initialLibraryStudent ? libraryRenewalDateRange(initialLibraryStudent) : null;
   const initialLibraryDueAmount = type === "library" && initialLibraryStudent ? Math.max(Number(initialLibraryStudent.dues_amount ?? 0), 0) : 0;
+  const initialCoursePrefill = type === "course" && initialCourseStudent ? courseStudentPrefill(initialCourseStudent, t) : null;
+  const initialCourseRenewalRange = type === "course" && initialCourseStudent ? courseRenewalDateRange(initialCourseStudent) : null;
+  const initialCourseMainCourse = type === "course" && initialCourseSource
+    ? initialCourseSource.type === "skillCourse"
+      ? mainCourses.find((course) => course.name === "Skills") ?? null
+      : initialCourseSource.course
+    : null;
   const defaultNewLibraryRollNumber = type === "library" ? nextLibraryRollNumber(libraryStudents) : "";
   const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : null);
-  const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? "");
+  const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
   const [paid, setPaid] = useState(initialLibraryDueAmount > 0 ? String(initialLibraryDueAmount) : "");
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("cash");
   const [cashCollection, setCashCollection] = useState("");
   const [onlineCollection, setOnlineCollection] = useState("");
-  const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? "06:00");
-  const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? "07:00");
-  const [selectedCourseId, setSelectedCourseId] = useState("");
-  const [selectedSkillCourseId, setSelectedSkillCourseId] = useState("");
-  const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(null);
-  const [courseSearch, setCourseSearch] = useState("");
-  const [selectedCourseStudentId, setSelectedCourseStudentId] = useState("");
+  const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? initialCoursePrefill?.startTime ?? "06:00");
+  const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? initialCoursePrefill?.endTime ?? "07:00");
+  const [selectedCourseId, setSelectedCourseId] = useState(initialCourseMainCourse?.id ?? "");
+  const [selectedSkillCourseId, setSelectedSkillCourseId] = useState(initialCourseSource?.type === "skillCourse" ? initialCourseSource.course.id : "");
+  const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(initialCoursePrefill ? "existing" : null);
+  const [courseSearch, setCourseSearch] = useState(initialCoursePrefill?.searchLabel ?? "");
+  const [selectedCourseStudentId, setSelectedCourseStudentId] = useState(initialCoursePrefill?.id ?? "");
   const [librarySearch, setLibrarySearch] = useState(initialLibraryPrefill?.searchLabel ?? "");
   const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState(initialLibraryPrefill?.id ?? "");
-  const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? "");
-  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? defaultNewLibraryRollNumber);
+  const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? initialCoursePrefill?.name ?? "");
+  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? initialCoursePrefill?.rollNumber ?? defaultNewLibraryRollNumber);
   const [phoneNumber, setPhoneNumber] = useState(initialLibraryPrefill?.phoneNumber ?? "");
   const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
-  const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? "");
+  const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? initialCoursePrefill?.seatNumber ?? "");
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
-  const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? todayIso());
-  const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? addMonthsIso());
+  const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? initialCourseRenewalRange?.startDate ?? todayIso());
+  const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? initialCourseRenewalRange?.endDate ?? addMonthsIso());
   const selectedLibraryStudent = useMemo(() => {
     if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
     return libraryStudents.find((student) => student.id === selectedLibraryStudentId) ?? null;
@@ -5609,8 +5739,11 @@ function PaymentForm({
     [courseStudentRecords, t],
   );
   const selectedCourseStudent = useMemo(
-    () => sortedCourseStudentRecords.find((record) => record.id === selectedCourseStudentId) ?? null,
-    [selectedCourseStudentId, sortedCourseStudentRecords],
+    () => {
+      if (initialCourseStudent && initialCourseStudent.id === selectedCourseStudentId) return initialCourseStudent;
+      return sortedCourseStudentRecords.find((record) => record.id === selectedCourseStudentId) ?? null;
+    },
+    [initialCourseStudent, selectedCourseStudentId, sortedCourseStudentRecords],
   );
   const libraryDueAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.dues_amount ?? 0), 0) : 0;
   const libraryPaidAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.paid_amount ?? 0), 0) : 0;
@@ -6169,6 +6302,20 @@ function PaymentForm({
                     displayName={studentName}
                     variant="student"
                   />
+                  <CompressedImageInput
+                    inputName="aadhar_photo"
+                    label={t("aadharFront")}
+                    previewLabel={t("aadharFrontPreview")}
+                    variant="document"
+                    capture
+                  />
+                  <CompressedImageInput
+                    inputName="aadhar_back_photo"
+                    label={t("aadharBack")}
+                    previewLabel={t("aadharBackPreview")}
+                    variant="document"
+                    capture
+                  />
                 </>
               ) : null}
               {collectingLibraryDues ? (
@@ -6406,6 +6553,20 @@ function PaymentForm({
                           </span>
                         ) : null}
                       </label>
+                      <CompressedImageInput
+                        inputName="aadhar_photo"
+                        label={t("aadharFront")}
+                        previewLabel={t("aadharFrontPreview")}
+                        variant="document"
+                        capture
+                      />
+                      <CompressedImageInput
+                        inputName="aadhar_back_photo"
+                        label={t("aadharBack")}
+                        previewLabel={t("aadharBackPreview")}
+                        variant="document"
+                        capture
+                      />
                     </>
                   ) : null}
                   <label>
@@ -6981,14 +7142,14 @@ function ClosingView({
       (movement) =>
         movement.status === "pending" &&
         movement.type === "settlement" &&
-        movement.created_at.slice(0, 10) <= date &&
+        indiaDateIso(movement.created_at) <= date &&
         (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
     );
 
     return {
       count: pendingPayments.length + pendingExpenses.length + pendingSettlementMovements.length,
       amount:
-        pendingPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
+        pendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
         pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
         pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0),
     };
@@ -7189,6 +7350,8 @@ function ClosingReviewDetail({
         businessLabel: labelForBusiness(payment.business_type, t),
         cashAmount: paymentCashAmount(payment),
         onlineAmount: paymentOnlineAmount(payment),
+        cashStatus: paymentComponentStatus(payment, "cash"),
+        onlineStatus: paymentComponentStatus(payment, "online"),
         note: paymentReference(payment, t),
         transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
@@ -7215,6 +7378,8 @@ function ClosingReviewDetail({
         businessLabel: labelForBusiness(expense.business_type ?? "general", t),
         cashAmount: numberValue(expense.amount),
         onlineAmount: 0,
+        cashStatus: null,
+        onlineStatus: null,
         note: expenseReference(expense, t),
         transferLines: [] as string[],
         hasPendingTransfer: false,
@@ -7228,15 +7393,20 @@ function ClosingReviewDetail({
     (movement) =>
       movement.status === "pending" &&
       movement.type === "settlement" &&
-      movement.created_at.slice(0, 10) <= date &&
+      indiaDateIso(movement.created_at) <= date &&
       (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
   );
   const pendingReviewAmount =
-    pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
+    pendingRecords.reduce((sum, record) => {
+      if (record.recordType !== "payment") return sum + Math.abs(record.amount);
+      const pendingCash = record.cashStatus === "approved" ? 0 : record.cashAmount;
+      const pendingOnline = record.onlineStatus === "approved" ? 0 : record.onlineAmount;
+      return sum + pendingCash + pendingOnline;
+    }, 0) +
     pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
-  const createdTime = (createdAt: string) => createdAt.slice(11, 16);
+  const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
   const reviewInCash = summary.collected + summary.received;
   const reviewInOnline = 0;
   const reviewOutCash = summary.expenses + summary.sent;
@@ -7306,6 +7476,7 @@ function ClosingReviewDetail({
         <div className="review-transaction-list">
           {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
             const canReview = canApproveRecordStatus(record.status);
+            const isMixedPayment = record.recordType === "payment" && record.cashAmount > 0 && record.onlineAmount > 0;
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
               <article className={`review-transaction-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
@@ -7313,10 +7484,53 @@ function ClosingReviewDetail({
                 <div className="review-transaction-main">
                   <strong>{record.title}</strong>
                   <p>{recordWhen} · {record.businessLabel} · {record.mode}</p>
-                  <div className="pending-review-split">
-                    <span>{t("cash")} {formatMoney(record.cashAmount)}</span>
-                    <span>{t("online")} {formatMoney(record.onlineAmount)}</span>
-                  </div>
+                  {isMixedPayment ? (
+                    <div className="component-approval-grid" aria-label={t("mixed")}>
+                      <div className="component-approval-half cash-half">
+                        <span>{t("cash")}</span>
+                        <strong>{formatMoney(record.cashAmount)}</strong>
+                        {record.cashStatus === "approved" ? (
+                          <span className="component-approved"><Check size={16} /> {labelForStatus("approved", t)}</span>
+                        ) : record.hasPendingTransfer ? (
+                          <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
+                            <Check size={18} />
+                          </button>
+                        ) : canApproveRecordStatus(record.cashStatus ?? record.status) ? (
+                          <MiniAction
+                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
+                            label={`${t("approve")} ${t("cash")}`}
+                            tone="approve"
+                            icon={<Check size={18} />}
+                            action={approveRecordAction}
+                            setNotice={setNotice}
+                            startTransition={startTransition}
+                          />
+                        ) : null}
+                      </div>
+                      <div className="component-approval-half online-half">
+                        <span>{t("online")}</span>
+                        <strong>{formatMoney(record.onlineAmount)}</strong>
+                        {record.onlineStatus === "approved" ? (
+                          <span className="component-approved"><Check size={16} /> {labelForStatus("approved", t)}</span>
+                        ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
+                          <MiniAction
+                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
+                            label={`${t("approve")} ${t("online")}`}
+                            tone="approve"
+                            icon={<Check size={18} />}
+                            action={approveRecordAction}
+                            setNotice={setNotice}
+                            startTransition={startTransition}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pending-review-split">
+                      <span>{t("cash")} {formatMoney(record.cashAmount)}</span>
+                      <span>{t("online")} {formatMoney(record.onlineAmount)}</span>
+                    </div>
+                  )}
                   <p>{record.note}</p>
                   {record.transferLines.length > 0 ? (
                     <div className="review-transfer-note">
@@ -7330,7 +7544,7 @@ function ClosingReviewDetail({
                 <strong className="review-transaction-amount">
                   {record.amount >= 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
                 </strong>
-                {canReview ? (
+                {canReview && !isMixedPayment ? (
                   <div className="review-transaction-actions">
                     {record.recordType === "expense" ? (
                       <MiniAction
@@ -7373,7 +7587,7 @@ function ClosingReviewDetail({
                   <div className="review-transaction-icon"><ShieldCheck size={22} /></div>
                   <div className="review-transaction-main">
                     <strong>{t("settlements")}</strong>
-                    <p>{movement.created_at.slice(0, 10)} · {profileName(profiles, movement.from_profile_id === summary.profile.id ? movement.to_profile_id : movement.from_profile_id, t)}</p>
+                    <p>{indiaDateIso(movement.created_at)} · {formatIndiaTime(movement.created_at)} · {profileName(profiles, movement.from_profile_id === summary.profile.id ? movement.to_profile_id : movement.from_profile_id, t)}</p>
                     <p>{movement.note ?? t("noReason")}</p>
                     <span className="status-chip status-pending">{labelForStatus(movement.status, t)}</span>
                   </div>

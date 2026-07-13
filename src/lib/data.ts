@@ -46,7 +46,7 @@ function isMissingDbSchemaError(error: { code?: string; message?: string } | nul
 }
 
 function isMissingLibraryStudentSchemaError(error: { code?: string; message?: string } | null | undefined) {
-  return isMissingDbSchemaError(error, ["aadhar_number", "aadhar_photo_url", "library_students", "library_student_id", "library_student_subscription_events"]);
+  return isMissingDbSchemaError(error, ["aadhar_number", "aadhar_photo_url", "aadhar_back_photo_url", "library_students", "library_student_id", "library_student_subscription_events"]);
 }
 
 function normalizeLibraryRollNumber(value: string | null | undefined) {
@@ -83,6 +83,8 @@ function libraryStudentWithPaymentSnapshot(student: LibraryStudent, payment: Pay
     ...student,
     student_name: payment.customer_name ?? student.student_name,
     roll_number: normalizeLibraryRollNumber(payment.roll_number) ?? student.roll_number,
+    aadhar_photo_url: payment.aadhar_photo_url ?? student.aadhar_photo_url,
+    aadhar_back_photo_url: payment.aadhar_back_photo_url ?? student.aadhar_back_photo_url,
     seat_number: payment.seat_number ?? student.seat_number,
     start_time: payment.start_time ?? student.start_time,
     end_time: payment.end_time ?? student.end_time,
@@ -136,7 +138,8 @@ function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: 
       address: null,
       photo_url: null,
       aadhar_number: null,
-      aadhar_photo_url: null,
+      aadhar_photo_url: payment.aadhar_photo_url,
+      aadhar_back_photo_url: payment.aadhar_back_photo_url,
       student_name: payment.customer_name,
       seat_number: payment.seat_number,
       locker_number: null,

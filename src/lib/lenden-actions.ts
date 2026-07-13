@@ -1,3 +1,5 @@
+import { indiaDateIso, todayIso } from "@/lib/constants";
+
 type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 type AppRole = "admin" | "owner" | "staff" | "sales_agent";
 type BusinessType = "guest_house" | "library" | "course" | "general";
@@ -5,6 +7,7 @@ type PaymentMode = "cash" | "online" | "mixed";
 type SettlementDirection = "received_from_user" | "sent_to_user";
 type Decision = "accepted" | "rejected";
 type ApprovalDecision = "approved" | "rejected";
+type PaymentComponent = "cash" | "online";
 
 export type LendenActionProfile = {
   id: string;
@@ -172,8 +175,31 @@ function paymentCashCollection(record: {
   return 0;
 }
 
+function paymentOnlineCollection(record: {
+  mode?: string | null;
+  amount?: number | string | null;
+  online_collection?: number | string | null;
+}) {
+  if (record.mode === "online") return Number(record.amount ?? 0);
+  if (record.mode === "mixed") return Number(record.online_collection ?? 0);
+  return 0;
+}
+
+function paymentComponentDecision(
+  record: Record<string, string | number | null>,
+  component: PaymentComponent,
+) {
+  const field = component === "cash" ? "cash_approval_status" : "online_approval_status";
+  return String(record[field] ?? record.approval_status ?? "pending");
+}
+
+function paymentHasApprovedComponent(record: Record<string, string | number | null>) {
+  return (paymentCashCollection(record) > 0 && paymentComponentDecision(record, "cash") === "approved") ||
+    (paymentOnlineCollection(record) > 0 && paymentComponentDecision(record, "online") === "approved");
+}
+
 function canTransferPaymentStatus(status: string | null | undefined) {
-  return status !== "approved" && status !== "rejected" && status !== "cancelled";
+  return status !== "rejected" && status !== "cancelled";
 }
 
 function errorCodeAndMessage(error: unknown) {
@@ -204,6 +230,19 @@ function isMissingPaymentSplitSchemaError(error: unknown) {
   return isMissingDbSchemaError(error, ["cash_collection", "online_collection"]);
 }
 
+function isMissingPaymentComponentApprovalSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, [
+    "cash_approval_status",
+    "online_approval_status",
+    "cash_approved_at",
+    "online_approved_at",
+  ]);
+}
+
+function isMissingStudentAadharSidesSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["aadhar_photo_url", "aadhar_back_photo_url"]);
+}
+
 function isMissingLibraryStudentSchemaError(error: unknown) {
   const { message } = errorCodeAndMessage(error);
   if (message.includes("library student migration")) return true;
@@ -211,6 +250,7 @@ function isMissingLibraryStudentSchemaError(error: unknown) {
     "address",
     "aadhar_number",
     "aadhar_photo_url",
+    "aadhar_back_photo_url",
     "library_student_id",
     "library_students",
     "library_student_subscription_events",
@@ -558,13 +598,14 @@ async function uploadLibraryStudentAadharPhoto(
   profileId: string,
   file: FormDataEntryValue | null,
   requestKey: string,
+  side: "front" | "back",
 ) {
   if (!(file instanceof File) || file.size === 0) return null;
-  if (!file.type.startsWith("image/")) return fail("Choose an image file for the Aadhar card photo.");
-  if (file.size > 3 * 1024 * 1024) return fail("Aadhar card photo must be 3 MB or smaller.");
+  if (!file.type.startsWith("image/")) return fail(`Choose an image file for the Aadhar ${side}.`);
+  if (file.size > 3 * 1024 * 1024) return fail(`Aadhar ${side} photo must be 3 MB or smaller.`);
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const path = `${profileId}/aadhar-${requestKey}-${safeName}`;
+  const path = `${profileId}/aadhar-${side}-${requestKey}-${safeName}`;
   const bucket = admin.storage.from("library-student-photos");
   const { error } = await bucket.upload(path, file, {
     contentType: file.type || "image/jpeg",
@@ -612,6 +653,24 @@ async function removeRecordLedgerEntries(admin: SupabaseAdminClient, recordType:
     .eq("source_id", recordId)
     .in("source_type", [recordType, "adjustment"]);
   if (error) throw new Error(error.message);
+
+  if (recordType === "payment") {
+    const transferResponse = await admin
+      .from("money_movements")
+      .select("id")
+      .eq("payment_id", recordId)
+      .eq("type", "transfer");
+    if (transferResponse.error) throw new Error(transferResponse.error.message);
+    const transferIds = typedDataArray<{ id: string }>(transferResponse).map((movement) => movement.id);
+    if (transferIds.length > 0) {
+      const transferLedgerDelete = await admin
+        .from("ledger_entries")
+        .delete()
+        .eq("source_type", "transfer")
+        .in("source_id", transferIds);
+      if (transferLedgerDelete.error) throw new Error(transferLedgerDelete.error.message);
+    }
+  }
 }
 
 async function hasRecordLedgerEntry(admin: SupabaseAdminClient, recordType: "payment" | "expense", recordId: string) {
@@ -623,6 +682,42 @@ async function hasRecordLedgerEntry(admin: SupabaseAdminClient, recordType: "pay
     .maybeSingle();
   if (response.error) throw new Error(response.error.message);
   return Boolean(response.data);
+}
+
+async function ensureApprovedPaymentTransferLedger(
+  admin: SupabaseAdminClient,
+  movement: {
+    id: string;
+    amount: number | string;
+    from_profile_id: string;
+    to_profile_id: string | null;
+    responded_at?: string | null;
+  },
+  payment: Record<string, string | number | null>,
+  createdBy: string,
+) {
+  const cashValueApproved = paymentComponentDecision(payment, "cash") === "approved";
+  if (!movement.to_profile_id || (!cashValueApproved && !(await recordIsEffectivelyApproved(admin, "payment", payment)))) return;
+  const entryDate = movement.responded_at ? indiaDateIso(movement.responded_at) : todayIso();
+  const amount = Number(movement.amount);
+  await ensureLedgerEntry(admin, {
+    accountProfileId: movement.from_profile_id,
+    amount: -amount,
+    entryDate,
+    sourceType: "transfer",
+    sourceId: movement.id,
+    description: "Approved transaction cash transferred out",
+    createdBy,
+  });
+  await ensureLedgerEntry(admin, {
+    accountProfileId: movement.to_profile_id,
+    amount,
+    entryDate,
+    sourceType: "transfer",
+    sourceId: movement.id,
+    description: "Approved transaction cash received",
+    createdBy,
+  });
 }
 
 async function profileCashBalanceAt(admin: SupabaseAdminClient, profileId: string, entryDate: string) {
@@ -793,7 +888,13 @@ function readLibraryStudentFields(
   };
 }
 
-function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null, aadharPhotoUrl?: string | null) {
+function libraryStudentPayload(
+  fields: LibraryStudentFormFields,
+  active: boolean,
+  photoUrl?: string | null,
+  aadharPhotoUrl?: string | null,
+  aadharBackPhotoUrl?: string | null,
+) {
   const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
@@ -816,10 +917,17 @@ function libraryStudentPayload(fields: LibraryStudentFormFields, active: boolean
   };
   if (photoUrl) payload.photo_url = photoUrl;
   if (aadharPhotoUrl) payload.aadhar_photo_url = aadharPhotoUrl;
+  if (aadharBackPhotoUrl) payload.aadhar_back_photo_url = aadharBackPhotoUrl;
   return payload;
 }
 
-function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active: boolean, photoUrl?: string | null, aadharPhotoUrl?: string | null) {
+function libraryStudentIdentityPayload(
+  fields: LibraryStudentFormFields,
+  active: boolean,
+  photoUrl?: string | null,
+  aadharPhotoUrl?: string | null,
+  aadharBackPhotoUrl?: string | null,
+) {
   const payload: Record<string, unknown> = {
     roll_number: fields.rollNumber,
     phone_number: fields.phoneNumber,
@@ -833,6 +941,7 @@ function libraryStudentIdentityPayload(fields: LibraryStudentFormFields, active:
   };
   if (photoUrl) payload.photo_url = photoUrl;
   if (aadharPhotoUrl) payload.aadhar_photo_url = aadharPhotoUrl;
+  if (aadharBackPhotoUrl) payload.aadhar_back_photo_url = aadharBackPhotoUrl;
   return payload;
 }
 
@@ -889,10 +998,11 @@ async function saveLibraryStudentRecord(
     lastPaymentDate?: string | null;
     photoUrl?: string | null;
     aadharPhotoUrl?: string | null;
+    aadharBackPhotoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl),
+    ...libraryStudentPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl, params.aadharBackPhotoUrl),
   };
   if (params.lastPaymentId) payload.last_payment_id = params.lastPaymentId;
   if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
@@ -954,10 +1064,11 @@ async function saveLibraryStudentIdentityRecord(
     active: boolean;
     photoUrl?: string | null;
     aadharPhotoUrl?: string | null;
+    aadharBackPhotoUrl?: string | null;
   },
 ) {
   const payload: Record<string, unknown> = {
-    ...libraryStudentIdentityPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl),
+    ...libraryStudentIdentityPayload(params.fields, params.active, params.photoUrl, params.aadharPhotoUrl, params.aadharBackPhotoUrl),
   };
 
   const studentId = normalizeLibraryStudentId(params.id);
@@ -1252,7 +1363,7 @@ const handlers = {
     const business = asString(formData, "business_type") as BusinessType | null;
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const amount = asNumber(formData, "amount") ?? asNumber(formData, "paid_amount") ?? 0;
-    const paymentDate = asString(formData, "payment_date") ?? new Date().toISOString().slice(0, 10);
+    const paymentDate = asString(formData, "payment_date") ?? todayIso();
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     const ownerCreated = isOwnerish(profile.role);
 
@@ -1298,6 +1409,23 @@ const handlers = {
     let libraryStudentSyncSkipped = false;
     let libraryPaymentEventKeyPrefix = "library-payment-renewal";
     let libraryPaymentEventSource = "library_payment";
+    let aadharPhotoUrl: string | null = null;
+    let aadharBackPhotoUrl: string | null = null;
+
+    if (business === "library" || business === "course") {
+      const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
+        uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+        uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+      ]);
+      if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
+        return uploadedAadharPhoto;
+      }
+      if (uploadedAadharBackPhoto && typeof uploadedAadharBackPhoto === "object" && "ok" in uploadedAadharBackPhoto && !uploadedAadharBackPhoto.ok) {
+        return uploadedAadharBackPhoto;
+      }
+      aadharPhotoUrl = typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null;
+      aadharBackPhotoUrl = typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null;
+    }
 
     if (business === "library") {
       const libraryPaymentKind = asString(formData, "library_payment_kind") === "dues" ? "dues" : "renewal";
@@ -1348,6 +1476,8 @@ const handlers = {
             fields: libraryStudentFields,
             active: true,
             photoUrl: libraryStudentPhotoUrl,
+            aadharPhotoUrl,
+            aadharBackPhotoUrl,
           });
         } catch (error) {
           if (!isMissingLibraryStudentSchemaError(error)) throw error;
@@ -1395,6 +1525,7 @@ const handlers = {
       incentiveAmount = calculateConfiguredAmount(referral.incentive_type, referral.incentive_value, paid ?? amount);
     }
 
+    const createdAt = new Date().toISOString();
     const paymentPayload: Record<string, unknown> = {
       business_type: business,
       mode,
@@ -1429,11 +1560,17 @@ const handlers = {
       collected_by: profile.id,
       current_holder_id: cashCollection > 0 ? profile.id : null,
       approval_status: ownerCreated ? "approved" : "pending",
+      cash_approval_status: cashCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
+      online_approval_status: onlineCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
+      cash_approved_at: ownerCreated && cashCollection > 0 ? createdAt : null,
+      online_approved_at: ownerCreated && onlineCollection > 0 ? createdAt : null,
       client_request_id: requestKey,
     };
     if (libraryStudentId) {
       paymentPayload.library_student_id = libraryStudentId;
     }
+    if (aadharPhotoUrl) paymentPayload.aadhar_photo_url = aadharPhotoUrl;
+    if (aadharBackPhotoUrl) paymentPayload.aadhar_back_photo_url = aadharBackPhotoUrl;
 
     const paymentPayloadForInsert = { ...paymentPayload };
     let paymentResult: QueryResponse<unknown>;
@@ -1445,6 +1582,27 @@ const handlers = {
         .single();
 
       if (!paymentResult.error) break;
+
+      if (
+        isMissingStudentAadharSidesSchemaError(paymentResult.error) &&
+        ("aadhar_photo_url" in paymentPayloadForInsert || "aadhar_back_photo_url" in paymentPayloadForInsert)
+      ) {
+        return fail("Apply the student Aadhar sides migration before saving Aadhar images.");
+      }
+
+      if (
+        isMissingPaymentComponentApprovalSchemaError(paymentResult.error) &&
+        "cash_approval_status" in paymentPayloadForInsert
+      ) {
+        if (mode === "mixed") {
+          return fail("Apply the mixed payment approval migration before saving mixed payments.");
+        }
+        delete paymentPayloadForInsert.cash_approval_status;
+        delete paymentPayloadForInsert.online_approval_status;
+        delete paymentPayloadForInsert.cash_approved_at;
+        delete paymentPayloadForInsert.online_approved_at;
+        continue;
+      }
 
       if (isMissingPaymentSplitSchemaError(paymentResult.error) && "cash_collection" in paymentPayloadForInsert) {
         if (mode === "mixed") {
@@ -1495,6 +1653,8 @@ const handlers = {
           lastPaymentId: payment.id,
           lastPaymentDate: paymentDate,
           photoUrl: libraryStudentPhotoUrl,
+          aadharPhotoUrl,
+          aadharBackPhotoUrl,
         });
         await upsertLibraryStudentEvent(admin, {
           studentId: libraryStudentId,
@@ -1561,25 +1721,21 @@ const handlers = {
     await requireLibraryCollectionAccess(admin, profile);
     const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: false, requirePayment: false });
     if (!parsedStudent.ok) return parsedStudent.result;
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
 
-    const uploadedStudentPhoto = await uploadLibraryStudentPhoto(
-      admin,
-      profile.id,
-      formData.get("student_photo"),
-      idempotencyKey ?? crypto.randomUUID(),
-    );
+    const [uploadedStudentPhoto, uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
+      uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey),
+      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+    ]);
     if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
       return uploadedStudentPhoto;
     }
-
-    const uploadedAadharPhoto = await uploadLibraryStudentAadharPhoto(
-      admin,
-      profile.id,
-      formData.get("aadhar_photo"),
-      idempotencyKey ?? crypto.randomUUID(),
-    );
     if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
       return uploadedAadharPhoto;
+    }
+    if (uploadedAadharBackPhoto && typeof uploadedAadharBackPhoto === "object" && "ok" in uploadedAadharBackPhoto && !uploadedAadharBackPhoto.ok) {
+      return uploadedAadharBackPhoto;
     }
 
     const active = !asBool(formData, "inactive");
@@ -1589,6 +1745,7 @@ const handlers = {
       active,
       photoUrl: typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null,
       aadharPhotoUrl: typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null,
+      aadharBackPhotoUrl: typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null,
     });
 
     return ok(active ? "Library student saved." : "Library student moved to inactive.");
@@ -1623,7 +1780,7 @@ const handlers = {
       studentId: id,
       eventKey: `library-student-status:${id}:${idempotencyKey ?? crypto.randomUUID()}`,
       eventType: "status_change",
-      eventDate: new Date().toISOString().slice(0, 10),
+      eventDate: todayIso(),
       source: "student_status",
       fields: fieldsFromLibraryStudentRecord(updated),
       active,
@@ -1633,7 +1790,7 @@ const handlers = {
     return ok(active ? "Library student reactivated." : "Library student moved to inactive.");
   }),
 
-  saveCourseStudent: withErrors("Could not save course student.", async (formData, { admin, profile }) => {
+  saveCourseStudent: withErrors("Could not save course student.", async (formData, { admin, profile, idempotencyKey }) => {
     if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
       return fail("You do not have access to course students.");
     }
@@ -1663,10 +1820,24 @@ const handlers = {
       return fail("Course student was not found.");
     }
 
-    const identityUpdates = {
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
+      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+    ]);
+    if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
+      return uploadedAadharPhoto;
+    }
+    if (uploadedAadharBackPhoto && typeof uploadedAadharBackPhoto === "object" && "ok" in uploadedAadharBackPhoto && !uploadedAadharBackPhoto.ok) {
+      return uploadedAadharBackPhoto;
+    }
+
+    const identityUpdates: Record<string, string> = {
       customer_name: customerName,
       roll_number: rollNumber,
     };
+    if (typeof uploadedAadharPhoto === "string") identityUpdates.aadhar_photo_url = uploadedAadharPhoto;
+    if (typeof uploadedAadharBackPhoto === "string") identityUpdates.aadhar_back_photo_url = uploadedAadharBackPhoto;
     let identityQuery = admin
       .from("payments")
       .update(identityUpdates)
@@ -1683,6 +1854,9 @@ const handlers = {
       ? identityQuery.eq("roll_number", payment.roll_number)
       : identityQuery.eq("id", paymentId);
     const identityResult = await identityQuery;
+    if (isMissingStudentAadharSidesSchemaError(identityResult.error)) {
+      return fail("Apply the student Aadhar sides migration before saving Aadhar images.");
+    }
     if (identityResult.error) throw new Error(identityResult.error.message);
 
     const { error } = await admin
@@ -1718,7 +1892,7 @@ const handlers = {
 
     const amount = asNumber(formData, "amount") ?? 0;
     const description = asString(formData, "description");
-    const expenseDate = asString(formData, "expense_date") ?? new Date().toISOString().slice(0, 10);
+    const expenseDate = asString(formData, "expense_date") ?? todayIso();
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     const ownerCreated = isOwnerish(profile.role);
@@ -1801,9 +1975,15 @@ const handlers = {
     const recordType = asString(formData, "record_type");
     const id = asString(formData, "id");
     const decision = asString(formData, "decision") as ApprovalDecision;
+    const paymentComponentText = asString(formData, "payment_component");
+    const paymentComponent = paymentComponentText === "cash" || paymentComponentText === "online"
+      ? paymentComponentText as PaymentComponent
+      : null;
     if (!id || !recordType || !decision) return fail("Missing approval details.");
     if (recordType !== "payment" && recordType !== "expense") return fail("Invalid record type.");
     if (decision !== "approved" && decision !== "rejected") return fail("Invalid approval decision.");
+    if (paymentComponentText && !paymentComponent) return fail("Invalid payment component.");
+    if (paymentComponent && recordType !== "payment") return fail("Only payments support component approval.");
     if (recordType === "payment" && decision !== "approved") {
       return fail("Collections can only be approved. Use Delete transaction when the collection must be removed.");
     }
@@ -1813,6 +1993,103 @@ const handlers = {
     const existing = typedData<Record<string, string | number | null>>(existingResponse);
     if (existingResponse.error || !existing) throw new Error(existingResponse.error?.message ?? "Record not found.");
     const currentDecision = String(existing.approval_status ?? "pending");
+
+    if (paymentComponent) {
+      const componentAmount = paymentComponent === "cash"
+        ? paymentCashCollection(existing)
+        : paymentOnlineCollection(existing);
+      if (componentAmount <= 0) return fail(`This payment has no ${paymentComponent} value to approve.`);
+
+      const currentComponentDecision = paymentComponentDecision(existing, paymentComponent);
+      if (currentComponentDecision === "approved") {
+        if (paymentComponent === "cash" && String(existing.record_status ?? "active") === "active") {
+          const alreadyPosted = await hasRecordLedgerEntry(admin, "payment", id);
+          if (!alreadyPosted) {
+            await ensureLedgerEntry(admin, {
+              accountProfileId: String(existing.current_holder_id ?? existing.collected_by),
+              amount: componentAmount,
+              entryDate: String(existing.payment_date),
+              sourceType: "payment",
+              sourceId: id,
+              description: `Cash collected for ${String(existing.business_type ?? "payment").replace("_", " ")}`,
+              createdBy: profile.id,
+            });
+          }
+        }
+        return ok(`${paymentComponent === "cash" ? "Cash" : "Online"} value approved.`);
+      }
+      if (currentComponentDecision !== "pending" && currentComponentDecision !== "reapproval_required") {
+        return fail("This payment value has already been reviewed.");
+      }
+
+      if (paymentComponent === "cash") {
+        const pendingTransferResponse = await admin
+          .from("money_movements")
+          .select("id")
+          .eq("payment_id", id)
+          .eq("type", "transfer")
+          .eq("status", "pending")
+          .maybeSingle();
+        if (pendingTransferResponse.error) throw new Error(pendingTransferResponse.error.message);
+        if (pendingTransferResponse.data) {
+          return fail("Resolve the pending transaction transfer before approving its cash value.");
+        }
+      }
+
+      const cashAmount = paymentCashCollection(existing);
+      const onlineAmount = paymentOnlineCollection(existing);
+      const nextCashDecision = paymentComponent === "cash" ? "approved" : paymentComponentDecision(existing, "cash");
+      const nextOnlineDecision = paymentComponent === "online" ? "approved" : paymentComponentDecision(existing, "online");
+      const allComponentsApproved =
+        (cashAmount <= 0 || nextCashDecision === "approved") &&
+        (onlineAmount <= 0 || nextOnlineDecision === "approved");
+      const componentStatusField = paymentComponent === "cash" ? "cash_approval_status" : "online_approval_status";
+      const componentApprovedAtField = paymentComponent === "cash" ? "cash_approved_at" : "online_approved_at";
+      const updateResult = await admin
+        .from("payments")
+        .update({
+          [componentStatusField]: "approved",
+          [componentApprovedAtField]: new Date().toISOString(),
+          approval_status: allComponentsApproved ? "approved" : currentDecision,
+        })
+        .eq("id", id);
+      if (updateResult.error) {
+        if (isMissingPaymentComponentApprovalSchemaError(updateResult.error)) {
+          return fail("Apply the mixed payment approval migration before approving payment values separately.");
+        }
+        throw new Error(updateResult.error.message);
+      }
+
+      if (paymentComponent === "cash" && String(existing.record_status ?? "active") === "active") {
+        const alreadyPosted = await hasRecordLedgerEntry(admin, "payment", id);
+        if (!alreadyPosted) {
+          await ensureLedgerEntry(admin, {
+            accountProfileId: String(existing.current_holder_id ?? existing.collected_by),
+            amount: cashAmount,
+            entryDate: String(existing.payment_date),
+            sourceType: "payment",
+            sourceId: id,
+            description: `Cash collected for ${String(existing.business_type ?? "payment").replace("_", " ")}`,
+            createdBy: profile.id,
+          });
+        }
+      }
+
+      const recordOwnerId = String(existing.collected_by);
+      await createNotifications(admin, {
+        recipientIds: recordOwnerId === profile.id ? [] : [recordOwnerId],
+        actorId: profile.id,
+        title: `${paymentComponent === "cash" ? "Cash" : "Online"} payment value approved`,
+        body: `${profile.full_name} approved the ${paymentComponent} value of ${componentAmount}.`,
+        category: "approval",
+        tone: "success",
+        eventKey: `record-component-approval:payment:${id}:${paymentComponent}`,
+        metadata: { record_id: id, record_type: recordType, decision, payment_component: paymentComponent },
+      });
+
+      return ok(`${paymentComponent === "cash" ? "Cash" : "Online"} value approved.`);
+    }
+
     const alreadySameDecision = currentDecision === decision;
     if (!alreadySameDecision && currentDecision !== "pending" && currentDecision !== "reapproval_required") {
       return fail("This record has already been reviewed.");
@@ -1832,9 +2109,31 @@ const handlers = {
       }
     }
 
-    if (!alreadySameDecision) {
-      const { error } = await admin.from(table).update({ approval_status: decision }).eq("id", id);
-      if (error) throw new Error(error.message);
+    if (!alreadySameDecision || recordType === "payment") {
+      const reviewedAt = new Date().toISOString();
+      const updates: Record<string, unknown> = { approval_status: decision };
+      if (recordType === "payment" && decision === "approved") {
+        if (paymentCashCollection(existing) > 0) {
+          updates.cash_approval_status = "approved";
+          updates.cash_approved_at = reviewedAt;
+        }
+        if (paymentOnlineCollection(existing) > 0) {
+          updates.online_approval_status = "approved";
+          updates.online_approved_at = reviewedAt;
+        }
+      }
+      const { error } = await admin.from(table).update(updates).eq("id", id);
+      if (error) {
+        if (recordType === "payment" && isMissingPaymentComponentApprovalSchemaError(error)) {
+          if (String(existing.mode) === "mixed") {
+            return fail("Apply the mixed payment approval migration before approving mixed payments.");
+          }
+          const fallback = await admin.from(table).update({ approval_status: decision }).eq("id", id);
+          if (fallback.error) throw new Error(fallback.error.message);
+        } else {
+          throw new Error(error.message);
+        }
+      }
     }
 
     const existingCashCollection = recordType === "expense" && existing.mode === "cash"
@@ -1894,19 +2193,21 @@ const handlers = {
       await removeRecordLedgerEntries(admin, recordType, id);
       return ok("Record cancelled.");
     }
-    if (await recordIsEffectivelyApproved(admin, recordType, record)) {
-      return fail("Approved transactions cannot be deleted.");
-    }
     const reason = asString(formData, "reason");
     if (!reason) return fail("Deletion reason is required.");
 
+    const cancelUpdates: Record<string, unknown> = {
+      record_status: "cancelled",
+      approval_status: "cancelled",
+      cancel_reason: reason,
+    };
+    if (recordType === "payment") {
+      if (paymentCashCollection(record) > 0) cancelUpdates.cash_approval_status = "cancelled";
+      if (paymentOnlineCollection(record) > 0) cancelUpdates.online_approval_status = "cancelled";
+    }
     const { error } = await admin
       .from(table)
-      .update({
-        record_status: "cancelled",
-        approval_status: "cancelled",
-        cancel_reason: reason,
-      })
+      .update(cancelUpdates)
       .eq("id", id);
     if (error) throw new Error(error.message);
 
@@ -1946,10 +2247,17 @@ const handlers = {
     if (recordOwnerId !== profile.id && !isOwnerish(profile.role)) {
       return fail("You can edit only your own transactions.");
     }
-    if (String(record.record_status ?? "active") !== "active" || await recordIsEffectivelyApproved(admin, recordType, record)) {
-      return fail("Transactions can be edited only before approval.");
+    const effectivelyApproved = await recordIsEffectivelyApproved(admin, recordType, record);
+    if (String(record.record_status ?? "active") !== "active") {
+      return fail("Only active transactions can be edited.");
+    }
+    if (effectivelyApproved && !isOwnerish(profile.role)) {
+      return fail("Only an owner can edit an approved transaction.");
     }
     if (recordType === "payment") {
+      if (!effectivelyApproved && paymentHasApprovedComponent(record)) {
+        return fail("A transaction cannot be edited after one of its payment values is approved.");
+      }
       const transferResponse = await admin
         .from("money_movements")
         .select("id")
@@ -1995,11 +2303,31 @@ const handlers = {
     const { error } = await admin.from(table).update(updates).eq("id", id);
     if (error) throw new Error(error.message);
 
+    if (effectivelyApproved) {
+      await removeRecordLedgerEntries(admin, recordType, id);
+      const updatedCashAmount = recordType === "expense"
+        ? record.mode === "cash" ? amount : 0
+        : record.mode === "mixed" ? paymentCashCollection(record) : record.mode === "cash" ? amount : 0;
+      if (updatedCashAmount > 0) {
+        await ensureLedgerEntry(admin, {
+          accountProfileId: String(recordType === "expense" ? record.spent_by : record.current_holder_id ?? record.collected_by),
+          amount: recordType === "expense" ? -updatedCashAmount : updatedCashAmount,
+          entryDate: date,
+          sourceType: recordType,
+          sourceId: id,
+          description: recordType === "expense"
+            ? `Expense: ${String(description ?? record.description ?? "Expense")}`
+            : `Cash collected for ${String(record.business_type ?? "payment").replace("_", " ")}`,
+          createdBy: profile.id,
+        });
+      }
+    }
+
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id ? await ownerRecipientIds(admin, profile.id) : [recordOwnerId],
       actorId: profile.id,
       title: `${recordType === "expense" ? "Expense" : "Payment"} updated`,
-      body: `${profile.full_name} updated a pending ${recordType} transaction.`,
+      body: `${profile.full_name} updated a ${recordType} transaction.`,
       category: "approval",
       tone: "info",
       eventKey: `record-updated:${recordType}:${id}:${idempotencyKey ?? "direct"}`,
@@ -2174,7 +2502,12 @@ const handlers = {
     const requiredPermission = businessPermissions[business];
     if (!requiredPermission) return fail("This transaction cannot be transferred.");
     if (String(payment.record_status ?? "active") !== "active" || !canTransferPaymentStatus(String(payment.approval_status ?? ""))) {
-      return fail("Only active transactions before owner approval can be transferred.");
+      return fail("Only active transactions can be transferred.");
+    }
+    const transactionOrCashApproved = paymentComponentDecision(payment, "cash") === "approved" ||
+      await recordIsEffectivelyApproved(admin, "payment", payment);
+    if (transactionOrCashApproved && !isOwnerish(profile.role)) {
+      return fail("Only an owner can transfer an approved transaction.");
     }
     const currentHolderId = String(payment.current_holder_id ?? payment.collected_by ?? "");
     if (!currentHolderId) return fail("This transaction does not have a current cash holder.");
@@ -2290,6 +2623,7 @@ const handlers = {
       to_profile_id: string | null;
       status: string;
       type: string;
+      responded_at: string | null;
     }>(movementResponse);
     if (movementResponse.error || !movement) throw new Error(movementResponse.error?.message ?? "Movement not found.");
     if (movement.type !== "transfer" || !movement.payment_id) {
@@ -2316,6 +2650,9 @@ const handlers = {
           return fail("This transfer has already been reviewed.");
         }
       }
+      if (decision === "accepted") {
+        await ensureApprovedPaymentTransferLedger(admin, movement, payment, profile.id);
+      }
       return ok(`Transaction transfer ${decision}.`);
     }
     if (String(payment.record_status ?? "active") !== "active" || !canTransferPaymentStatus(String(payment.approval_status ?? ""))) {
@@ -2334,12 +2671,13 @@ const handlers = {
       if (paymentUpdate.error) throw new Error(paymentUpdate.error.message);
     }
 
+    const respondedAt = new Date().toISOString();
     const movementUpdate = await admin
       .from("money_movements")
       .update({
         status: decision,
         responded_by: profile.id,
-        responded_at: new Date().toISOString(),
+        responded_at: respondedAt,
       })
       .eq("id", movementId);
     if (movementUpdate.error) {
@@ -2347,6 +2685,15 @@ const handlers = {
         await admin.from("payments").update({ current_holder_id: movement.from_profile_id }).eq("id", movement.payment_id);
       }
       throw new Error(movementUpdate.error.message);
+    }
+
+    if (decision === "accepted") {
+      await ensureApprovedPaymentTransferLedger(
+        admin,
+        { ...movement, responded_at: respondedAt },
+        payment,
+        profile.id,
+      );
     }
 
     await createNotifications(admin, {
@@ -2451,7 +2798,7 @@ const handlers = {
       if (movement.status !== decision) return fail("This transfer has already been reviewed.");
       if (decision === "accepted") {
         const amount = Number(movement.amount);
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayIso();
         await ensureLedgerEntry(admin, {
           accountProfileId: movement.from_profile_id,
           amount: -amount,
@@ -2486,7 +2833,7 @@ const handlers = {
 
     if (decision === "accepted") {
       const amount = Number(movement.amount);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayIso();
       await ensureLedgerEntry(admin, {
         accountProfileId: movement.from_profile_id,
         amount: -amount,
@@ -2530,7 +2877,7 @@ const handlers = {
     const counterpartyProfileId = asString(formData, "profile_id")
       ?? (direction === "sent_to_user" ? asString(formData, "to_profile_id") : asString(formData, "from_profile_id"));
     const amount = asNumber(formData, "amount") ?? 0;
-    const settlementDate = asString(formData, "settlement_date") ?? new Date().toISOString().slice(0, 10);
+    const settlementDate = asString(formData, "settlement_date") ?? todayIso();
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     if (!counterpartyProfileId || amount <= 0) return fail("Choose a user and amount.");
     if (counterpartyProfileId === profile.id) return fail("Choose another user.");
@@ -2766,7 +3113,7 @@ const handlers = {
         await ensureLedgerEntry(admin, {
           accountProfileId: settlement.paid_by,
           amount: -Number(settlement.amount),
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: todayIso(),
           sourceType: "settlement",
           sourceId: settlement.id,
           description: "Agent incentive paid",
@@ -2775,7 +3122,7 @@ const handlers = {
         await ensureLedgerEntry(admin, {
           accountProfileId: settlement.agent_id,
           amount: Number(settlement.amount),
-          entryDate: new Date().toISOString().slice(0, 10),
+          entryDate: todayIso(),
           sourceType: "settlement",
           sourceId: settlement.id,
           description: "Agent incentive received",
@@ -2799,7 +3146,7 @@ const handlers = {
       await ensureLedgerEntry(admin, {
         accountProfileId: settlement.paid_by,
         amount: -Number(settlement.amount),
-        entryDate: new Date().toISOString().slice(0, 10),
+        entryDate: todayIso(),
         sourceType: "settlement",
         sourceId: settlement.id,
         description: "Agent incentive paid",
@@ -2808,7 +3155,7 @@ const handlers = {
       await ensureLedgerEntry(admin, {
         accountProfileId: settlement.agent_id,
         amount: Number(settlement.amount),
-        entryDate: new Date().toISOString().slice(0, 10),
+        entryDate: todayIso(),
         sourceType: "settlement",
         sourceId: settlement.id,
         description: "Agent incentive received",

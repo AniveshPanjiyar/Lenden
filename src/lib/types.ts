@@ -83,10 +83,16 @@ export type Payment = {
   description: string | null;
   remark: string | null;
   photo_path: string | null;
+  aadhar_photo_url: string | null;
+  aadhar_back_photo_url: string | null;
   collected_by: string;
   current_holder_id: string | null;
   client_request_id: string | null;
   approval_status: ApprovalStatus;
+  cash_approval_status: ApprovalStatus | null;
+  online_approval_status: ApprovalStatus | null;
+  cash_approved_at: string | null;
+  online_approved_at: string | null;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
   created_at: string;
@@ -100,6 +106,7 @@ export type LibraryStudent = {
   photo_url: string | null;
   aadhar_number: string | null;
   aadhar_photo_url: string | null;
+  aadhar_back_photo_url: string | null;
   student_name: string | null;
   seat_number: string | null;
   locker_number: string | null;
