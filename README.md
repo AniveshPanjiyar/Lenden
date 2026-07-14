@@ -14,7 +14,7 @@ Payment collection, transfer, settlement, and daily closing app for Guest House,
 
 Lenden runs as a Next.js backend-for-frontend over Supabase. There is no active Supabase Edge Function in the request path.
 
-- Entry routing: `src/app/page.tsx` sends platform administrators to `/admin/businesses` and members to `/b/[businessSlug]`.
+- Entry routing: `src/app/page.tsx` sends every business member, including a platform administrator who owns a business, to their last active `/b/[businessSlug]`; administrators without a membership go to `/admin/businesses`.
 - Business reads: `/api/businesses/[businessId]/bootstrap` and `/api/businesses/[businessId]/dashboard` validate membership/support access and include the business in every React Query cache key.
 - Mutations: forms call Server Actions in `src/app/actions.ts`; those actions resolve the business from the authenticated request URL, verify membership/support access, and use an authenticated tenant client so RLS remains active.
 - Auth/session refresh: `src/proxy.ts` runs the Supabase cookie refresh helper before application routes.
@@ -55,7 +55,7 @@ This app no longer ships a Supabase Edge Function. Keep mutation logic in Next.j
 
 ## First Owner
 
-With the service role key set, open `/setup` and create the first platform administrator/primary owner. Platform administrators create tenants and generate primary-owner credentials at `/admin/businesses`; owners manage modules, memberships, credentials, and ownership from business settings.
+With the service role key set, open `/setup` and create the first platform administrator/primary owner. Platform administrators create tenants and generate primary-owner credentials at `/admin/businesses`; primary owners manage modules, credentials, and ownership, while co-owners can manage staff and sales-agent access.
 
 ## Implemented Workflows
 
@@ -71,7 +71,9 @@ With the service role key set, open `/setup` and create the first platform admin
 - Owner settlement by amount
 - Daily closing screen calculated from all previous unsettled ledger entries
 - Staff permissions by collection type
-- Settings for rooms, courses, skill courses, and referral codes
+- Primary-owner settings for rooms, courses, skill courses, and referral codes
+- Owner-to-co-owner cash movement, including the reverse direction
+- Automatic referral-code deactivation when its sales-agent membership is suspended
 - Referral code linkage for sales-agent visibility
 - Owner approval/rejection and cancel request review
 - CSV export for owner reports

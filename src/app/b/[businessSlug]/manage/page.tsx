@@ -6,8 +6,8 @@ import type { BusinessMembership, Profile } from "@/lib/types";
 import {
   saveBusinessModulesAction,
   suspendBusinessMemberAction,
-  transferPrimaryOwnershipAction,
 } from "./actions";
+import { OwnershipTransferForm } from "./ownership-transfer-form";
 
 export default async function BusinessManagePage({ params }: { params: Promise<{ businessSlug: string }> }) {
   const { businessSlug } = await params;
@@ -26,6 +26,7 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
   const memberRows = (memberships ?? []) as BusinessMembership[];
   const coOwners = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
   const enabledModules = new Set((modules ?? []).filter((module) => module.enabled).map((module) => module.module));
+  const canManageBusinessSettings = context.accessMode === "support" || isPrimaryOwner(context.membership?.role);
 
   return (
     <main className="business-manage-page">
@@ -40,13 +41,19 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
 
       <section className="admin-panel">
         <h2>Enabled modules</h2>
-        <p>Disabled modules stop new actions while keeping historical records.</p>
-        <form action={saveBusinessModulesAction} className="module-config-form">
-          {(["library", "guest_house", "course", "general"] as const).map((module) => (
-            <label key={module}><input type="checkbox" name="modules" value={module} defaultChecked={enabledModules.has(module)} /> {module.replace("_", " ")}</label>
-          ))}
-          <button className="primary-button" type="submit">Save modules</button>
-        </form>
+        <p>{canManageBusinessSettings
+          ? "Disabled modules stop new actions while keeping historical records."
+          : "Only the primary owner can change business modules."}</p>
+        {canManageBusinessSettings ? (
+          <form action={saveBusinessModulesAction} className="module-config-form">
+            {(["library", "guest_house", "course", "general"] as const).map((module) => (
+              <label key={module}><input type="checkbox" name="modules" value={module} defaultChecked={enabledModules.has(module)} /> {module.replace("_", " ")}</label>
+            ))}
+            <button className="primary-button" type="submit">Save modules</button>
+          </form>
+        ) : (
+          <p className="muted">Active: {[...enabledModules].map((module) => String(module).replace("_", " ")).join(", ") || "none"}</p>
+        )}
       </section>
 
       <section className="admin-panel">
@@ -61,13 +68,13 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
         <section className="admin-panel">
           <h2>Transfer primary ownership</h2>
           <p>The selected co-owner becomes primary owner atomically; you become a co-owner.</p>
-          <form action={transferPrimaryOwnershipAction} className="inline-admin-form">
-            <select name="profile_id" required defaultValue=""><option value="" disabled>Choose active co-owner</option>{coOwners.map((membership) => {
-              const profile = profileMap.get(membership.profile_id);
-              return <option key={membership.id} value={membership.profile_id}>{profile?.full_name ?? membership.profile_id}</option>;
-            })}</select>
-            <button className="danger-button" type="submit">Transfer ownership</button>
-          </form>
+          <OwnershipTransferForm
+            businessName={context.business.name}
+            candidates={coOwners.map((membership) => ({
+              profileId: membership.profile_id,
+              label: profileMap.get(membership.profile_id)?.full_name ?? membership.profile_id,
+            }))}
+          />
         </section>
       ) : null}
 

@@ -295,12 +295,24 @@ function requireBusinessOwner(role: BusinessRole) {
   if (!isBusinessOwner(role)) throw new Error("Only a business owner can do this.");
 }
 
+function requireBusinessSettingsManager(profile: LendenActionProfile) {
+  if (profile.businessRole !== "primary_owner" && profile.accessMode !== "support") {
+    throw new Error("Only the primary owner can change business settings.");
+  }
+}
+
 function recordOwnerProfileId(recordType: "payment" | "expense", record: Record<string, string | number | null>) {
   return String(recordType === "expense" ? record.spent_by : record.collected_by);
 }
 
-async function profileIsOwnerish(admin: SupabaseAdminClient, profileId: string) {
-  const response = await admin.from("business_memberships").select("role").eq("profile_id", profileId).eq("status", "active").single();
+async function profileIsOwnerish(admin: SupabaseAdminClient, businessId: string, profileId: string) {
+  const response = await admin
+    .from("business_memberships")
+    .select("role")
+    .eq("business_id", businessId)
+    .eq("profile_id", profileId)
+    .eq("status", "active")
+    .single();
   const membership = typedData<{ role: BusinessRole }>(response);
   if (response.error || !membership) throw new Error(response.error?.message ?? "Business membership not found.");
   return isBusinessOwner(membership.role);
@@ -312,20 +324,33 @@ async function recordIsEffectivelyApproved(
   record: Record<string, string | number | null>,
 ) {
   if (String(record.approval_status ?? "") === "approved") return true;
-  return profileIsOwnerish(admin, recordOwnerProfileId(recordType, record));
+  const businessId = String(record.business_id ?? "");
+  if (!businessId) throw new Error("Transaction business is missing.");
+  return profileIsOwnerish(admin, businessId, recordOwnerProfileId(recordType, record));
 }
 
-async function userPermissions(admin: SupabaseAdminClient, profileId: string) {
-  const membershipResponse = await admin.from("business_memberships").select("id").eq("profile_id", profileId).eq("status", "active").single();
+async function userPermissions(admin: SupabaseAdminClient, businessId: string, profileId: string) {
+  const membershipResponse = await admin
+    .from("business_memberships")
+    .select("id")
+    .eq("business_id", businessId)
+    .eq("profile_id", profileId)
+    .eq("status", "active")
+    .single();
   const membership = typedData<{ id: string }>(membershipResponse);
   if (membershipResponse.error || !membership) return [];
   const permissionsResponse = await admin.from("business_member_permissions").select("permission").eq("membership_id", membership.id);
   return typedDataArray<{ permission: string }>(permissionsResponse).map((item) => item.permission);
 }
 
-async function businessMember(admin: SupabaseAdminClient, profileId: string) {
+async function businessMember(admin: SupabaseAdminClient, businessId: string, profileId: string) {
   const [membershipResponse, profileResponse] = await Promise.all([
-    admin.from("business_memberships").select("id,role,status").eq("profile_id", profileId).maybeSingle(),
+    admin
+      .from("business_memberships")
+      .select("id,role,status")
+      .eq("business_id", businessId)
+      .eq("profile_id", profileId)
+      .maybeSingle(),
     admin.from("profiles").select("id,active,full_name").eq("id", profileId).maybeSingle(),
   ]);
   if (membershipResponse.error) throw new Error(membershipResponse.error.message);
@@ -338,7 +363,7 @@ async function businessMember(admin: SupabaseAdminClient, profileId: string) {
 async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile, business: BusinessType) {
   if (isBusinessOwner(profile.businessRole)) return true;
   if (isBusinessSalesAgent(profile.businessRole)) return false;
-  const permissions = await userPermissions(admin, profile.id);
+  const permissions = await userPermissions(admin, profile.businessId, profile.id);
   return permissions.includes(businessPermissions[business]);
 }
 
@@ -729,10 +754,11 @@ async function profileCashBalanceAt(admin: SupabaseAdminClient, profileId: strin
     .reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
 }
 
-async function ownerRecipientIds(admin: SupabaseAdminClient, excludeId?: string) {
+async function ownerRecipientIds(admin: SupabaseAdminClient, businessId: string, excludeId?: string) {
   const response = await admin
     .from("business_memberships")
     .select("profile_id")
+    .eq("business_id", businessId)
     .in("role", ["primary_owner", "co_owner"])
     .eq("status", "active");
 
@@ -1274,7 +1300,12 @@ const handlers = {
     const profileId = asString(formData, "profile_id");
     if (!profileId) return fail("Missing staff profile.");
 
-    const targetMembershipResponse = await admin.from("business_memberships").select("id,role").eq("profile_id", profileId).single();
+    const targetMembershipResponse = await admin
+      .from("business_memberships")
+      .select("id,role")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", profileId)
+      .single();
     const targetMembership = typedData<{ id: string; role: BusinessRole }>(targetMembershipResponse);
     if (targetMembershipResponse.error || !targetMembership) {
       throw new Error(targetMembershipResponse.error?.message ?? "Staff membership not found.");
@@ -1385,14 +1416,19 @@ const handlers = {
     return ok(`Temporary password set for ${targetProfile.full_name}. They must replace it after login.`);
   }),
 
-  deleteUser: withErrors("Could not remove user.", async (formData, { admin, profile }) => {
+  deleteUser: withErrors("Could not remove user.", async (formData, { admin, authAdmin, profile }) => {
     requireBusinessOwner(profile.businessRole);
 
     const profileId = asString(formData, "profile_id");
     if (!profileId) return fail("Choose a user.");
     if (profileId === profile.id) return fail("You cannot delete your own account while logged in.");
 
-    const targetMembershipResponse = await admin.from("business_memberships").select("id,role,status").eq("profile_id", profileId).single();
+    const targetMembershipResponse = await admin
+      .from("business_memberships")
+      .select("id,role,status")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", profileId)
+      .single();
     const targetMembership = typedData<{ id: string; role: BusinessRole; status: string }>(targetMembershipResponse);
     if (targetMembershipResponse.error || !targetMembership) throw new Error(targetMembershipResponse.error?.message ?? "Membership not found.");
     if (targetMembership.role === "primary_owner") return fail("Transfer primary ownership before removing this owner.");
@@ -1400,6 +1436,14 @@ const handlers = {
 
     const { error } = await admin.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", targetMembership.id);
     if (error) throw new Error(error.message);
+    if (targetMembership.role === "sales_agent") {
+      const { error: referralError } = await authAdmin
+        .from("referral_codes")
+        .update({ active: false })
+        .eq("business_id", profile.businessId)
+        .eq("agent_id", profileId);
+      if (referralError) throw new Error(referralError.message);
+    }
     await admin.from("audit_events").insert({
       business_id: profile.businessId,
       actor_profile_id: profile.id,
@@ -1745,7 +1789,7 @@ const handlers = {
     }
 
     await createNotifications(admin, {
-      recipientIds: await ownerRecipientIds(admin, profile.id),
+      recipientIds: await ownerRecipientIds(admin, profile.businessId, profile.id),
       actorId: profile.id,
       title: "New payment entry",
       body: `${profile.full_name} saved a ${business.replace("_", " ")} payment of ${amount}.`,
@@ -1938,7 +1982,7 @@ const handlers = {
       return fail("Sales agents have read-only incentive access.");
     }
 
-    const permissions = await userPermissions(admin, profile.id);
+    const permissions = await userPermissions(admin, profile.businessId, profile.id);
 
     if (!isBusinessOwner(profile.businessRole) && !permissions.includes("add_expense")) {
       return fail("You do not have access to add expenses.");
@@ -2011,7 +2055,7 @@ const handlers = {
     }
 
     await createNotifications(admin, {
-      recipientIds: await ownerRecipientIds(admin, profile.id),
+      recipientIds: await ownerRecipientIds(admin, profile.businessId, profile.id),
       actorId: profile.id,
       title: "New expense entry",
       body: `${profile.full_name} added an expense of ${amount}: ${description}.`,
@@ -2378,7 +2422,7 @@ const handlers = {
     }
 
     await createNotifications(admin, {
-      recipientIds: recordOwnerId === profile.id ? await ownerRecipientIds(admin, profile.id) : [recordOwnerId],
+      recipientIds: recordOwnerId === profile.id ? await ownerRecipientIds(admin, profile.businessId, profile.id) : [recordOwnerId],
       actorId: profile.id,
       title: `${recordType === "expense" ? "Expense" : "Payment"} updated`,
       body: `${profile.full_name} updated a ${recordType} transaction.`,
@@ -2456,7 +2500,7 @@ const handlers = {
       .eq("id", recordId);
 
     await createNotifications(admin, {
-      recipientIds: await ownerRecipientIds(admin, profile.id),
+      recipientIds: await ownerRecipientIds(admin, profile.businessId, profile.id),
       actorId: profile.id,
       title: "Cancel request",
       body: `${profile.full_name} requested cancellation for a ${recordType}.`,
@@ -2572,13 +2616,13 @@ const handlers = {
     const cashAmount = paymentCashCollection(payment);
     if (cashAmount <= 0) return fail("Only cash or mixed transactions with cash can be transferred.");
 
-    const recipient = await businessMember(admin, toProfileId);
+    const recipient = await businessMember(admin, profile.businessId, toProfileId);
     if (!recipient) throw new Error("Receiving staff not found.");
     if (!recipient.active || recipient.status !== "active" || recipient.role !== "staff") {
       return fail("Choose an active staff member.");
     }
 
-    const recipientPermissions = await userPermissions(admin, toProfileId);
+    const recipientPermissions = await userPermissions(admin, profile.businessId, toProfileId);
     if (!recipientPermissions.includes(requiredPermission)) {
       return fail("Receiving staff does not have permission for this collection category.");
     }
@@ -2624,7 +2668,7 @@ const handlers = {
     if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not request transfer.");
 
     const notificationRecipients = new Set([
-      ...(await ownerRecipientIds(admin, profile.id)),
+      ...(await ownerRecipientIds(admin, profile.businessId, profile.id)),
       currentHolderId,
       toProfileId,
     ]);
@@ -2740,7 +2784,7 @@ const handlers = {
     }
 
     await createNotifications(admin, {
-      recipientIds: [...(await ownerRecipientIds(admin, profile.id)), movement.from_profile_id],
+      recipientIds: [...(await ownerRecipientIds(admin, profile.businessId, profile.id)), movement.from_profile_id],
       actorId: profile.id,
       title: `Transaction transfer ${decision}`,
       body: `${profile.full_name} ${decision} a transaction transfer of ${movement.amount}.`,
@@ -2761,7 +2805,7 @@ const handlers = {
     if (!toProfileId || amount <= 0) return fail("Choose staff and amount.");
     if (toProfileId === profile.id) return fail("Choose another staff member.");
 
-    const recipient = await businessMember(admin, toProfileId);
+    const recipient = await businessMember(admin, profile.businessId, toProfileId);
     if (!recipient?.active || recipient.status !== "active" || recipient.role !== "staff") {
       return fail("Choose an active staff member.");
     }
@@ -2907,9 +2951,7 @@ const handlers = {
   }),
 
   settleCash: withErrors("Could not settle cash.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isBusinessSalesAgent(profile.businessRole)) {
-      return fail("Sales agents have read-only incentive access.");
-    }
+    requireBusinessOwner(profile.businessRole);
 
     const direction = (asString(formData, "settlement_direction") ?? "received_from_user") as SettlementDirection;
     const counterpartyProfileId = asString(formData, "profile_id")
@@ -2924,7 +2966,7 @@ const handlers = {
       return fail("Choose whether money was received or sent.");
     }
 
-    const selectedProfile = await businessMember(admin, counterpartyProfileId);
+    const selectedProfile = await businessMember(admin, profile.businessId, counterpartyProfileId);
     if (!selectedProfile?.active || selectedProfile.status !== "active") {
       return fail("Choose an active user.");
     }
@@ -3211,7 +3253,7 @@ const handlers = {
   }),
 
   saveRoom: withErrors("Could not save room.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const roomNumber = asString(formData, "room_number");
     if (!roomNumber) return fail("Room number is required.");
     const { error } = await admin.from("rooms").upsert({
@@ -3225,7 +3267,7 @@ const handlers = {
   }),
 
   deleteRoom: withErrors("Could not delete room.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Room is required.");
     const { error } = await admin.from("rooms").delete().eq("id", id);
@@ -3234,7 +3276,7 @@ const handlers = {
   }),
 
   saveCourse: withErrors("Could not save course.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const name = asString(formData, "name");
     const kind = asString(formData, "kind") ?? "main";
     if (!name) return fail("Course name is required.");
@@ -3244,7 +3286,7 @@ const handlers = {
   }),
 
   deleteCourse: withErrors("Could not delete course.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Course is required.");
     const { error } = await admin.from("courses").delete().eq("id", id);
@@ -3253,7 +3295,7 @@ const handlers = {
   }),
 
   saveReferral: withErrors("Could not save referral.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const code = asString(formData, "code")?.toUpperCase();
     if (!code) return fail("Referral code is required.");
     const { error } = await admin.from("referral_codes").upsert({
@@ -3272,7 +3314,7 @@ const handlers = {
   }),
 
   deleteReferral: withErrors("Could not delete referral code.", async (formData, { admin, profile }) => {
-    requireBusinessOwner(profile.businessRole);
+    requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Referral code is required.");
     const { error } = await admin.from("referral_codes").delete().eq("id", id);

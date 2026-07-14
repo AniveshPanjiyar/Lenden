@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
-import { canManageBusinessMemberRole, resolveBusinessContextFromRequest } from "@/lib/tenancy";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { canManageBusinessMemberRole, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
 import type { BusinessType } from "@/lib/types";
 
 function read(formData: FormData, key: string) {
@@ -12,6 +12,9 @@ function read(formData: FormData, key: string) {
 
 export async function saveBusinessModulesAction(formData: FormData) {
   const { identity, context } = await resolveBusinessContextFromRequest();
+  if (context.accessMode !== "support" && !isPrimaryOwner(context.membership?.role)) {
+    throw new Error("Only the primary owner can change business settings.");
+  }
   const client = await createClient({ businessId: context.business.id });
   const enabled = new Set(formData.getAll("modules").filter((item): item is string => typeof item === "string"));
   const modules: BusinessType[] = ["library", "guest_house", "course", "general"];
@@ -72,6 +75,14 @@ export async function suspendBusinessMemberAction(formData: FormData) {
   if (membership.status !== "active") throw new Error("This member no longer has active access.");
   const { error } = await client.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", membershipId);
   if (error) throw new Error(error.message);
+  if (membership.role === "sales_agent") {
+    const { error: referralError } = await createAdminClient()
+      .from("referral_codes")
+      .update({ active: false })
+      .eq("business_id", context.business.id)
+      .eq("agent_id", membership.profile_id);
+    if (referralError) throw new Error(referralError.message);
+  }
   await client.from("audit_events").insert({
     business_id: context.business.id,
     actor_profile_id: identity.id,

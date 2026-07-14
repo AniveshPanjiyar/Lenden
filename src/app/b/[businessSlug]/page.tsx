@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { getAppData } from "@/lib/data";
-import { BusinessAccessError, isBusinessOwner, resolveBusinessContext } from "@/lib/tenancy";
+import { BusinessAccessError, resolveBusinessContext } from "@/lib/tenancy";
 import { parseAppViewState } from "@/lib/view-state";
 
 export default async function BusinessHome({
@@ -20,7 +20,7 @@ export default async function BusinessHome({
     data = await getAppData(context, identity, dashboardViewState);
     initialViewState = parseAppViewState(
       resolvedSearchParams,
-      isBusinessOwner(context.membership?.role) || context.accessMode === "support" ? "all" : identity.id,
+      identity.id,
     );
   } catch (error) {
     if (error instanceof BusinessAccessError && error.status === 403) notFound();

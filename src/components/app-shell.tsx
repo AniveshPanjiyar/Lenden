@@ -286,6 +286,8 @@ const messages: Record<Language, Record<string, string>> = {
     cashOut: "OUT",
     cashOutExpenses: "OUT",
     cashWithStaff: "Cash with staff",
+    remainingCashWithStaff: "Remaining cash in hand of staff",
+    includesPendingStaffCash: "Includes pending cash held by staff",
     currentHolder: "Current holder",
     changeRequests: "Change requests",
     changePassword: "Change password",
@@ -299,6 +301,8 @@ const messages: Record<Language, Record<string, string>> = {
     collectPayment: "Collect payment",
     collectMoney: "Collect money",
     collections: "Collections",
+    totalCollections: "Total collections",
+    totalCollectionForBusiness: "Total collection for the business",
     collected: "Collected",
     copyReferralCode: "Copy code",
     confirmReceived: "Confirm received",
@@ -306,7 +310,7 @@ const messages: Record<Language, Record<string, string>> = {
     confirmedPayouts: "Paid incentive",
     collectedByStaff: "Collected payment",
     businessStatus: "Business status",
-    businessStatusHelp: "IN, OUT, and pending review by business.",
+    businessStatusHelp: "Total collection, OUT, and pending review by business.",
     cashImpact: "Cash impact",
     cashToSettle: "Cash to settle",
     course: "Course",
@@ -425,6 +429,8 @@ const messages: Record<Language, Record<string, string>> = {
     optional: "Optional",
     out: "OUT",
     owner: "Owner",
+    primaryOwner: "Owner",
+    coOwner: "Co-owner",
     ownerSettlement: "Owner Settlement",
     ownerSettlementLower: "Owner settlement",
     outflowsOnly: "Outflows only",
@@ -538,6 +544,7 @@ const messages: Record<Language, Record<string, string>> = {
     staffBusinessStatus: "My service status",
     staffBusinessStatusHelp: "IN, OUT, and pending review by service.",
     staffDailyLedger: "Staff Daily Ledger",
+    userDailyLedger: "User Daily Ledger",
     staffPermissions: "Staff permissions",
     spent: "Spent",
     startDate: "Start date",
@@ -637,6 +644,8 @@ const messages: Record<Language, Record<string, string>> = {
     cashOut: "OUT",
     cashOutExpenses: "OUT",
     cashWithStaff: "स्टाफ के पास नकद",
+    remainingCashWithStaff: "स्टाफ के पास बचा नकद",
+    includesPendingStaffCash: "स्टाफ के पास बाकी मंजूरी वाला नकद भी शामिल है",
     currentHolder: "मौजूदा होल्डर",
     changeRequests: "बदलाव की मांग",
     changePassword: "पासवर्ड बदलें",
@@ -650,6 +659,8 @@ const messages: Record<Language, Record<string, string>> = {
     collectPayment: "पैसा जमा करें",
     collectMoney: "पैसा लें",
     collections: "कलेक्शन",
+    totalCollections: "कुल कलेक्शन",
+    totalCollectionForBusiness: "काम का कुल कलेक्शन",
     collected: "जमा",
     copyReferralCode: "कोड कॉपी करें",
     confirmReceived: "मिल गया",
@@ -657,7 +668,7 @@ const messages: Record<Language, Record<string, string>> = {
     confirmedPayouts: "दिया गया कमिशन",
     collectedByStaff: "जमा पैसा",
     businessStatus: "काम का स्टेटस",
-    businessStatusHelp: "काम के हिसाब से IN, OUT और बाकी जांच।",
+    businessStatusHelp: "काम का कुल कलेक्शन, OUT और बाकी जांच।",
     cashImpact: "नकद असर",
     cashToSettle: "जमा करने की नकद",
     course: "कोर्स",
@@ -776,6 +787,8 @@ const messages: Record<Language, Record<string, string>> = {
     optional: "जरूरी नहीं",
     out: "OUT",
     owner: "मालिक",
+    primaryOwner: "मालिक",
+    coOwner: "सह-मालिक",
     ownerSettlement: "मालिक को जमा",
     ownerSettlementLower: "मालिक को जमा",
     outflowsOnly: "सिर्फ खर्च",
@@ -889,6 +902,7 @@ const messages: Record<Language, Record<string, string>> = {
     staffBusinessStatus: "मेरे काम का स्टेटस",
     staffBusinessStatusHelp: "काम के हिसाब से IN, OUT और बाकी जांच।",
     staffDailyLedger: "स्टाफ का दिन का हिसाब",
+    userDailyLedger: "सभी यूजर का दिन का हिसाब",
     staffPermissions: "स्टाफ अधिकार",
     spent: "खर्च",
     startDate: "शुरू तारीख",
@@ -959,6 +973,17 @@ const roleLabelKeys: Record<string, string> = {
   staff: "staff",
   sales_agent: "salesAgent",
 };
+
+const membershipRoleLabelKeys: Record<Profile["membership_role"], string> = {
+  primary_owner: "primaryOwner",
+  co_owner: "coOwner",
+  staff: "staff",
+  sales_agent: "salesAgent",
+};
+
+function profileRoleLabel(profile: Profile, t: (key: string) => string) {
+  return t(membershipRoleLabelKeys[profile.membership_role]);
+}
 
 const LanguageContext = createContext<{
   language: Language;
@@ -1304,6 +1329,10 @@ function paymentPendingApprovalAmount(payment: Payment) {
   return pendingCash + pendingOnline;
 }
 
+function paymentPendingCashAmount(payment: Payment) {
+  return paymentComponentStatus(payment, "cash") === "approved" ? 0 : paymentCashAmount(payment);
+}
+
 function paymentReviewProfileId(payment: Payment) {
   return paymentCashAmount(payment) > 0 ? payment.current_holder_id ?? payment.collected_by : payment.collected_by;
 }
@@ -1584,10 +1613,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     ? "home"
     : initialViewState.tab;
   const initialTransactionProfileId = initialViewState.transactionProfileId === "all"
-    ? "all"
+    ? data.profile.id
     : data.profiles.some((profile) => profile.id === initialViewState.transactionProfileId)
     ? initialViewState.transactionProfileId
-    : isOwnerish(data.profile.role) ? "all" : data.profile.id;
+    : data.profile.id;
   const initialTransactionFilter = initialViewState.transactionFilter;
   const [tab, setTab] = useState<Tab>(initialTab);
   const [language, setLanguageState] = useState<Language>("en");
@@ -1617,6 +1646,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     queryKey: ["bootstrap", cacheScope],
     queryFn: () => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`),
     initialData: () => bootstrapFromAppData(data),
+    refetchInterval: isOwnerish(data.profile.role) ? 30_000 : false,
+    refetchOnWindowFocus: true,
   });
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", cacheScope, dashboardParams],
@@ -1884,8 +1915,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   );
   const moneyMovementProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
-    if (owner) return item.role === "staff" || item.role === "sales_agent";
-    return isOwnerish(item.role);
+    return owner;
   });
   const permissionsByProfile = useMemo(() => {
     return appData.profiles.reduce<Record<string, string[]>>((acc, profile) => {
@@ -2149,7 +2179,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             <img alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)}/>
             <div>
               <h2 className="font-headline text-lg font-bold text-primary">{appData.profile.full_name}</h2>
-              <p className="font-body text-body-md text-on-surface-variant">{t(roleLabelKeys[appData.profile.role] ?? appData.profile.role)}</p>
+              <p className="font-body text-body-md text-on-surface-variant">{profileRoleLabel(appData.profile, t)}</p>
               <p className="app-sidebar-business-name">{appData.businessContext.business.name}</p>
             </div>
           </div>
@@ -2183,6 +2213,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={`/b/${appData.businessContext.business.slug}/manage`}>
                 <Settings size={20} />
                 <span>Business access</span>
+              </a>
+            </div>
+          ) : null}
+          {appData.profile.platform_role === "platform_admin" ? (
+            <div className="px-4">
+              <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/admin/businesses">
+                <ShieldCheck size={20} />
+                <span>Admin console</span>
               </a>
             </div>
           ) : null}
@@ -2272,7 +2310,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             {showQuickActions ? (
               <BottomActions
                 canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || moneyMovementProfiles.length > 0}
-                canAddNegative={canUsePayment("expense") || moneyMovementProfiles.length > 0 || (owner && staffProfiles.length > 0)}
+                canAddNegative={canUsePayment("expense") || (owner && (moneyMovementProfiles.length > 0 || staffProfiles.length > 0))}
                 onPositive={() => openAction("positive")}
                 onNegative={() => openAction("negative")}
               />
@@ -2369,6 +2407,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             {tab === "settings" ? (
               <SettingsView
                 owner={owner}
+                canManageBusinessSettings={supportMode || appData.profile.membership_role === "primary_owner"}
                 profile={appData.profile}
                 profiles={appData.profiles}
                 rooms={appData.rooms}
@@ -2772,7 +2811,7 @@ function HomeView({
         pendingInScope(indiaDateIso(movement.created_at)) &&
         (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
     );
-    const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
+    const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
     const myBalance = myLedgerBalance + myPendingCash;
     const myPayments = data.payments.filter(
       (payment) =>
@@ -3008,20 +3047,32 @@ function HomeView({
   const ownerCashMovements = data.movements.filter(
     (movement) =>
       movement.status === "accepted" &&
-      !movement.payment_id &&
       dateInRange(indiaDateIso(movement.responded_at ?? movement.created_at), dateRange),
   );
   const ownerMovementIn = ownerCashMovements
-    .filter((movement) => !ownerProfileIds.has(movement.from_profile_id) && ownerProfileIds.has(movement.to_profile_id ?? ""))
+    .filter(
+      (movement) =>
+        !ownerProfileIds.has(movement.from_profile_id) &&
+        ownerProfileIds.has(movement.to_profile_id ?? ""),
+    )
     .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const ownerMovementOut = ownerCashMovements
-    .filter((movement) => ownerProfileIds.has(movement.from_profile_id) && !ownerProfileIds.has(movement.to_profile_id ?? ""))
+    .filter(
+      (movement) =>
+        ownerProfileIds.has(movement.from_profile_id) &&
+        !ownerProfileIds.has(movement.to_profile_id ?? ""),
+    )
     .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const ownerAgentPayoutOut = data.agentSettlements
-    .filter((settlement) => settlement.status === "accepted" && dateInRange(indiaDateIso(settlement.responded_at ?? settlement.created_at), dateRange))
+    .filter(
+      (settlement) =>
+        settlement.status === "accepted" &&
+        dateInRange(indiaDateIso(settlement.responded_at ?? settlement.created_at), dateRange),
+    )
     .reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
-  const ownerInCash = totals.cash + ownerMovementIn;
-  const ownerInOnline = totals.online;
+  const ownerCollectedPayments = approvedPayments.filter((payment) => ownerProfileIds.has(payment.collected_by));
+  const ownerInCash = ownerCollectedPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0) + ownerMovementIn;
+  const ownerInOnline = ownerCollectedPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
   const ownerInAmount = ownerInCash + ownerInOnline;
   const ownerOutCash = totals.expense + ownerMovementOut + ownerAgentPayoutOut;
   const pendingSettlementMovements = data.movements.filter(
@@ -3099,6 +3150,16 @@ function HomeView({
     pendingReviewRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
     pendingContextRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
   const pendingCount = pendingReviewRecords.length + pendingContextRecords.length;
+  const staffProfileIds = new Set(
+    data.profiles.filter((item) => item.active && item.role === "staff").map((item) => item.id),
+  );
+  const confirmedStaffCash = cashBalances
+    .filter(({ profile: item }) => staffProfileIds.has(item.id))
+    .reduce((sum, item) => sum + Math.max(numberValue(item.balance), 0), 0);
+  const pendingStaffCash = pendingPayments
+    .filter((payment) => staffProfileIds.has(paymentReviewProfileId(payment)))
+    .reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
+  const remainingStaffCash = confirmedStaffCash + pendingStaffCash;
   const businessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
     const businessPayments = approvedPayments.filter((payment) => payment.business_type === business);
     const businessExpenses = approvedExpenses.filter((expense) => (expense.business_type ?? "general") === business);
@@ -3130,6 +3191,34 @@ function HomeView({
           <div className="dashboard-card-main relative z-10">
             <div className="dashboard-card-title-row">
               <WalletCards size={20} className="text-primary" />
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("totalCollections")}</h3>
+            </div>
+          </div>
+          <div>
+            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-primary-container">{formatMoney(totals.total)}</p>
+            <p className="dashboard-card-note text-xs text-primary font-medium mt-1">
+              {t("cash")} {formatMoney(totals.cash)} · {t("online")} {formatMoney(totals.online)}
+            </p>
+          </div>
+        </div>
+
+        <div className="dashboard-top-card dashboard-compact-card bg-surface-container-low border border-primary/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+          <div className="dashboard-card-main relative z-10">
+            <div className="dashboard-card-title-row">
+              <Landmark size={20} className="text-primary" />
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("remainingCashWithStaff")}</h3>
+            </div>
+          </div>
+          <div>
+            <p className="dashboard-card-value font-headline text-3xl font-bold text-primary">{formatMoney(remainingStaffCash)}</p>
+            <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">{t("includesPendingStaffCash")}</p>
+          </div>
+        </div>
+
+        <div className="dashboard-top-card dashboard-compact-card bg-primary-container/20 rounded-xl p-6 shadow-soft flex flex-col justify-between relative overflow-hidden group">
+          <div className="dashboard-card-main relative z-10">
+            <div className="dashboard-card-title-row">
+              <ArrowDown size={20} className="text-primary" />
               <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("cashIn")}</h3>
             </div>
           </div>
@@ -3158,7 +3247,7 @@ function HomeView({
           <div className="dashboard-card-main">
             <div className="dashboard-card-title-row">
               <ClipboardList size={20} className="text-tertiary" />
-              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("pendingReview")}</h3>
+              <h3 className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{t("pending")}</h3>
             </div>
           </div>
           <div>
@@ -3201,7 +3290,7 @@ function HomeView({
                 <strong>{labelForBusiness(item.business, t)}</strong>
               </div>
               <div className="business-status-main">
-                <span>{t("cashIn")}</span>
+                <span>{t("totalCollectionForBusiness")}</span>
                 <strong>{formatMoney(item.collection)}</strong>
               </div>
               <div className="business-status-parts">
@@ -3353,11 +3442,18 @@ function TransactionsView({
         : payment.approval_status;
     const ownerProfileIds = ownerProfileIdSet(profiles);
     const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
-    const paymentMatchesSelectedProfile = (payment: Payment, linkedTransfers: MoneyMovement[]) => (
-      userMatches(payment.collected_by) ||
-      userMatches(payment.current_holder_id) ||
-      linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id))
-    );
+    const selectedOwnerSelf = owner && selectedUserId === profile.id;
+    const paymentMatchesSelectedProfile = (payment: Payment, linkedTransfers: MoneyMovement[]) => {
+      if (selectedOwnerSelf) {
+        return payment.collected_by === profile.id ||
+          payment.current_holder_id === profile.id ||
+          (paymentOnlineAmount(payment) > 0 && isEffectivelyApprovedPayment(payment, ownerProfileIds)) ||
+          linkedTransfers.some((movement) => movement.from_profile_id === profile.id || movement.to_profile_id === profile.id);
+      }
+      return userMatches(payment.collected_by) ||
+        userMatches(payment.current_holder_id) ||
+        linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id));
+    };
 
     const historyDateInScope = (isoDate: string, pendingApproval: boolean) =>
       pendingApproval ? pendingRecordInScope(isoDate, dateRange, dateRangePreset) : dateInRange(isoDate, dateRange);
@@ -3609,15 +3705,32 @@ function TransactionsView({
       const pendingMovement = movement.status === "pending";
 
       if (owner) {
-        const ownerFacingAmount = !fromOwnerish && toOwnerish ? movementAmount : fromOwnerish && !toOwnerish ? -movementAmount : 0;
+        const ownerToOwner = fromOwnerish && toOwnerish;
+        const currentOwnerInvolved = movement.from_profile_id === profile.id || movement.to_profile_id === profile.id;
+        const ownerFacingAmount = ownerToOwner
+          ? movement.to_profile_id === profile.id
+            ? movementAmount
+            : movement.from_profile_id === profile.id
+              ? -movementAmount
+              : 0
+          : !fromOwnerish && toOwnerish
+            ? movementAmount
+            : fromOwnerish && !toOwnerish
+              ? -movementAmount
+              : 0;
         if (ownerFacingAmount === 0) return [];
         const ownerReceivedSettlement = ownerFacingAmount > 0;
         const counterpartyId = ownerFacingAmount > 0 ? movement.from_profile_id : movement.to_profile_id;
-        if (!userMatches(counterpartyId)) return [];
+        if (selectedOwnerSelf) {
+          if (!currentOwnerInvolved) return [];
+        } else if (!userMatches(counterpartyId)) {
+          return [];
+        }
         const entry = pendingMovement ? null : movementEntry(movement, ownerFacingAmount);
         const date = entry?.entry_date ?? indiaDateIso(movement.created_at);
         if (!historyDateInScope(date, pendingMovement)) return [];
         const counterpartyName = profileName(profiles, counterpartyId, t);
+        const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
         return [{
           id: `movement-${movement.id}`,
           kind: ownerReceivedSettlement ? "settlement" : "expense",
@@ -3637,6 +3750,7 @@ function TransactionsView({
           description: entry?.description ?? "",
           remark: movement.note ?? "",
           reason: null,
+          transferLines: [movementChain],
           pendingApproval: pendingMovement,
           icon: ownerReceivedSettlement ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
         }];
@@ -3656,6 +3770,7 @@ function TransactionsView({
       const staffCashIn = staffFacingAmount > 0;
       const incomingOwnerCash = staffFacingAmount > 0 && fromOwnerish && !toOwnerish;
       const outgoingOwnerSettlement = staffFacingAmount < 0 && toOwnerish;
+      const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
       return [{
         id: `movement-${movement.id}`,
         kind: staffCashIn ? "collection" : "settlement",
@@ -3675,6 +3790,7 @@ function TransactionsView({
         description: entry?.description ?? "",
         remark: movement.note ?? "",
         reason: null,
+        transferLines: [movementChain],
         pendingApproval: pendingMovement,
         icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
       }];
@@ -3682,7 +3798,7 @@ function TransactionsView({
     const agentRows = agentSettlements.flatMap((settlement): HistoryRecord[] => {
       if (settlement.status === "rejected") return [];
       const amount = numberValue(settlement.amount);
-      const visibleToOwner = owner && userMatches(settlement.agent_id);
+      const visibleToOwner = owner && (selectedOwnerSelf ? settlement.paid_by === profile.id : userMatches(settlement.agent_id));
       const visibleToAgent = !owner && settlement.agent_id === profile.id && userMatches(settlement.agent_id);
       if (!visibleToOwner && !visibleToAgent) return [];
       const settlementDate = indiaDateIso(settlement.created_at);
@@ -3784,7 +3900,6 @@ function TransactionsView({
             <label className="history-filter-chip history-user-select">
               <UserPlus size={20} />
               <select value={transactionProfileId} onChange={(event) => setTransactionProfileId(event.target.value)}>
-                <option value="all">{t("allStaff")}</option>
                 {selectableProfiles.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.id === profile.id ? `${item.full_name} (${t("self")})` : item.full_name}
@@ -5661,12 +5776,12 @@ function ActionSheet({
   const positiveOptions = paymentOptions.filter((option): option is { type: BusinessType; labelKey: string; icon: ReactNode } =>
     option.type !== "expense" && canUsePayment(option.type),
   );
-  const positiveSettlementOptions = moneyMovementProfiles.length > 0
+  const positiveSettlementOptions = owner && moneyMovementProfiles.length > 0
     ? [{ type: "receive_money" as const, labelKey: "receiveMoney", icon: <ArrowDown size={18} /> }]
     : [];
   const negativeOptions = [
     ...(canUsePayment("expense") ? [{ type: "expense" as const, labelKey: "expense", icon: <Banknote size={18} /> }] : []),
-    ...(moneyMovementProfiles.length > 0
+    ...(owner && moneyMovementProfiles.length > 0
       ? [{ type: "send_money" as const, labelKey: "sendMoney", icon: <ArrowUp size={18} /> }]
       : []),
     ...(owner && agentIncentiveBalances.length > 0
@@ -7107,7 +7222,7 @@ function SearchableProfileSelect({
   const visibleProfiles = profiles.filter((profile) => {
     if (profile.id === selectedProfileId) return true;
     if (!normalizedSearch) return true;
-    const role = t(roleLabelKeys[profile.role] ?? profile.role);
+    const role = profileRoleLabel(profile, t);
     return `${profile.full_name} ${profile.email} ${role}`.toLocaleLowerCase().includes(normalizedSearch);
   });
 
@@ -7137,7 +7252,7 @@ function SearchableProfileSelect({
         {includeEmptyOption ? <option value="">{t("selectUser")}</option> : null}
         {visibleProfiles.map((profile) => (
           <option key={profile.id} value={profile.id}>
-            {profile.full_name} · {t(roleLabelKeys[profile.role] ?? profile.role)}
+            {profile.full_name} · {profileRoleLabel(profile, t)}
           </option>
         ))}
         {visibleProfiles.length === 0 ? <option value="" disabled>{t("noRecords")}</option> : null}
@@ -7278,8 +7393,15 @@ function ClosingView({
   const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
   const visibleSummaries = owner
-    ? summaries.filter((summary) => summary.profile.active && summary.profile.role === "staff")
+    ? summaries
+        .filter((summary) => summary.profile.active && summary.profile.membership_role !== "sales_agent")
+        .sort((left, right) => {
+          const leftRank = left.profile.id === profile.id ? 0 : isOwnerish(left.profile.role) ? 1 : 2;
+          const rightRank = right.profile.id === profile.id ? 0 : isOwnerish(right.profile.role) ? 1 : 2;
+          return leftRank - rightRank || left.profile.full_name.localeCompare(right.profile.full_name);
+        })
     : summaries.filter((summary) => summary.profile.id === profile.id);
+  const visibleClosingProfileIds = new Set(visibleSummaries.map((summary) => summary.profile.id));
   const selectedReviewSummary = reviewProfileId ? visibleSummaries.find((summary) => summary.profile.id === reviewProfileId) ?? null : null;
   const pendingReviewSummary = (summary: UserClosingSummary) => {
     const pendingPayments = payments.filter(
@@ -7312,13 +7434,40 @@ function ClosingView({
         pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0),
     };
   };
+  const cumulativePendingPayments = payments.filter(
+    (payment) =>
+      visibleClosingProfileIds.has(paymentReviewProfileId(payment)) &&
+      payment.record_status === "active" &&
+      belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
+      isPendingReviewStatus(payment.approval_status),
+  );
+  const cumulativePendingExpenses = expenses.filter(
+    (expense) =>
+      visibleClosingProfileIds.has(expense.spent_by) &&
+      expense.record_status === "active" &&
+      belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
+      isPendingReviewStatus(expense.approval_status),
+  );
+  const cumulativePendingMovements = movements.filter(
+    (movement) =>
+      movement.status === "pending" &&
+      movement.type === "settlement" &&
+      indiaDateIso(movement.created_at) <= date &&
+      (visibleClosingProfileIds.has(movement.from_profile_id) || visibleClosingProfileIds.has(movement.to_profile_id ?? "")),
+  );
+  const cumulativePendingAmount =
+    cumulativePendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
+    cumulativePendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
+    cumulativePendingMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+  const cumulativePendingCount = cumulativePendingPayments.length + cumulativePendingExpenses.length + cumulativePendingMovements.length;
   const overview = {
+    opening: visibleSummaries.reduce((sum, summary) => sum + summary.opening, 0),
     collected: visibleSummaries.reduce((sum, summary) => sum + summary.collected, 0),
     expenses: visibleSummaries.reduce((sum, summary) => sum + summary.expenses, 0),
     received: visibleSummaries.reduce((sum, summary) => sum + summary.received, 0),
     sent: visibleSummaries.reduce((sum, summary) => sum + summary.sent, 0),
-    pendingAmount: visibleSummaries.reduce((sum, summary) => sum + pendingReviewSummary(summary).amount, 0),
-    pendingCount: visibleSummaries.reduce((sum, summary) => sum + pendingReviewSummary(summary).count, 0),
+    pendingAmount: cumulativePendingAmount,
+    pendingCount: cumulativePendingCount,
   };
   const overviewInCash = overview.collected + overview.received;
   const overviewInOnline = 0;
@@ -7345,6 +7494,10 @@ function ClosingView({
     <div className="view-stack closing-workspace">
       {owner ? (
         <div className="closing-overview-grid">
+          <article className="closing-overview-card opening">
+            <span>{t("openingBalance")}</span>
+            <strong>{formatMoney(overview.opening)}</strong>
+          </article>
           <article className="closing-overview-card positive">
             <span>{t("cashIn")}</span>
             <strong>{formatMoney(overviewInCash + overviewInOnline)}</strong>
@@ -7364,7 +7517,7 @@ function ClosingView({
 
       <section className="closing-ledger-section">
         <div className="closing-ledger-heading">
-          <h2>{t("staffDailyLedger")}</h2>
+          <h2>{t("userDailyLedger")}</h2>
           <span>{date}</span>
         </div>
         <div className="closing-user-grid">
@@ -7384,8 +7537,8 @@ function ClosingView({
                 <div className="closing-staff-head">
                   <span className="closing-avatar">{profileInitials(summary.profile)}</span>
                   <span>
-                    <strong>{summary.profile.full_name}</strong>
-                    <small>{t(roleLabelKeys[summary.profile.role] ?? summary.profile.role)}</small>
+                    <strong>{summary.profile.full_name}{summary.profile.id === profile.id ? ` (${t("self")})` : ""}</strong>
+                    <small>{profileRoleLabel(summary.profile, t)}</small>
                   </span>
                   <span className={pendingSummary.count > 0 ? "closing-status warning" : "closing-status"}>
                     {pendingSummary.count > 0 ? `${pendingSummary.count} ${t("pending")}` : t("active")}
@@ -7420,39 +7573,41 @@ function ClosingView({
                     <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
                       {t("reviewAndSettle")}
                     </button>
-                    <form
-                      className="closing-receive-form"
-                      onSubmit={(event) =>
-                        submitAndClose(event, settleCashAction, setNotice, startTransition, () =>
-                          setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: "" })),
-                        )
-                      }
-                    >
-                      <input type="hidden" name="settlement_direction" value="received_from_user" />
-                      <input type="hidden" name="profile_id" value={summary.profile.id} />
-                      <input type="hidden" name="settlement_date" value={date} />
-                      <label className="closing-receive-field">
-                        <span>{t("amountReceived")}</span>
-                        <input
-                          name="amount"
-                          type="number"
-                          min="1"
-                          max={cashToReceive || undefined}
-                          step="0.01"
-                          value={settlementEntryAmount}
-                          onChange={(event) =>
-                            setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: event.target.value }))
-                          }
-                          placeholder={cashToReceive ? String(cashToReceive) : "0"}
-                          disabled={receiveInputDisabled}
-                          required
-                        />
-                      </label>
-                      <button type="submit" disabled={!canReceiveCash}>
-                        <ShieldCheck size={18} />
-                        {t("received")}
-                      </button>
-                    </form>
+                    {summary.profile.id !== profile.id ? (
+                      <form
+                        className="closing-receive-form"
+                        onSubmit={(event) =>
+                          submitAndClose(event, settleCashAction, setNotice, startTransition, () =>
+                            setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: "" })),
+                          )
+                        }
+                      >
+                        <input type="hidden" name="settlement_direction" value="received_from_user" />
+                        <input type="hidden" name="profile_id" value={summary.profile.id} />
+                        <input type="hidden" name="settlement_date" value={date} />
+                        <label className="closing-receive-field">
+                          <span>{t("amountReceived")}</span>
+                          <input
+                            name="amount"
+                            type="number"
+                            min="1"
+                            max={cashToReceive || undefined}
+                            step="0.01"
+                            value={settlementEntryAmount}
+                            onChange={(event) =>
+                              setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: event.target.value }))
+                            }
+                            placeholder={cashToReceive ? String(cashToReceive) : "0"}
+                            disabled={receiveInputDisabled}
+                            required
+                          />
+                        </label>
+                        <button type="submit" disabled={!canReceiveCash}>
+                          <ShieldCheck size={18} />
+                          {t("received")}
+                        </button>
+                      </form>
+                    ) : null}
                   </div>
                 ) : null}
               </article>
@@ -7854,6 +8009,7 @@ function ProfileSettingsPanel({
 
 function SettingsView({
   owner,
+  canManageBusinessSettings,
   profile,
   profiles,
   rooms,
@@ -7866,6 +8022,7 @@ function SettingsView({
   startTransition,
 }: {
   owner: boolean;
+  canManageBusinessSettings: boolean;
   profile: Profile;
   profiles: Profile[];
   rooms: { id: string; room_number: string; label: string | null; active: boolean }[];
@@ -7921,7 +8078,7 @@ function SettingsView({
     <div className="max-w-5xl space-y-4">
       <ProfileSettingsPanel profile={profile} setNotice={setNotice} startTransition={startTransition} />
 
-      <SettingsBranch
+      {canManageBusinessSettings ? <SettingsBranch
         title="Business setup"
         subtitle={`${activeRoomsCount} rooms, ${activeCoursesCount} courses, ${activeReferralCount} coupons`}
         icon={<Settings size={20} />}
@@ -8077,19 +8234,23 @@ function SettingsView({
                       {referral.discount_type === "percentage" ? `${referral.discount_value}%` : formatMoney(referral.discount_value)} Discount / {referral.incentive_type === "percentage" ? `${referral.incentive_value}%` : formatMoney(referral.incentive_value)} Incentive
                     </p>
                   </div>
-                  <form
-                    className="shrink-0"
-                    onSubmit={(event) => submitWith(event, deleteReferralAction, setNotice, startTransition, false)}
-                  >
-                    <input type="hidden" name="id" value={referral.id} />
-                    <button
-                      type="submit"
-                      aria-label={`Delete ${referral.code}`}
-                      className="grid size-9 place-items-center rounded-lg border border-error/20 bg-transparent text-error hover:bg-error-container/50 cursor-pointer"
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`status-chip ${referral.active ? "status-approved" : "status-rejected"}`}>
+                      {referral.active ? t("active") : t("inactive")}
+                    </span>
+                    <form
+                      onSubmit={(event) => submitWith(event, deleteReferralAction, setNotice, startTransition, false)}
                     >
-                      <Trash2 size={16} />
-                    </button>
-                  </form>
+                      <input type="hidden" name="id" value={referral.id} />
+                      <button
+                        type="submit"
+                        aria-label={`Delete ${referral.code}`}
+                        className="grid size-9 place-items-center rounded-lg border border-error/20 bg-transparent text-error hover:bg-error-container/50 cursor-pointer"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </form>
+                  </div>
                 </div>
               ))}
               {referrals.length === 0 ? <p className="p-4 text-sm text-on-surface-variant">{t("noRecordsForFilter")}</p> : null}
@@ -8152,7 +8313,7 @@ function SettingsView({
             )}
           </SettingsBranch>
         </div>
-      </SettingsBranch>
+      </SettingsBranch> : null}
 
       <SettingsBranch
         title="Users"
