@@ -15,6 +15,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           queries: {
             staleTime: 20_000,
             gcTime: 1000 * 60 * 60 * 12,
+            networkMode: "offlineFirst",
             retry: 1,
             refetchOnWindowFocus: false,
           },
@@ -28,13 +29,13 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const persister = createSyncStoragePersister({
       storage: window.localStorage,
-      key: "lenden-query-cache-v2",
+      key: "lenden-query-cache-v3",
     });
 
     const [unsubscribe] = persistQueryClient({
       queryClient,
       persister,
-      buster: "lenden-library-students-v1",
+      buster: "lenden-multi-business-v1",
       dehydrateOptions: {
         shouldDehydrateQuery: (query) => persistedQueryRoots.has(String(query.queryKey[0])),
       },

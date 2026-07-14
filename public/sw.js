@@ -1,4 +1,4 @@
-const CACHE_NAME = "lenden-static-v2";
+const CACHE_NAME = "lenden-static-v3";
 const STATIC_ASSETS = [
   "/offline.html",
   "/icon-192.png",
@@ -6,6 +6,7 @@ const STATIC_ASSETS = [
   "/icon-maskable-512.png",
   "/apple-touch-icon.png",
   "/favicon.ico",
+  "/manifest.webmanifest",
 ];
 
 self.addEventListener("install", (event) => {
@@ -28,6 +29,23 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            if (response.ok) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            }
+            return response;
+          }),
+      ),
+    );
+    return;
+  }
 
   if (url.pathname.startsWith("/_next/")) {
     event.respondWith(fetch(request));

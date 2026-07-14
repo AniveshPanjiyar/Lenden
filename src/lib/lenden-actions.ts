@@ -2,6 +2,7 @@ import { indiaDateIso, todayIso } from "@/lib/constants";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 type AppRole = "admin" | "owner" | "staff" | "sales_agent";
+type BusinessRole = "primary_owner" | "co_owner" | "staff" | "sales_agent";
 type BusinessType = "guest_house" | "library" | "course" | "general";
 type PaymentMode = "cash" | "online" | "mixed";
 type SettlementDirection = "received_from_user" | "sent_to_user";
@@ -15,11 +16,15 @@ export type LendenActionProfile = {
   full_name: string;
   avatar_url?: string | null;
   role: AppRole;
+  businessId: string;
+  businessRole: BusinessRole;
+  accessMode: "member" | "support";
   active: boolean;
 };
 
 type ActionContext = {
   admin: SupabaseAdminClient;
+  authAdmin: SupabaseAdminClient;
   profile: LendenActionProfile;
   idempotencyKey?: string | null;
 };
@@ -278,18 +283,16 @@ function isIsoDate(value: string | null) {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
-function isOwnerish(role: string) {
-  return role === "admin" || role === "owner";
+function isBusinessOwner(role: BusinessRole) {
+  return role === "primary_owner" || role === "co_owner";
 }
 
-function isSalesAgent(role: string) {
+function isBusinessSalesAgent(role: BusinessRole) {
   return role === "sales_agent";
 }
 
-function requireOwnerish(role: string) {
-  if (!isOwnerish(role)) {
-    throw new Error("Only admin or owner can do this.");
-  }
+function requireBusinessOwner(role: BusinessRole) {
+  if (!isBusinessOwner(role)) throw new Error("Only a business owner can do this.");
 }
 
 function recordOwnerProfileId(recordType: "payment" | "expense", record: Record<string, string | number | null>) {
@@ -297,10 +300,10 @@ function recordOwnerProfileId(recordType: "payment" | "expense", record: Record<
 }
 
 async function profileIsOwnerish(admin: SupabaseAdminClient, profileId: string) {
-  const response = await admin.from("profiles").select("role").eq("id", profileId).single();
-  const profile = typedData<{ role: string }>(response);
-  if (response.error || !profile) throw new Error(response.error?.message ?? "Profile not found.");
-  return isOwnerish(profile.role);
+  const response = await admin.from("business_memberships").select("role").eq("profile_id", profileId).eq("status", "active").single();
+  const membership = typedData<{ role: BusinessRole }>(response);
+  if (response.error || !membership) throw new Error(response.error?.message ?? "Business membership not found.");
+  return isBusinessOwner(membership.role);
 }
 
 async function recordIsEffectivelyApproved(
@@ -313,47 +316,30 @@ async function recordIsEffectivelyApproved(
 }
 
 async function userPermissions(admin: SupabaseAdminClient, profileId: string) {
-  const permissionsResponse = await admin
-    .from("staff_permissions")
-    .select("permission")
-    .eq("profile_id", profileId);
+  const membershipResponse = await admin.from("business_memberships").select("id").eq("profile_id", profileId).eq("status", "active").single();
+  const membership = typedData<{ id: string }>(membershipResponse);
+  if (membershipResponse.error || !membership) return [];
+  const permissionsResponse = await admin.from("business_member_permissions").select("permission").eq("membership_id", membership.id);
   return typedDataArray<{ permission: string }>(permissionsResponse).map((item) => item.permission);
 }
 
+async function businessMember(admin: SupabaseAdminClient, profileId: string) {
+  const [membershipResponse, profileResponse] = await Promise.all([
+    admin.from("business_memberships").select("id,role,status").eq("profile_id", profileId).maybeSingle(),
+    admin.from("profiles").select("id,active,full_name").eq("id", profileId).maybeSingle(),
+  ]);
+  if (membershipResponse.error) throw new Error(membershipResponse.error.message);
+  if (profileResponse.error) throw new Error(profileResponse.error.message);
+  const membership = typedData<{ id: string; role: BusinessRole; status: string }>(membershipResponse);
+  const identity = typedData<{ id: string; active: boolean; full_name: string }>(profileResponse);
+  return membership && identity ? { ...identity, ...membership } : null;
+}
+
 async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile, business: BusinessType) {
-  if (isOwnerish(profile.role)) return true;
-  if (isSalesAgent(profile.role)) return false;
+  if (isBusinessOwner(profile.businessRole)) return true;
+  if (isBusinessSalesAgent(profile.businessRole)) return false;
   const permissions = await userPermissions(admin, profile.id);
   return permissions.includes(businessPermissions[business]);
-}
-
-async function countRows(admin: SupabaseAdminClient, table: string, column: string, value: string) {
-  const response = await admin
-    .from(table)
-    .select("id", { count: "exact", head: true })
-    .eq(column, value);
-  if (response.error) throw new Error(response.error.message);
-  return response.count ?? 0;
-}
-
-async function profileHasFinancialReferences(admin: SupabaseAdminClient, profileId: string) {
-  const counts = await Promise.all([
-    countRows(admin, "payments", "collected_by", profileId),
-    countRows(admin, "payments", "current_holder_id", profileId),
-    countRows(admin, "expenses", "spent_by", profileId),
-    countRows(admin, "money_movements", "from_profile_id", profileId),
-    countRows(admin, "money_movements", "to_profile_id", profileId),
-    countRows(admin, "money_movements", "requested_by", profileId),
-    countRows(admin, "money_movements", "responded_by", profileId),
-    countRows(admin, "ledger_entries", "account_profile_id", profileId),
-    countRows(admin, "ledger_entries", "created_by", profileId),
-    countRows(admin, "record_change_requests", "requested_by", profileId),
-    countRows(admin, "record_change_requests", "reviewed_by", profileId),
-    countRows(admin, "agent_settlements", "agent_id", profileId),
-    countRows(admin, "agent_settlements", "paid_by", profileId),
-    countRows(admin, "agent_settlements", "responded_by", profileId),
-  ]);
-  return counts.some((count) => count > 0);
 }
 
 async function requireLibraryCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile) {
@@ -523,11 +509,11 @@ async function finishIdempotentAction(
   if (error) throw new Error(error.message);
 }
 
-async function uploadReceipt(admin: SupabaseAdminClient, file: FormDataEntryValue | null, folder: string, requestKey: string) {
+async function uploadReceipt(admin: SupabaseAdminClient, businessId: string, file: FormDataEntryValue | null, folder: string, requestKey: string) {
   if (!(file instanceof File) || file.size === 0) return null;
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const path = `${folder}/${requestKey}-${safeName}`;
+  const path = `${businessId}/${folder}/${requestKey}/${safeName}`;
   const { error } = await admin.storage.from("receipts").upload(path, file, {
     contentType: file.type || "application/octet-stream",
     upsert: false,
@@ -543,6 +529,7 @@ async function uploadReceipt(admin: SupabaseAdminClient, file: FormDataEntryValu
 
 async function uploadProfilePhoto(
   admin: SupabaseAdminClient,
+  businessId: string,
   profileId: string,
   file: FormDataEntryValue | null,
   requestKey: string,
@@ -552,7 +539,7 @@ async function uploadProfilePhoto(
   if (file.size > 3 * 1024 * 1024) return fail("Profile photo must be 3 MB or smaller.");
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const path = `${profileId}/${requestKey}-${safeName}`;
+  const path = `${businessId}/profiles/${profileId}/${requestKey}-${safeName}`;
   const bucket = admin.storage.from("profile-photos");
   const { error } = await bucket.upload(path, file, {
     contentType: file.type || "image/jpeg",
@@ -560,15 +547,16 @@ async function uploadProfilePhoto(
   });
 
   if (error) {
-    if (isStorageDuplicateError(error)) return bucket.getPublicUrl(path).data.publicUrl;
+    if (isStorageDuplicateError(error)) return path;
     throw new Error(error.message);
   }
 
-  return bucket.getPublicUrl(path).data.publicUrl;
+  return path;
 }
 
 async function uploadLibraryStudentPhoto(
   admin: SupabaseAdminClient,
+  businessId: string,
   profileId: string,
   file: FormDataEntryValue | null,
   requestKey: string,
@@ -578,7 +566,7 @@ async function uploadLibraryStudentPhoto(
   if (file.size > 3 * 1024 * 1024) return fail("Student photo must be 3 MB or smaller.");
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const path = `${profileId}/${requestKey}-${safeName}`;
+  const path = `${businessId}/library-students/${requestKey}/profile-${profileId}-${safeName}`;
   const bucket = admin.storage.from("library-student-photos");
   const { error } = await bucket.upload(path, file, {
     contentType: file.type || "image/jpeg",
@@ -586,15 +574,16 @@ async function uploadLibraryStudentPhoto(
   });
 
   if (error) {
-    if (isStorageDuplicateError(error)) return bucket.getPublicUrl(path).data.publicUrl;
+    if (isStorageDuplicateError(error)) return path;
     throw new Error(error.message);
   }
 
-  return bucket.getPublicUrl(path).data.publicUrl;
+  return path;
 }
 
 async function uploadLibraryStudentAadharPhoto(
   admin: SupabaseAdminClient,
+  businessId: string,
   profileId: string,
   file: FormDataEntryValue | null,
   requestKey: string,
@@ -605,7 +594,7 @@ async function uploadLibraryStudentAadharPhoto(
   if (file.size > 3 * 1024 * 1024) return fail(`Aadhar ${side} photo must be 3 MB or smaller.`);
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const path = `${profileId}/aadhar-${side}-${requestKey}-${safeName}`;
+  const path = `${businessId}/library-students/${requestKey}/aadhar-${side}-${profileId}-${safeName}`;
   const bucket = admin.storage.from("library-student-photos");
   const { error } = await bucket.upload(path, file, {
     contentType: file.type || "image/jpeg",
@@ -613,11 +602,11 @@ async function uploadLibraryStudentAadharPhoto(
   });
 
   if (error) {
-    if (isStorageDuplicateError(error)) return bucket.getPublicUrl(path).data.publicUrl;
+    if (isStorageDuplicateError(error)) return path;
     throw new Error(error.message);
   }
 
-  return bucket.getPublicUrl(path).data.publicUrl;
+  return path;
 }
 
 async function ensureLedgerEntry(
@@ -742,13 +731,13 @@ async function profileCashBalanceAt(admin: SupabaseAdminClient, profileId: strin
 
 async function ownerRecipientIds(admin: SupabaseAdminClient, excludeId?: string) {
   const response = await admin
-    .from("profiles")
-    .select("id")
-    .in("role", ["admin", "owner"])
-    .eq("active", true);
+    .from("business_memberships")
+    .select("profile_id")
+    .in("role", ["primary_owner", "co_owner"])
+    .eq("status", "active");
 
-  return typedDataArray<{ id: string }>(response)
-    .map((profile) => profile.id)
+  return typedDataArray<{ profile_id: string }>(response)
+    .map((membership) => membership.profile_id)
     .filter((id) => id !== excludeId);
 }
 
@@ -982,7 +971,7 @@ async function upsertLibraryStudentEvent(
       created_by: params.createdBy,
       metadata: params.metadata ?? {},
     },
-    { onConflict: "event_key" },
+    { onConflict: "business_id,event_key" },
   );
   if (isMissingLibraryStudentSchemaError(error)) return;
   if (error) throw new Error(error.message);
@@ -1154,7 +1143,7 @@ const handlers = {
       updates.full_name = fullName;
     }
 
-    const uploadedPhoto = await uploadProfilePhoto(admin, profile.id, formData.get("photo"), requestKey);
+    const uploadedPhoto = await uploadProfilePhoto(admin, profile.businessId, profile.id, formData.get("photo"), requestKey);
     if (uploadedPhoto && typeof uploadedPhoto === "object" && "ok" in uploadedPhoto && !uploadedPhoto.ok) return uploadedPhoto;
     if (typeof uploadedPhoto === "string") {
       updates.avatar_url = uploadedPhoto;
@@ -1168,90 +1157,136 @@ const handlers = {
     return ok("Profile updated.");
   }),
 
-  createStaff: withErrors("Could not create staff.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireOwnerish(profile.role);
+  createStaff: withErrors("Could not create staff.", async (formData, { admin, authAdmin, profile, idempotencyKey }) => {
+    requireBusinessOwner(profile.businessRole);
 
     const email = asString(formData, "email")?.toLowerCase();
     const password = asString(formData, "password");
     const fullName = asString(formData, "full_name");
-    const role = (asString(formData, "role") ?? "staff") as AppRole;
-    if (!["admin", "owner", "staff", "sales_agent"].includes(role)) {
+    const role = asString(formData, "role") ?? "staff";
+    if (!["owner", "staff", "sales_agent"].includes(role)) {
       return fail("Choose a valid role.");
     }
-    const permissions = role === "staff" ? permissionsFromForm(formData) : [];
+    const membershipRole: BusinessRole = role === "owner" ? "co_owner" : role as "staff" | "sales_agent";
+    if (membershipRole === "co_owner" && profile.businessRole !== "primary_owner" && profile.accessMode !== "support") {
+      return fail("Only the primary owner can add another owner.");
+    }
+    const permissions = membershipRole === "staff" ? permissionsFromForm(formData) : [];
 
-    if (!email || !password || !fullName || password.length < 8) {
+    if (!email || !fullName) {
+      return fail("Name and email are required.");
+    }
+    if (password && password.length < 8) {
       return fail("Name, email, and an 8-character password are required.");
     }
 
-    const existingProfileResponse = await admin
+    const existingProfileResponse = await authAdmin
       .from("profiles")
-      .select("id")
+      .select("id,full_name")
       .ilike("email", email)
       .maybeSingle();
     if (existingProfileResponse.error) throw new Error(existingProfileResponse.error.message);
-    if (existingProfileResponse.data) return ok("Staff account already exists.");
+    let targetProfileId = typedData<{ id: string }>(existingProfileResponse)?.id ?? null;
 
-    const { data, error } = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name: fullName },
-    });
-    const user = data.user;
-    if (error || !user) throw new Error(error?.message ?? "Could not create user.");
+    if (!targetProfileId) {
+      if (!password) return fail("Enter a temporary password with at least 8 characters.");
+      const { data, error } = await authAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { full_name: fullName },
+      });
+      const user = data.user;
+      if (error || !user) throw new Error(error?.message ?? "Could not create user.");
+      targetProfileId = user.id;
 
-    const { error: profileError } = await admin.from("profiles").insert({
-      id: user.id,
-      email,
-      full_name: fullName,
-      role,
-      active: true,
-    });
-    if (profileError) throw new Error(profileError.message);
+      const { error: profileError } = await authAdmin.from("profiles").insert({
+        id: user.id,
+        email,
+        full_name: fullName,
+        role: "staff",
+        platform_role: "user",
+        must_change_password: true,
+        active: true,
+      });
+      if (profileError) throw new Error(profileError.message);
+    }
+
+    const existingMembership = await admin
+      .from("business_memberships")
+      .select("id,status")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", targetProfileId)
+      .maybeSingle();
+    if (existingMembership.error) throw new Error(existingMembership.error.message);
+    if (existingMembership.data) return fail("This user already belongs to this business.");
+
+    const membershipResponse = await admin.from("business_memberships").insert({
+      business_id: profile.businessId,
+      profile_id: targetProfileId,
+      role: membershipRole,
+      status: "active",
+      invited_by: profile.id,
+      joined_at: new Date().toISOString(),
+    }).select("id").single();
+    const membership = typedData<{ id: string }>(membershipResponse);
+    if (membershipResponse.error || !membership) throw new Error(membershipResponse.error?.message ?? "Could not add business member.");
 
     if (permissions.length > 0) {
-      const { error: permissionError } = await admin.from("staff_permissions").insert(
+      const { error: permissionError } = await admin.from("business_member_permissions").insert(
         permissions.map((permission) => ({
-          profile_id: user.id,
+          membership_id: membership.id,
           permission,
+          granted_by: profile.id,
         })),
       );
       if (permissionError) throw new Error(permissionError.message);
     }
 
     await createNotifications(admin, {
-      recipientIds: [user.id],
+      recipientIds: [targetProfileId],
       actorId: profile.id,
       title: "Account created",
       body: `${profile.full_name} created your Lenden account.`,
       category: "settings",
       tone: "success",
-      eventKey: `staff-created:${user.id}:${idempotencyKey ?? "existing"}`,
-      metadata: { role },
+      eventKey: `member-created:${targetProfileId}:${idempotencyKey ?? "existing"}`,
+      metadata: { role: membershipRole },
     });
 
-    return ok("Staff account created.");
+    await admin.from("audit_events").insert({
+      business_id: profile.businessId,
+      actor_profile_id: profile.id,
+      event_type: "membership_created",
+      entity_type: "business_membership",
+      entity_id: membership.id,
+      after_data: { profile_id: targetProfileId, role: membershipRole },
+    });
+
+    return ok(existingProfileResponse.data
+      ? "Existing user added to this business. Their current Lenden password was not changed."
+      : "Account created with a temporary password.");
   }),
 
   saveStaffPermissions: withErrors("Could not save permissions.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
 
     const profileId = asString(formData, "profile_id");
     if (!profileId) return fail("Missing staff profile.");
 
-    const targetProfileResponse = await admin.from("profiles").select("role").eq("id", profileId).single();
-    const targetProfile = typedData<{ role: AppRole }>(targetProfileResponse);
-    if (targetProfileResponse.error || !targetProfile) {
-      throw new Error(targetProfileResponse.error?.message ?? "Staff profile not found.");
+    const targetMembershipResponse = await admin.from("business_memberships").select("id,role").eq("profile_id", profileId).single();
+    const targetMembership = typedData<{ id: string; role: BusinessRole }>(targetMembershipResponse);
+    if (targetMembershipResponse.error || !targetMembership) {
+      throw new Error(targetMembershipResponse.error?.message ?? "Staff membership not found.");
     }
 
-    await admin.from("staff_permissions").delete().eq("profile_id", profileId);
-    const permissions = targetProfile.role === "staff" ? permissionsFromForm(formData) : [];
+    if (targetMembership.role !== "staff") return fail("Granular permissions apply only to staff memberships.");
+    await admin.from("business_member_permissions").delete().eq("membership_id", targetMembership.id);
+    const permissions = permissionsFromForm(formData);
 
     if (permissions.length > 0) {
-      const { error } = await admin.from("staff_permissions").insert(
-        permissions.map((permission) => ({ profile_id: profileId, permission })),
+      const { error } = await admin.from("business_member_permissions").insert(
+        permissions.map((permission) => ({ membership_id: targetMembership.id, permission, granted_by: profile.id })),
       );
       if (error) throw new Error(error.message);
     }
@@ -1266,19 +1301,53 @@ const handlers = {
       eventKey: `staff-permissions:${profileId}:${idempotencyKey ?? permissions.sort().join(",")}`,
       metadata: { permission_count: permissions.length },
     });
+    await admin.from("audit_events").insert({
+      business_id: profile.businessId,
+      actor_profile_id: profile.id,
+      event_type: "staff_permissions_updated",
+      entity_type: "business_membership",
+      entity_id: targetMembership.id,
+      after_data: { permissions },
+    });
 
-    return ok(targetProfile.role === "sales_agent" ? "Sales agents are read-only; permissions cleared." : "Permissions saved.");
+    return ok("Permissions saved.");
   }),
 
-  changeUserPassword: withErrors("Could not change password.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireOwnerish(profile.role);
+  changeUserPassword: withErrors("Could not change password.", async (formData, { admin, authAdmin, profile, idempotencyKey }) => {
+    if (profile.businessRole !== "primary_owner" || profile.accessMode !== "member") {
+      return fail("Only the primary owner can reset member passwords.");
+    }
 
     const profileId = asString(formData, "profile_id");
     const password = asString(formData, "new_password");
     if (!profileId) return fail("Choose a user.");
     if (!password || password.length < 8) return fail("Enter a password with at least 8 characters.");
+    if (profileId === profile.id) return fail("Change your own password from your account security page.");
 
-    const targetProfileResponse = await admin
+    const targetMembershipResponse = await admin
+      .from("business_memberships")
+      .select("id,role,status")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", profileId)
+      .single();
+    const targetMembership = typedData<{ id: string; role: BusinessRole; status: string }>(targetMembershipResponse);
+    if (targetMembershipResponse.error || !targetMembership) {
+      throw new Error(targetMembershipResponse.error?.message ?? "Business membership not found.");
+    }
+    if (targetMembership.role === "primary_owner") return fail("The primary owner must manage their own password.");
+    if (targetMembership.status !== "active") return fail("Reactivate this member before resetting their password.");
+
+    const activeMembershipsResponse = await authAdmin
+      .from("business_memberships")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_id", profileId)
+      .eq("status", "active");
+    if (activeMembershipsResponse.error) throw new Error(activeMembershipsResponse.error.message);
+    if ((activeMembershipsResponse.count ?? 0) !== 1) {
+      return fail("This user belongs to more than one business. A platform administrator must reset their global login password.");
+    }
+
+    const targetProfileResponse = await authAdmin
       .from("profiles")
       .select("id, full_name, active")
       .eq("id", profileId)
@@ -1289,8 +1358,9 @@ const handlers = {
     }
     if (!targetProfile.active) return fail("Reactivate this user before changing their password.");
 
-    const { error } = await admin.auth.admin.updateUserById(profileId, { password });
+    const { error } = await authAdmin.auth.admin.updateUserById(profileId, { password });
     if (error) throw new Error(error.message);
+    await authAdmin.from("profiles").update({ must_change_password: true }).eq("id", profileId);
 
     await createNotifications(admin, {
       recipientIds: profileId === profile.id ? [] : [profileId],
@@ -1303,60 +1373,48 @@ const handlers = {
       metadata: {},
     });
 
-    return ok(`Password changed for ${targetProfile.full_name}.`);
+    await admin.from("audit_events").insert({
+      business_id: profile.businessId,
+      actor_profile_id: profile.id,
+      event_type: "member_password_reset",
+      entity_type: "business_membership",
+      entity_id: targetMembership.id,
+      after_data: { profile_id: profileId, role: targetMembership.role, must_change_password: true },
+    });
+
+    return ok(`Temporary password set for ${targetProfile.full_name}. They must replace it after login.`);
   }),
 
-  deleteUser: withErrors("Could not delete user.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+  deleteUser: withErrors("Could not remove user.", async (formData, { admin, profile }) => {
+    requireBusinessOwner(profile.businessRole);
 
     const profileId = asString(formData, "profile_id");
     if (!profileId) return fail("Choose a user.");
     if (profileId === profile.id) return fail("You cannot delete your own account while logged in.");
 
-    const targetProfileResponse = await admin
-      .from("profiles")
-      .select("id, full_name, role")
-      .eq("id", profileId)
-      .single();
-    const targetProfile = typedData<{ id: string; full_name: string; role: AppRole }>(targetProfileResponse);
-    if (targetProfileResponse.error || !targetProfile) {
-      throw new Error(targetProfileResponse.error?.message ?? "User profile not found.");
-    }
+    const targetMembershipResponse = await admin.from("business_memberships").select("id,role,status").eq("profile_id", profileId).single();
+    const targetMembership = typedData<{ id: string; role: BusinessRole; status: string }>(targetMembershipResponse);
+    if (targetMembershipResponse.error || !targetMembership) throw new Error(targetMembershipResponse.error?.message ?? "Membership not found.");
+    if (targetMembership.role === "primary_owner") return fail("Transfer primary ownership before removing this owner.");
+    if (profile.businessRole === "co_owner" && targetMembership.role === "co_owner") return fail("Co-owners cannot remove other owners.");
 
-    if (isOwnerish(targetProfile.role)) {
-      const ownerProfilesResponse = await admin
-        .from("profiles")
-        .select("id, active")
-        .in("role", ["admin", "owner"]);
-      if (ownerProfilesResponse.error) throw new Error(ownerProfilesResponse.error.message);
-      const activeOwnerProfiles = typedDataArray<{ id: string; active: boolean }>(ownerProfilesResponse)
-        .filter((item) => item.active && item.id !== profileId);
-      if (activeOwnerProfiles.length === 0) return fail("At least one active admin or owner must remain.");
-    }
-
-    await admin.from("staff_permissions").delete().eq("profile_id", profileId);
-
-    if (await profileHasFinancialReferences(admin, profileId)) {
-      const { error: profileError } = await admin
-        .from("profiles")
-        .update({ active: false })
-        .eq("id", profileId);
-      if (profileError) throw new Error(profileError.message);
-
-      const { error: authError } = await admin.auth.admin.updateUserById(profileId, { ban_duration: "876000h" });
-      if (authError) throw new Error(authError.message);
-
-      return ok(`${targetProfile.full_name} has transaction history, so the account was deactivated and login access was blocked.`);
-    }
-
-    const { error } = await admin.auth.admin.deleteUser(profileId);
+    const { error } = await admin.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", targetMembership.id);
     if (error) throw new Error(error.message);
+    await admin.from("audit_events").insert({
+      business_id: profile.businessId,
+      actor_profile_id: profile.id,
+      event_type: "membership_suspended",
+      entity_type: "business_membership",
+      entity_id: targetMembership.id,
+      before_data: { status: targetMembership.status },
+      after_data: { status: "suspended" },
+    });
 
-    return ok(`${targetProfile.full_name} deleted.`);
+    return ok("Business access suspended. Historical records were preserved.");
   }),
 
   createPayment: withErrors("Could not save payment.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -1365,7 +1423,7 @@ const handlers = {
     const amount = asNumber(formData, "amount") ?? asNumber(formData, "paid_amount") ?? 0;
     const paymentDate = asString(formData, "payment_date") ?? todayIso();
     const requestKey = idempotencyKey ?? crypto.randomUUID();
-    const ownerCreated = isOwnerish(profile.role);
+    const ownerCreated = isBusinessOwner(profile.businessRole);
 
     if (!business || amount <= 0) return fail("Business type and amount are required.");
     const hasAccess = await hasBusinessCollectionAccess(admin, profile, business);
@@ -1414,8 +1472,8 @@ const handlers = {
 
     if (business === "library" || business === "course") {
       const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
-        uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
-        uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+        uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+        uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
       ]);
       if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
         return uploadedAadharPhoto;
@@ -1465,7 +1523,7 @@ const handlers = {
         const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
         if (!parsedStudent.ok) return parsedStudent.result;
         libraryStudentFields = parsedStudent.fields;
-        const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey);
+        const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey);
         if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
           return uploadedStudentPhoto;
         }
@@ -1488,7 +1546,7 @@ const handlers = {
     }
 
     const [photoPath, roomResponse, referralResponse] = await Promise.all([
-      uploadReceipt(admin, formData.get("photo"), "payments", requestKey),
+      uploadReceipt(admin, profile.businessId, formData.get("photo"), "payments", requestKey),
       roomId
         ? admin.from("rooms").select("room_number").eq("id", roomId).single()
         : Promise.resolve({ data: null, error: null } satisfies QueryResponse<unknown>),
@@ -1724,9 +1782,9 @@ const handlers = {
     const requestKey = idempotencyKey ?? crypto.randomUUID();
 
     const [uploadedStudentPhoto, uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
-      uploadLibraryStudentPhoto(admin, profile.id, formData.get("student_photo"), requestKey),
-      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
-      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+      uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey),
+      uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+      uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
     ]);
     if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
       return uploadedStudentPhoto;
@@ -1822,8 +1880,8 @@ const handlers = {
 
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
-      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
-      uploadLibraryStudentAadharPhoto(admin, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
+      uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
+      uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
     ]);
     if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
       return uploadedAadharPhoto;
@@ -1876,17 +1934,13 @@ const handlers = {
   }),
 
   createExpense: withErrors("Could not save expense.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
-    const permissionsResponse = await admin
-      .from("staff_permissions")
-      .select("permission")
-      .eq("profile_id", profile.id);
-    const permissions = typedDataArray<{ permission: string }>(permissionsResponse);
+    const permissions = await userPermissions(admin, profile.id);
 
-    if (!isOwnerish(profile.role) && !permissions.some((item) => item.permission === "add_expense")) {
+    if (!isBusinessOwner(profile.businessRole) && !permissions.includes("add_expense")) {
       return fail("You do not have access to add expenses.");
     }
 
@@ -1895,7 +1949,7 @@ const handlers = {
     const expenseDate = asString(formData, "expense_date") ?? todayIso();
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
-    const ownerCreated = isOwnerish(profile.role);
+    const ownerCreated = isBusinessOwner(profile.businessRole);
     if (amount <= 0 || !description || description.length < 3) {
       return fail("Expense amount and a 3-character description are required.");
     }
@@ -1910,7 +1964,7 @@ const handlers = {
     );
     if (existingExpense) return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
 
-    const photoPath = await uploadReceipt(admin, formData.get("photo"), "expenses", requestKey);
+    const photoPath = await uploadReceipt(admin, profile.businessId, formData.get("photo"), "expenses", requestKey);
     const expenseResult = await admin
       .from("expenses")
       .insert({
@@ -1971,7 +2025,7 @@ const handlers = {
   }),
 
   approveRecord: withErrors("Approval failed.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const recordType = asString(formData, "record_type");
     const id = asString(formData, "id");
     const decision = asString(formData, "decision") as ApprovalDecision;
@@ -2179,7 +2233,7 @@ const handlers = {
   }),
 
   cancelRecord: withErrors("Could not cancel record.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const recordType = asString(formData, "record_type");
     const id = asString(formData, "id");
     if (!id || !recordType) return fail("Missing cancel details.");
@@ -2229,7 +2283,7 @@ const handlers = {
   }),
 
   updateRecord: withErrors("Could not update record.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2244,14 +2298,14 @@ const handlers = {
     if (recordResponse.error || !record) throw new Error(recordResponse.error?.message ?? "Record not found.");
 
     const recordOwnerId = recordOwnerProfileId(recordType, record);
-    if (recordOwnerId !== profile.id && !isOwnerish(profile.role)) {
+    if (recordOwnerId !== profile.id && !isBusinessOwner(profile.businessRole)) {
       return fail("You can edit only your own transactions.");
     }
     const effectivelyApproved = await recordIsEffectivelyApproved(admin, recordType, record);
     if (String(record.record_status ?? "active") !== "active") {
       return fail("Only active transactions can be edited.");
     }
-    if (effectivelyApproved && !isOwnerish(profile.role)) {
+    if (effectivelyApproved && !isBusinessOwner(profile.businessRole)) {
       return fail("Only an owner can edit an approved transaction.");
     }
     if (recordType === "payment") {
@@ -2338,7 +2392,7 @@ const handlers = {
   }),
 
   requestCancel: withErrors("Could not request cancel.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2416,7 +2470,7 @@ const handlers = {
   }),
 
   reviewChangeRequest: withErrors("Could not review request.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const requestId = asString(formData, "request_id");
     const decision = asString(formData, "decision") as Decision;
     if (!requestId || !decision) return fail("Missing review details.");
@@ -2484,7 +2538,7 @@ const handlers = {
   }),
 
   requestPaymentTransfer: withErrors("Could not request transaction transfer.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2506,37 +2560,26 @@ const handlers = {
     }
     const transactionOrCashApproved = paymentComponentDecision(payment, "cash") === "approved" ||
       await recordIsEffectivelyApproved(admin, "payment", payment);
-    if (transactionOrCashApproved && !isOwnerish(profile.role)) {
+    if (transactionOrCashApproved && !isBusinessOwner(profile.businessRole)) {
       return fail("Only an owner can transfer an approved transaction.");
     }
     const currentHolderId = String(payment.current_holder_id ?? payment.collected_by ?? "");
     if (!currentHolderId) return fail("This transaction does not have a current cash holder.");
-    if (!isOwnerish(profile.role) && currentHolderId !== profile.id) {
+    if (!isBusinessOwner(profile.businessRole) && currentHolderId !== profile.id) {
       return fail("Only the current cash holder can transfer this transaction.");
     }
 
     const cashAmount = paymentCashCollection(payment);
     if (cashAmount <= 0) return fail("Only cash or mixed transactions with cash can be transferred.");
 
-    const recipientResponse = await admin
-      .from("profiles")
-      .select("id, active, role, full_name")
-      .eq("id", toProfileId)
-      .single();
-    const recipient = typedData<{ id: string; active: boolean; role: string; full_name: string }>(recipientResponse);
-    if (recipientResponse.error || !recipient) throw new Error(recipientResponse.error?.message ?? "Receiving staff not found.");
-    if (!recipient.active || recipient.role !== "staff") {
+    const recipient = await businessMember(admin, toProfileId);
+    if (!recipient) throw new Error("Receiving staff not found.");
+    if (!recipient.active || recipient.status !== "active" || recipient.role !== "staff") {
       return fail("Choose an active staff member.");
     }
 
-    const permissionResponse = await admin
-      .from("staff_permissions")
-      .select("permission")
-      .eq("profile_id", toProfileId)
-      .eq("permission", requiredPermission)
-      .maybeSingle();
-    if (permissionResponse.error) throw new Error(permissionResponse.error.message);
-    if (!permissionResponse.data) {
+    const recipientPermissions = await userPermissions(admin, toProfileId);
+    if (!recipientPermissions.includes(requiredPermission)) {
       return fail("Receiving staff does not have permission for this collection category.");
     }
 
@@ -2601,7 +2644,7 @@ const handlers = {
   }),
 
   respondPaymentTransfer: withErrors("Could not update transaction transfer.", async (formData, { admin, profile }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2711,20 +2754,15 @@ const handlers = {
   }),
 
   requestTransfer: withErrors("Could not request transfer.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const toProfileId = asString(formData, "to_profile_id");
     const amount = asNumber(formData, "amount") ?? 0;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     if (!toProfileId || amount <= 0) return fail("Choose staff and amount.");
     if (toProfileId === profile.id) return fail("Choose another staff member.");
 
-    const recipientResponse = await admin
-      .from("profiles")
-      .select("id, active, role")
-      .eq("id", toProfileId)
-      .single();
-    const recipient = typedData<{ id: string; active: boolean; role: string }>(recipientResponse);
-    if (!recipient?.active || recipient.role !== "staff") {
+    const recipient = await businessMember(admin, toProfileId);
+    if (!recipient?.active || recipient.status !== "active" || recipient.role !== "staff") {
       return fail("Choose an active staff member.");
     }
 
@@ -2770,7 +2808,7 @@ const handlers = {
   }),
 
   respondTransfer: withErrors("Could not update transfer.", async (formData, { admin, profile }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2869,7 +2907,7 @@ const handlers = {
   }),
 
   settleCash: withErrors("Could not settle cash.", async (formData, { admin, profile, idempotencyKey }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -2886,21 +2924,16 @@ const handlers = {
       return fail("Choose whether money was received or sent.");
     }
 
-    const selectedProfileResponse = await admin
-      .from("profiles")
-      .select("id, role, active, full_name")
-      .eq("id", counterpartyProfileId)
-      .single();
-    const selectedProfile = typedData<{ id: string; role: string; active: boolean; full_name: string }>(selectedProfileResponse);
-    if (!selectedProfile?.active) {
+    const selectedProfile = await businessMember(admin, counterpartyProfileId);
+    if (!selectedProfile?.active || selectedProfile.status !== "active") {
       return fail("Choose an active user.");
     }
-    if (isSalesAgent(selectedProfile.role) && !isOwnerish(profile.role)) {
+    if (isBusinessSalesAgent(selectedProfile.role) && !isBusinessOwner(profile.businessRole)) {
       return fail("Only an owner can send or receive money with a sales agent.");
     }
 
-    const actorOwnerish = isOwnerish(profile.role);
-    const counterpartyOwnerish = isOwnerish(selectedProfile.role);
+    const actorOwnerish = isBusinessOwner(profile.businessRole);
+    const counterpartyOwnerish = isBusinessOwner(selectedProfile.role);
     if (!actorOwnerish && !counterpartyOwnerish) {
       return fail("Staff can only send or receive money with an owner.");
     }
@@ -3010,7 +3043,7 @@ const handlers = {
   }),
 
   createAgentSettlement: withErrors("Could not record incentive payout.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const agentId = asString(formData, "agent_id");
     const amount = asNumber(formData, "amount") ?? 0;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
@@ -3081,7 +3114,7 @@ const handlers = {
   }),
 
   respondAgentSettlement: withErrors("Could not update incentive payout.", async (formData, { admin, profile }) => {
-    if (isSalesAgent(profile.role)) {
+    if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
 
@@ -3178,20 +3211,21 @@ const handlers = {
   }),
 
   saveRoom: withErrors("Could not save room.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const roomNumber = asString(formData, "room_number");
     if (!roomNumber) return fail("Room number is required.");
     const { error } = await admin.from("rooms").upsert({
+      business_id: profile.businessId,
       room_number: roomNumber,
       label: asString(formData, "label"),
       active: !asBool(formData, "inactive"),
-    });
+    }, { onConflict: "business_id,room_number" });
     if (error) throw new Error(error.message);
     return ok("Room saved.");
   }),
 
   deleteRoom: withErrors("Could not delete room.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const id = asString(formData, "id");
     if (!id) return fail("Room is required.");
     const { error } = await admin.from("rooms").delete().eq("id", id);
@@ -3200,17 +3234,17 @@ const handlers = {
   }),
 
   saveCourse: withErrors("Could not save course.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const name = asString(formData, "name");
     const kind = asString(formData, "kind") ?? "main";
     if (!name) return fail("Course name is required.");
-    const { error } = await admin.from("courses").upsert({ name, kind, active: true }, { onConflict: "name,kind" });
+    const { error } = await admin.from("courses").upsert({ business_id: profile.businessId, name, kind, active: true }, { onConflict: "business_id,name,kind" });
     if (error) throw new Error(error.message);
     return ok("Course saved.");
   }),
 
   deleteCourse: withErrors("Could not delete course.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const id = asString(formData, "id");
     if (!id) return fail("Course is required.");
     const { error } = await admin.from("courses").delete().eq("id", id);
@@ -3219,10 +3253,11 @@ const handlers = {
   }),
 
   saveReferral: withErrors("Could not save referral.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const code = asString(formData, "code")?.toUpperCase();
     if (!code) return fail("Referral code is required.");
     const { error } = await admin.from("referral_codes").upsert({
+      business_id: profile.businessId,
       code,
       agent_id: asString(formData, "agent_id"),
       discount_amount: asNumber(formData, "discount_value") ?? asNumber(formData, "discount_amount") ?? 0,
@@ -3231,13 +3266,13 @@ const handlers = {
       incentive_type: asString(formData, "incentive_type") ?? "amount",
       incentive_value: asNumber(formData, "incentive_value") ?? 0,
       active: true,
-    });
+    }, { onConflict: "business_id,code" });
     if (error) throw new Error(error.message);
     return ok("Referral code saved.");
   }),
 
   deleteReferral: withErrors("Could not delete referral code.", async (formData, { admin, profile }) => {
-    requireOwnerish(profile.role);
+    requireBusinessOwner(profile.businessRole);
     const id = asString(formData, "id");
     if (!id) return fail("Referral code is required.");
     const { error } = await admin.from("referral_codes").delete().eq("id", id);

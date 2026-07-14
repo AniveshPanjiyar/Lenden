@@ -68,6 +68,7 @@ import {
   updateProfileAction,
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
 import type { AgentSettlement, AppData, AppNotification, AppRole, ApprovalStatus, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
@@ -499,6 +500,7 @@ const messages: Record<Language, Record<string, string>> = {
     saving: "Saving...",
     savingChanges: "Saving changes...",
     savingTransaction: "Saving transaction...",
+    refreshingData: "Refreshing app data...",
     updatingAppData: "Updating app data...",
     updatingTransactionList: "Updating transaction list...",
     select: "Select",
@@ -849,6 +851,7 @@ const messages: Record<Language, Record<string, string>> = {
     saving: "सेव हो रहा है...",
     savingChanges: "बदलाव सेव हो रहे हैं...",
     savingTransaction: "लेनदेन सेव हो रहा है...",
+    refreshingData: "ऐप डेटा रीफ्रेश हो रहा है...",
     updatingAppData: "ऐप डेटा अपडेट हो रहा है...",
     updatingTransactionList: "लेनदेन सूची अपडेट हो रही है...",
     select: "चुनें",
@@ -1005,6 +1008,14 @@ function labelForStatus(status: string, t: (key: string) => string) {
 const actionStartedEvent = "lenden:action-started";
 const actionEndedEvent = "lenden:action-ended";
 const mutationCommittedEvent = "lenden:mutation-committed";
+
+function appIsOffline() {
+  return typeof document !== "undefined" && document.body.dataset.lendenNetwork === "offline";
+}
+
+function showOfflineDialog() {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(showOfflineDialogEvent));
+}
 
 const transactionRefreshActions = new Set<ClientAction>([
   approveRecordAction,
@@ -1173,6 +1184,11 @@ function submitWith(
     setNotice({ ok: false, message: formValidationMessage(form) });
     return;
   }
+  if (appIsOffline()) {
+    setNotice({ ok: false, message: "You are offline. Reconnect before submitting this action." });
+    showOfflineDialog();
+    return;
+  }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
   const formData = formDataWithIdempotencyKey(form);
   const refreshDetail = mutationRefreshDetail(action, formData);
@@ -1216,6 +1232,11 @@ function submitAndClose(
   const form = event.currentTarget;
   if (!form.checkValidity()) {
     setNotice({ ok: false, message: formValidationMessage(form) });
+    return;
+  }
+  if (appIsOffline()) {
+    setNotice({ ok: false, message: "You are offline. Reconnect before submitting this action." });
+    showOfflineDialog();
     return;
   }
   if (form.dataset.submitting === "true" || documentAppBusy()) return;
@@ -1478,6 +1499,7 @@ function roleBadge(profile: Profile) {
 
 function bootstrapFromAppData(data: AppData): BootstrapPayload {
   return {
+    businessContext: data.businessContext,
     profile: data.profile,
     permissions: data.permissions,
     allPermissions: data.allPermissions,
@@ -1532,21 +1554,31 @@ function LogoutButton({ label }: { label: string }) {
   return (
     <>
       {pending ? (
-        <div className="toast-stack" aria-live="polite" aria-atomic="true">
-          <div className="toast toast-info">
+        <div className="action-lock" role="status" aria-live="polite" aria-label={`${label}...`}>
+          <div className="action-lock-card">
             <span className="toast-icon saving-dot" />
             <strong>{label}...</strong>
           </div>
         </div>
       ) : null}
-      <button className="ghost-button full" type="submit" disabled={pending}>
-        {pending ? `${label}...` : label}
+      <button
+        className="app-logout-button flex items-center gap-3 px-4 py-3 text-error m-2 p-2 rounded-lg hover:bg-error-container/50 transition-all duration-200 w-full text-left cursor-pointer border-0"
+        type="submit"
+        disabled={pending}
+        onClick={() => {
+          window.localStorage.removeItem("lenden-query-cache-v3");
+        }}
+      >
+        <LogOut size={20} />
+        <span className="font-body text-body-md">{pending ? `${label}...` : label}</span>
       </button>
     </>
   );
 }
 
 export function AppShell({ data, initialViewState }: { data: AppData; initialViewState: AppViewState }) {
+  const businessId = data.businessContext.business.id;
+  const cacheScope = `${data.profile.id}:${businessId}`;
   const initialUserIsSalesAgent = isSalesAgent(data.profile.role);
   const initialTab = initialUserIsSalesAgent && (initialViewState.tab === "closing" || initialViewState.tab === "settings" || initialViewState.tab === "library_students")
     ? "home"
@@ -1582,13 +1614,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     [dateRange],
   );
   const bootstrapQuery = useQuery({
-    queryKey: ["bootstrap"],
-    queryFn: () => fetchJson<BootstrapPayload>("/api/app/bootstrap"),
+    queryKey: ["bootstrap", cacheScope],
+    queryFn: () => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`),
     initialData: () => bootstrapFromAppData(data),
   });
   const dashboardQuery = useQuery({
-    queryKey: ["dashboard", dashboardParams],
-    queryFn: () => fetchJson<DashboardPayload>(`/api/app/dashboard?${dashboardParams}`),
+    queryKey: ["dashboard", cacheScope, dashboardParams],
+    queryFn: () => fetchJson<DashboardPayload>(`/api/businesses/${businessId}/dashboard?${dashboardParams}`),
     initialData: dashboardParams === initialDashboardParams ? () => initialDashboardData : undefined,
     placeholderData: (previousDashboard) => previousDashboard,
   });
@@ -1601,7 +1633,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const unreadNotifications = notifications.filter((notification) => !notification.read_at).length;
   const currentUserIsSalesAgent = isSalesAgent(appData.profile.role);
   const owner = isOwnerish(appData.profile.role);
-  const permissions = activePermissions(appData.profile.role, appData.permissions);
+  const supportMode = appData.businessContext.accessMode === "support";
+  const enabledModules = new Set(appData.businessContext.enabledModules);
+  const permissions = activePermissions(appData.profile.role, appData.permissions).filter((permission) => {
+    const moduleType = (Object.keys(businessPermissions) as BusinessType[]).find((key) => businessPermissions[key] === permission);
+    return !moduleType || enabledModules.has(moduleType);
+  });
   const canViewLibraryStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_library"));
   const canViewStudentRecords = canViewLibraryStudents || (!currentUserIsSalesAgent && permissions.includes("collect_course"));
   const visibleTabItems = currentUserIsSalesAgent
@@ -1626,6 +1663,18 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, []);
 
   useEffect(() => {
+    const expiresAt = data.businessContext.supportSession?.expires_at;
+    if (data.businessContext.accessMode !== "support" || !expiresAt) return;
+    const remaining = new Date(expiresAt).getTime() - Date.now();
+    if (remaining <= 0) {
+      window.location.replace("/admin/businesses");
+      return;
+    }
+    const timeout = window.setTimeout(() => window.location.replace("/admin/businesses"), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [data.businessContext.accessMode, data.businessContext.supportSession?.expires_at]);
+
+  useEffect(() => {
     function startBusy(event: Event) {
       const detail = (event as CustomEvent<MutationRefreshDetail>).detail;
       setDocumentAppBusy(true);
@@ -1646,7 +1695,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
           refreshes.push(
             queryClient.refetchQueries({
-              queryKey: ["dashboard", dashboardParams],
+              queryKey: ["dashboard", cacheScope, dashboardParams],
               exact: true,
               type: "active",
             }),
@@ -1655,14 +1704,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         if (detail.scope === "bootstrap") {
           refreshes.push(
             queryClient.refetchQueries({
-              queryKey: ["bootstrap"],
+              queryKey: ["bootstrap", cacheScope],
               exact: true,
               type: "active",
             }),
           );
         }
         if (detail.scope === "dashboard-library") {
-          refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history"] }));
+          refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }));
         }
         await Promise.all(refreshes);
       } finally {
@@ -1688,7 +1737,41 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       window.removeEventListener(mutationCommittedEvent, commitMutation);
       setDocumentAppBusy(false);
     };
-  }, [dashboardParams, queryClient]);
+  }, [cacheScope, dashboardParams, queryClient]);
+
+  useEffect(() => {
+    async function handlePullRefresh(event: Event) {
+      event.preventDefault();
+      if (appIsOffline()) {
+        pushNotice({ ok: false, message: "You are offline. Saved data is still available." });
+        showOfflineDialog();
+        window.dispatchEvent(new CustomEvent(pullRefreshCompleteEvent));
+        return;
+      }
+
+      setDocumentAppBusy(true);
+      setActionBusyMessageKey("refreshingData");
+      try {
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ["bootstrap", cacheScope], exact: true, type: "active" }),
+          queryClient.refetchQueries({ queryKey: ["dashboard", cacheScope, dashboardParams], exact: true, type: "active" }),
+          queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }),
+        ]);
+      } catch (error) {
+        pushNotice({
+          ok: false,
+          message: error instanceof Error ? error.message : "Could not refresh app data.",
+        });
+      } finally {
+        setActionBusyMessageKey(null);
+        setDocumentAppBusy(false);
+        window.dispatchEvent(new CustomEvent(pullRefreshCompleteEvent));
+      }
+    }
+
+    window.addEventListener(pullRefreshEvent, handlePullRefresh);
+    return () => window.removeEventListener(pullRefreshEvent, handlePullRefresh);
+  }, [cacheScope, dashboardParams, pushNotice, queryClient]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1755,22 +1838,33 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   function toggleNotifications() {
-    setNotificationsOpen((open) => {
-      const nextOpen = !open;
-      if (nextOpen && unreadNotifications > 0) {
-        const readAt = new Date().toISOString();
-        setNotificationOverrides((current) =>
-          (current ?? appData.notifications).map((notification) =>
-            notification.read_at ? notification : { ...notification, read_at: readAt },
-          ),
-        );
-        startTransition(async () => {
-          const result = await markNotificationsReadAction();
-          if (!result.ok) pushNotice(result);
+    const nextOpen = !notificationsOpen;
+    setNotificationsOpen(nextOpen);
+    if (!nextOpen || unreadNotifications === 0) return;
+
+    const notificationsBeforeRead = notifications;
+    const readAt = new Date().toISOString();
+    setNotificationOverrides(
+      notifications.map((notification) =>
+        notification.read_at ? notification : { ...notification, read_at: readAt },
+      ),
+    );
+
+    if (appIsOffline()) return;
+    void markNotificationsReadAction()
+      .then((result) => {
+        if (!result.ok) {
+          setNotificationOverrides(notificationsBeforeRead);
+          pushNotice(result);
+        }
+      })
+      .catch((error) => {
+        setNotificationOverrides(notificationsBeforeRead);
+        pushNotice({
+          ok: false,
+          message: error instanceof Error ? error.message : "Could not update notifications.",
         });
-      }
-      return nextOpen;
-    });
+      });
   }
 
   const agentReferralCodes = appData.referrals.filter(
@@ -1970,9 +2064,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
   const activeDateRangeOptions = dateRangeOptions;
   const showSharedDateRange = tab === "home" || tab === "payments";
-  const showQuickActions = tab === "home" && !currentUserIsSalesAgent;
+  const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
   const showPageHeadingRow = tab !== "library_students";
-  const busyMessage = actionBusyMessageKey ? t(actionBusyMessageKey) : pending ? t("saving") : null;
+  const busyMessage = actionBusyMessageKey
+    ? t(actionBusyMessageKey)
+    : pending
+      ? t("saving")
+      : bootstrapQuery.isFetching || dashboardQuery.isFetching
+        ? t("refreshingData")
+        : null;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
@@ -1988,8 +2088,26 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
           <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
         </div>
-        <div className="app-header-title font-headline text-headline-sm font-semibold tracking-tight text-primary dark:text-inverse-primary hidden md:block">
-          {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
+        <div className="app-header-title hidden md:flex items-center gap-3">
+          <label className="sr-only" htmlFor="business-switcher">Business</label>
+          <select
+            id="business-switcher"
+            className="business-switcher"
+            value={appData.businessContext.business.slug}
+            onChange={(event) => {
+              window.location.assign(`/b/${encodeURIComponent(event.target.value)}`);
+            }}
+          >
+            {appData.businessContext.availableBusinesses.map(({ business }) => (
+              <option key={business.id} value={business.slug}>{business.name}</option>
+            ))}
+            {supportMode ? (
+              <option value={appData.businessContext.business.slug}>{appData.businessContext.business.name} · Support</option>
+            ) : null}
+          </select>
+          <span className="font-headline text-headline-sm font-semibold tracking-tight text-primary dark:text-inverse-primary">
+            {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
+          </span>
         </div>
         <div className="app-header-actions flex items-center gap-3">
           <button
@@ -2009,6 +2127,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         </div>
       </header>
 
+      {supportMode && appData.businessContext.supportSession ? (
+        <div className="support-mode-banner" role="status">
+          <strong>Audited support mode</strong>
+          <span>Configuration access only · Financial changes are blocked · Expires {new Date(appData.businessContext.supportSession.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          <span>Reason: {appData.businessContext.supportSession.reason}</span>
+        </div>
+      ) : null}
+
       <div className="app-shell-body flex flex-1 overflow-hidden relative w-full max-w-7xl mx-auto">
         {sidebarOpen && (
           <button
@@ -2024,7 +2150,20 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             <div>
               <h2 className="font-headline text-lg font-bold text-primary">{appData.profile.full_name}</h2>
               <p className="font-body text-body-md text-on-surface-variant">{t(roleLabelKeys[appData.profile.role] ?? appData.profile.role)}</p>
+              <p className="app-sidebar-business-name">{appData.businessContext.business.name}</p>
             </div>
+          </div>
+          <div className="px-6 mb-4 md:hidden">
+            <label className="sr-only" htmlFor="mobile-business-switcher">Business</label>
+            <select
+              id="mobile-business-switcher"
+              className="business-switcher w-full"
+              value={appData.businessContext.business.slug}
+              onChange={(event) => window.location.assign(`/b/${encodeURIComponent(event.target.value)}`)}
+            >
+              {appData.businessContext.availableBusinesses.map(({ business }) => <option key={business.id} value={business.slug}>{business.name}</option>)}
+              {supportMode ? <option value={appData.businessContext.business.slug}>{appData.businessContext.business.name} · Support</option> : null}
+            </select>
           </div>
           <nav className="app-sidebar-nav flex-1 px-4 space-y-1" aria-label={t("main")}>
             {visibleTabItems.map((item) => (
@@ -2039,12 +2178,25 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               </button>
             ))}
           </nav>
+          {(owner || supportMode) ? (
+            <div className="px-4">
+              <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={`/b/${appData.businessContext.business.slug}/manage`}>
+                <Settings size={20} />
+                <span>Business access</span>
+              </a>
+            </div>
+          ) : null}
           <div className="px-4 mt-auto">
-            <form action={logoutAction}>
-              <button className="app-logout-button flex items-center gap-3 px-4 py-3 text-error m-2 p-2 rounded-lg hover:bg-error-container/50 transition-all duration-200 w-full text-left cursor-pointer border-0" type="submit">
-                <LogOut size={20} />
-                <span className="font-body text-body-md">{t("logout")}</span>
-              </button>
+            <form
+              action={logoutAction}
+              onSubmit={(event) => {
+                if (!appIsOffline()) return;
+                event.preventDefault();
+                pushNotice({ ok: false, message: "You are offline. Reconnect before logging out." });
+                showOfflineDialog();
+              }}
+            >
+              <LogoutButton label={t("logout")} />
             </form>
           </div>
         </aside>
@@ -2188,6 +2340,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
             {tab === "library_students" && canViewStudentRecords ? (
               <LibraryStudentsView
+                businessId={businessId}
+                cacheScope={cacheScope}
                 students={appData.libraryStudents}
                 payments={appData.studentPayments ?? appData.payments}
                 courses={appData.courses}
@@ -4846,6 +5000,8 @@ function compareCourseStudentRecordsByExpiry(a: CourseStudentRecord, b: CourseSt
 }
 
 function LibraryStudentsView({
+  businessId,
+  cacheScope,
   students,
   payments,
   courses,
@@ -4853,6 +5009,8 @@ function LibraryStudentsView({
   setNotice,
   startTransition,
 }: {
+  businessId: string;
+  cacheScope: string;
   students: LibraryStudent[];
   payments: Payment[];
   courses: Course[];
@@ -4941,8 +5099,8 @@ function LibraryStudentsView({
     setStudentInactiveEdit(false);
   };
   const historyQuery = useQuery({
-    queryKey: ["library-student-history", baseSelectedStudent?.id ?? ""],
-    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/app/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments`),
+    queryKey: ["library-student-history", cacheScope, baseSelectedStudent?.id ?? ""],
+    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/businesses/${businessId}/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments`),
     enabled: Boolean(baseSelectedStudent?.id),
     placeholderData: (previousHistory) => previousHistory,
   });
@@ -7727,6 +7885,7 @@ function SettingsView({
   const activeRoomsCount = rooms.filter((room) => room.active).length;
   const activeCoursesCount = courses.filter((course) => course.active).length;
   const activeReferralCount = referrals.filter((referral) => referral.active).length;
+  const primaryOwner = profile.membership_role === "primary_owner";
 
   if (!owner) {
     return (
@@ -8002,7 +8161,13 @@ function SettingsView({
       >
         <div className="space-y-6">
           <section>
-            <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("addStaff")}</h2>
+            <h2 className="font-headline text-xl font-bold text-primary mb-1">Add user account</h2>
+            <p className="text-sm text-on-surface-variant mb-4">
+              {primaryOwner
+                ? "Create co-owner, staff, or sales-agent access. The account is active immediately; no invitation email is sent."
+                : "Create staff or sales-agent access. The account is active immediately; no invitation email is sent."}
+              {" "}If the email already has a Lenden account, its existing password is kept.
+            </p>
             <form
               className="form-grid three"
               onSubmit={(event) => submitWith(event, createStaffAction, setNotice, startTransition)}
@@ -8016,7 +8181,7 @@ function SettingsView({
                 <input name="email" type="email" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
               </label>
               <label className="text-xs text-on-surface-variant font-bold">
-                {t("password")}
+                Temporary password
                 <input name="password" type="password" minLength={8} required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
               </label>
               <label className="text-xs text-on-surface-variant font-bold">
@@ -8029,8 +8194,7 @@ function SettingsView({
                 >
                   <option value="staff">{t("staff")}</option>
                   <option value="sales_agent">{t("salesAgent")}</option>
-                  <option value="owner">{t("owner")}</option>
-                  <option value="admin">{t("admin")}</option>
+                  {primaryOwner ? <option value="owner">Co-owner</option> : null}
                 </select>
               </label>
               {newUserRole === "staff" ? (
@@ -8053,8 +8217,18 @@ function SettingsView({
           <section>
             <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("allAccounts")}</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {profiles.map((item) => (
-                <article
+              {profiles.map((item) => {
+                const canResetPassword = primaryOwner
+                  && item.id !== profile.id
+                  && item.membership_role !== "primary_owner"
+                  && item.membership_status === "active"
+                  && item.active;
+                const canRemoveAccess = item.id !== profile.id
+                  && item.membership_role !== "primary_owner"
+                  && (primaryOwner || item.membership_role === "staff" || item.membership_role === "sales_agent");
+
+                return (
+                  <article
                   className="p-4 bg-surface rounded-xl border border-outline-variant/30 flex flex-col gap-4"
                   key={item.id}
                 >
@@ -8063,7 +8237,11 @@ function SettingsView({
                       <strong className="text-on-surface text-base block truncate">{item.full_name}</strong>
                       <span className="text-xs text-on-surface-variant block truncate">{item.email}</span>
                       <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">
-                        {t(roleLabelKeys[item.role] ?? item.role)}
+                        {item.membership_role === "primary_owner"
+                          ? "Primary owner"
+                          : item.membership_role === "co_owner"
+                            ? "Co-owner"
+                            : t(roleLabelKeys[item.role] ?? item.role)}
                       </span>
                     </div>
                     <span className={`status-chip ${item.active ? "status-approved" : "status-rejected"} shrink-0`}>
@@ -8071,32 +8249,32 @@ function SettingsView({
                     </span>
                   </div>
 
-                  <form
-                    className="grid gap-2"
-                    onSubmit={(event) => submitWith(event, changeUserPasswordAction, setNotice, startTransition)}
-                  >
-                    <input type="hidden" name="profile_id" value={item.id} />
-                    <label className="text-xs text-on-surface-variant font-bold">
-                      {t("newPassword")}
-                      <input
-                        name="new_password"
-                        type="password"
-                        minLength={8}
-                        required
-                        disabled={!item.active}
-                        className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
-                      />
-                    </label>
-                    <button
-                      type="submit"
-                      disabled={!item.active}
-                      className="py-2 bg-primary-container text-on-primary-container font-bold rounded-lg hover:bg-primary-container/80 transition-colors border-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 text-sm"
+                  {canResetPassword ? (
+                    <form
+                      className="grid gap-2"
+                      onSubmit={(event) => submitWith(event, changeUserPasswordAction, setNotice, startTransition)}
                     >
-                      {t("changePassword")}
-                    </button>
-                  </form>
+                      <input type="hidden" name="profile_id" value={item.id} />
+                      <label className="text-xs text-on-surface-variant font-bold">
+                        New temporary password
+                        <input
+                          name="new_password"
+                          type="password"
+                          minLength={8}
+                          required
+                          className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        className="py-2 bg-primary-container text-on-primary-container font-bold rounded-lg hover:bg-primary-container/80 transition-colors border-0 cursor-pointer text-sm"
+                      >
+                        Reset password
+                      </button>
+                    </form>
+                  ) : null}
 
-                  <form
+                  {canRemoveAccess ? <form
                     onSubmit={(event) => {
                       if (!window.confirm(`Delete ${item.full_name}? This will deactivate the account when history must be preserved.`)) {
                         event.preventDefault();
@@ -8108,15 +8286,15 @@ function SettingsView({
                     <input type="hidden" name="profile_id" value={item.id} />
                     <button
                       type="submit"
-                      disabled={item.id === profile.id}
                       className="w-full py-2 border border-error/30 bg-transparent text-error font-bold rounded-lg hover:bg-error-container/50 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 text-sm flex items-center justify-center gap-2"
                     >
                       <Trash2 size={16} />
                       {t("deleteUser")}
                     </button>
-                  </form>
+                  </form> : null}
                 </article>
-              ))}
+                );
+              })}
             </div>
           </section>
 

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { profileForBusiness, resolveBusinessContextFromRequest } from "@/lib/tenancy";
 import {
   executeLendenAction,
   type LendenActionAdminClient,
@@ -14,6 +15,25 @@ type ActionResult = { ok: true; message?: string } | { ok: false; message: strin
 
 const appPath = "/";
 const salesAgentAllowedActions = new Set<LendenActionName>(["markNotificationsRead", "updateProfile"]);
+const financialActions = new Set<LendenActionName>([
+  "createPayment",
+  "saveLibraryStudent",
+  "setLibraryStudentStatus",
+  "saveCourseStudent",
+  "createExpense",
+  "approveRecord",
+  "cancelRecord",
+  "updateRecord",
+  "requestCancel",
+  "reviewChangeRequest",
+  "requestPaymentTransfer",
+  "respondPaymentTransfer",
+  "requestTransfer",
+  "respondTransfer",
+  "settleCash",
+  "createAgentSettlement",
+  "respondAgentSettlement",
+]);
 
 function asString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -21,27 +41,14 @@ function asString(formData: FormData, key: string) {
 }
 
 async function requireUserProfile() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    redirect("/login");
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
-  if (profileError || !profile || !profile.active) {
-    redirect("/login?error=inactive");
-  }
-
-  return profile as LendenActionProfile;
+  const { identity, context } = await resolveBusinessContextFromRequest();
+  const role = context.membership?.role ?? "co_owner";
+  return {
+    ...profileForBusiness(identity, role),
+    businessId: context.business.id,
+    businessRole: role,
+    accessMode: context.accessMode,
+  } as LendenActionProfile;
 }
 
 function logActionTiming(action: LendenActionName, profile: LendenActionProfile | null, startedAt: number, result: ActionResult) {
@@ -61,13 +68,20 @@ async function invokeLendenAction(action: LendenActionName, formData = new FormD
   let profile: LendenActionProfile | null = null;
   try {
     profile = await requireUserProfile();
-    if (profile.role === "sales_agent" && !salesAgentAllowedActions.has(action)) {
+    if (profile.businessRole === "sales_agent" && !salesAgentAllowedActions.has(action)) {
       const result = { ok: false, message: "Sales agents have read-only incentive access." } satisfies ActionResult;
       logActionTiming(action, profile, startedAt, result);
       return result;
     }
-    const admin = createAdminClient() as unknown as LendenActionAdminClient;
-    const result = await executeLendenAction(action, formData, { admin, profile });
+    if (profile.accessMode === "support" && financialActions.has(action)) {
+      const result = { ok: false, message: "Financial changes are blocked in audited support mode." } satisfies ActionResult;
+      logActionTiming(action, profile, startedAt, result);
+      return result;
+    }
+    const dataClient = await createClient({ businessId: profile.businessId });
+    const admin = dataClient as unknown as LendenActionAdminClient;
+    const authAdmin = createAdminClient() as unknown as LendenActionAdminClient;
+    const result = await executeLendenAction(action, formData, { admin, authAdmin, profile });
     logActionTiming(action, profile, startedAt, result);
     return result;
   } catch (error) {
@@ -84,24 +98,43 @@ export async function loginAction(formData: FormData) {
   const supabase = await createClient();
   const email = asString(formData, "email");
   const password = asString(formData, "password");
+  const requestedNext = asString(formData, "next");
+  const nextPath = requestedNext?.startsWith("/") && !requestedNext.startsWith("//") ? requestedNext : "/";
 
   if (!email || !password) {
-    redirect("/login?error=missing");
+    redirect(`/login?error=missing&next=${encodeURIComponent(nextPath)}`);
   }
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect(`/login?error=${encodeURIComponent(error.message)}&next=${encodeURIComponent(nextPath)}`);
   }
 
   revalidatePath(appPath);
-  redirect(appPath);
+  redirect(nextPath);
 }
 
 export async function logoutAction() {
   const supabase = await createClient();
   await supabase.auth.signOut();
   redirect("/login");
+}
+
+export async function changeOwnPasswordAction(formData: FormData) {
+  const supabase = await createClient();
+  const password = asString(formData, "password");
+  const confirmation = asString(formData, "password_confirmation");
+  if (!password || password.length < 8 || password !== confirmation) {
+    redirect("/change-password?error=Passwords%20must%20match%20and%20contain%20at%20least%208%20characters.");
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) redirect(`/change-password?error=${encodeURIComponent(error.message)}`);
+  await createAdminClient().from("profiles").update({ must_change_password: false }).eq("id", user.id);
+  redirect("/");
 }
 
 export async function setupOwnerAction(formData: FormData): Promise<ActionResult> {
@@ -144,9 +177,27 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
       email,
       full_name: fullName,
       role: "admin",
+      platform_role: "platform_admin",
       active: true,
     });
     if (profileError) throw new Error(profileError.message);
+
+    const { data: legacyBusiness, error: businessError } = await admin
+      .from("businesses")
+      .select("id")
+      .eq("slug", "lenden-legacy")
+      .single();
+    if (businessError || !legacyBusiness) throw new Error(businessError?.message ?? "Legacy business is missing.");
+
+    const { error: membershipError } = await admin.from("business_memberships").insert({
+      business_id: legacyBusiness.id,
+      profile_id: data.user.id,
+      role: "primary_owner",
+      status: "active",
+      joined_at: new Date().toISOString(),
+    });
+    if (membershipError) throw new Error(membershipError.message);
+    await admin.from("profiles").update({ last_business_id: legacyBusiness.id }).eq("id", data.user.id);
 
     revalidatePath(appPath);
     return { ok: true, message: "Owner created. You can log in now." };

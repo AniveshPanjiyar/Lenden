@@ -4,7 +4,7 @@ import { LoginForm } from "@/app/login/login-form";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
   const params = await searchParams;
 
@@ -21,7 +21,7 @@ export default async function LoginPage({
           </div>
         </div>
         {params.error ? <p className="form-error">{decodeURIComponent(params.error)}</p> : null}
-        <LoginForm />
+        <LoginForm nextPath={params.next} />
       </section>
     </main>
   );

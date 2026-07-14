@@ -2,6 +2,7 @@
 
 import { useFormStatus } from "react-dom";
 import { loginAction } from "@/app/actions";
+import { showOfflineDialogEvent } from "@/lib/client-events";
 
 function LoginSubmit() {
   const { pending } = useFormStatus();
@@ -23,9 +24,18 @@ function LoginSubmit() {
   );
 }
 
-export function LoginForm() {
+export function LoginForm({ nextPath }: { nextPath?: string }) {
   return (
-    <form action={loginAction} className="form-grid">
+    <form
+      action={loginAction}
+      className="form-grid"
+      onSubmit={(event) => {
+        if (document.body.dataset.lendenNetwork !== "offline") return;
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent(showOfflineDialogEvent));
+      }}
+    >
+      {nextPath ? <input type="hidden" name="next" value={nextPath} /> : null}
       <label>
         Email
         <input name="email" type="email" autoComplete="email" required />

@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation";
-import { businessPermissions, isOwnerish, isSalesAgent } from "@/lib/constants";
+import { businessPermissions } from "@/lib/constants";
 import { createClient } from "@/lib/supabase/server";
+import { isBusinessOwner, isBusinessSalesAgent, profileForBusiness } from "@/lib/tenancy";
 import { rangeForPreset, type AppViewState } from "@/lib/view-state";
 import type {
   AppData,
@@ -9,6 +9,9 @@ import type {
   ApprovalStatus,
   BootstrapPayload,
   BusinessType,
+  BusinessContext,
+  BusinessMembership,
+  BusinessRole,
   ChangeRequest,
   ClosingSummary,
   Course,
@@ -56,6 +59,26 @@ function normalizeLibraryRollNumber(value: string | null | undefined) {
 
 function virtualLibraryStudentId(rollNumber: string) {
   return `${virtualLibraryStudentPrefix}${encodeURIComponent(rollNumber)}`;
+}
+
+function storageObjectPath(value: string, bucket: string) {
+  if (!/^https?:\/\//i.test(value)) return value;
+  try {
+    const pathname = decodeURIComponent(new URL(value).pathname);
+    const markers = [`/storage/v1/object/public/${bucket}/`, `/storage/v1/object/sign/${bucket}/`];
+    const marker = markers.find((item) => pathname.includes(item));
+    return marker ? pathname.split(marker)[1] ?? value : value;
+  } catch {
+    return value;
+  }
+}
+
+async function signedStorageUrl(supabase: SupabaseServerClient, bucket: string, value: string | null) {
+  if (!value || value.startsWith("data:")) return value;
+  const path = storageObjectPath(value, bucket);
+  if (/^https?:\/\//i.test(path)) return value;
+  const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+  return data?.signedUrl ?? null;
 }
 
 function libraryPaymentSubscriptionSortKey(payment: Payment) {
@@ -133,6 +156,7 @@ function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: 
     rollKeys.add(rollNumber);
     rows.set(virtualLibraryStudentId(rollNumber), {
       id: virtualLibraryStudentId(rollNumber),
+      business_id: payment.business_id,
       roll_number: rollNumber,
       phone_number: null,
       address: null,
@@ -166,19 +190,6 @@ function mergeLibraryStudentsFromPayments(students: LibraryStudent[], payments: 
   return [...rows.values()];
 }
 
-async function requireUserAndProfile(supabase: SupabaseServerClient) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-  if (!profile) redirect("/setup");
-
-  return { user, profile: profile as Profile };
-}
-
 function visibleData<T>(data: T[] | null, predicate: (item: T) => boolean) {
   return (data ?? []).filter(predicate);
 }
@@ -189,9 +200,9 @@ function mergeById<T extends { id: string }>(...groups: T[][]) {
   return [...rows.values()];
 }
 
-function accessibleBusinessTypes(role: string, permissions: string[]) {
-  if (isSalesAgent(role)) return new Set<BusinessType>();
-  if (isOwnerish(role)) return new Set(Object.keys(businessPermissions) as BusinessType[]);
+function accessibleBusinessTypes(role: BusinessRole | null | undefined, permissions: string[]) {
+  if (isBusinessSalesAgent(role)) return new Set<BusinessType>();
+  if (isBusinessOwner(role)) return new Set(Object.keys(businessPermissions) as BusinessType[]);
 
   return new Set(
     (Object.keys(businessPermissions) as BusinessType[]).filter((business) =>
@@ -204,33 +215,55 @@ async function loadBootstrap(
   supabase: SupabaseServerClient,
   userId: string,
   profile: Profile,
+  businessContext: BusinessContext,
 ): Promise<BootstrapPayload> {
-  const [permissionsResult, profilesResult, roomsResult, coursesResult, referralsResult] = await Promise.all([
-    supabase.from("staff_permissions").select("*"),
-    supabase.from("profiles").select("*").order("full_name"),
-    supabase.from("rooms").select("*").order("room_number"),
-    supabase.from("courses").select("*").order("kind").order("name"),
-    supabase.from("referral_codes").select("*").order("code"),
+  const [membershipsResult, profilesResult, memberPermissionsResult, roomsResult, coursesResult, referralsResult] = await Promise.all([
+    supabase.from("business_memberships").select("id,business_id,profile_id,role,status,joined_at").eq("business_id", businessContext.business.id),
+    supabase.from("profiles").select("id,email,full_name,avatar_url,platform_role,account_status,must_change_password,last_business_id,active").order("full_name"),
+    supabase.from("business_member_permissions").select("membership_id,permission"),
+    supabase.from("rooms").select("*").eq("business_id", businessContext.business.id).order("room_number"),
+    supabase.from("courses").select("*").eq("business_id", businessContext.business.id).order("kind").order("name"),
+    supabase.from("referral_codes").select("*").eq("business_id", businessContext.business.id).order("code"),
   ]);
 
-  const allPermissions = (permissionsResult.data ?? []) as StaffPermission[];
-  const allProfiles = (profilesResult.data ?? []) as Profile[];
+  const memberships = (membershipsResult.data ?? []) as BusinessMembership[];
+  const membershipById = new Map(memberships.map((membership) => [membership.id, membership]));
+  const membershipByProfile = new Map(memberships.map((membership) => [membership.profile_id, membership]));
+  const allPermissions = (memberPermissionsResult.data ?? []).flatMap((permission) => {
+    const membership = membershipById.get(String(permission.membership_id));
+    return membership ? [{ profile_id: membership.profile_id, permission: String(permission.permission) }] : [];
+  }) satisfies StaffPermission[];
+  const rawProfiles = (profilesResult.data ?? []).flatMap((identity) => {
+    const membership = membershipByProfile.get(String(identity.id));
+    if (!membership) return [];
+    return [profileForBusiness(identity as never, membership.role, membership.status)];
+  });
+  const allProfiles = await Promise.all(rawProfiles.map(async (item) => ({
+    ...item,
+    avatar_url: await signedStorageUrl(supabase, "profile-photos", item.avatar_url),
+  })));
+  const signedProfile = {
+    ...profile,
+    avatar_url: await signedStorageUrl(supabase, "profile-photos", profile.avatar_url),
+  };
   const allReferrals = (referralsResult.data ?? []) as ReferralCode[];
-  const salesAgent = isSalesAgent(profile.role);
+  const salesAgent = isBusinessSalesAgent(businessContext.membership?.role);
+  const owner = businessContext.accessMode === "support" || isBusinessOwner(businessContext.membership?.role);
 
   return {
-    profile,
+    businessContext,
+    profile: signedProfile,
     permissions:
       allPermissions
         .filter((permission) => permission.profile_id === userId && !salesAgent)
         .map((permission) => permission.permission) ?? [],
     allPermissions: salesAgent ? [] : allPermissions,
     profiles: salesAgent
-      ? allProfiles.filter((item) => item.id === userId || isOwnerish(item.role))
+      ? allProfiles.filter((item) => item.id === userId || isBusinessOwner(item.membership_role))
       : allProfiles,
     rooms: salesAgent ? [] : (roomsResult.data ?? []) as Room[],
     courses: salesAgent ? [] : (coursesResult.data ?? []) as Course[],
-    referrals: isOwnerish(profile.role)
+    referrals: owner
       ? allReferrals
       : salesAgent
         ? allReferrals.filter((referral) => referral.agent_id === userId)
@@ -244,9 +277,9 @@ async function loadDashboard(
   bootstrap: BootstrapPayload,
   viewState?: AppViewState,
 ): Promise<DashboardPayload> {
-  const ownerish = isOwnerish(bootstrap.profile.role);
-  const salesAgent = isSalesAgent(bootstrap.profile.role);
-  const accessibleBusinesses = accessibleBusinessTypes(bootstrap.profile.role, bootstrap.permissions);
+  const ownerish = bootstrap.businessContext.accessMode === "support" || isBusinessOwner(bootstrap.businessContext.membership?.role);
+  const salesAgent = isBusinessSalesAgent(bootstrap.businessContext.membership?.role);
+  const accessibleBusinesses = accessibleBusinessTypes(bootstrap.businessContext.membership?.role, bootstrap.permissions);
   const canViewLibraryStudents = !salesAgent && (ownerish || accessibleBusinesses.has("library"));
   const canViewStudentPayments = !salesAgent && (ownerish || accessibleBusinesses.has("library") || accessibleBusinesses.has("course"));
   const range = viewState?.dateRange ?? rangeForPreset("today");
@@ -255,6 +288,7 @@ async function loadDashboard(
   const paymentsQuery = supabase
     .from("payments")
     .select("*")
+    .eq("business_id", bootstrap.businessContext.business.id)
     .gte("payment_date", range.from)
     .lte("payment_date", range.to)
     .order("created_at", { ascending: false })
@@ -262,6 +296,7 @@ async function loadDashboard(
   const expensesQuery = supabase
     .from("expenses")
     .select("*")
+    .eq("business_id", bootstrap.businessContext.business.id)
     .gte("expense_date", range.from)
     .lte("expense_date", range.to)
     .order("created_at", { ascending: false })
@@ -269,6 +304,7 @@ async function loadDashboard(
   const pendingPaymentsQuery = supabase
     .from("payments")
     .select("*")
+    .eq("business_id", bootstrap.businessContext.business.id)
     .eq("record_status", "active")
     .in("approval_status", pendingReviewStatuses)
     .lte("payment_date", closingDate)
@@ -278,6 +314,7 @@ async function loadDashboard(
   const pendingExpensesQuery = supabase
     .from("expenses")
     .select("*")
+    .eq("business_id", bootstrap.businessContext.business.id)
     .eq("record_status", "active")
     .in("approval_status", pendingReviewStatuses)
     .lte("expense_date", closingDate)
@@ -287,6 +324,7 @@ async function loadDashboard(
   const ledgerQuery = supabase
     .from("ledger_entries")
     .select("*")
+    .eq("business_id", bootstrap.businessContext.business.id)
     .gte("entry_date", range.from)
     .lte("entry_date", closingDate)
     .order("entry_date", { ascending: false })
@@ -295,6 +333,7 @@ async function loadDashboard(
     supabase
       .from("ledger_entries")
       .select("*")
+      .eq("business_id", bootstrap.businessContext.business.id)
       .lte("entry_date", closingDate)
       .order("entry_date", { ascending: false })
       .limit(5000);
@@ -318,6 +357,7 @@ async function loadDashboard(
       ? supabase
           .from("library_students")
           .select("*")
+          .eq("business_id", bootstrap.businessContext.business.id)
           .order("active", { ascending: false })
           .order("roll_number")
           .limit(1200)
@@ -326,6 +366,7 @@ async function loadDashboard(
       ? supabase
           .from("payments")
           .select("*")
+          .eq("business_id", bootstrap.businessContext.business.id)
           .in("business_type", ["library", "course"])
           .eq("record_status", "active")
           .order("end_date", { ascending: false })
@@ -336,13 +377,13 @@ async function loadDashboard(
     expensesQuery,
     pendingPaymentsQuery,
     pendingExpensesQuery,
-    supabase.from("money_movements").select("*").order("created_at", { ascending: false }).limit(300),
+    supabase.from("money_movements").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(300),
     ledgerQuery,
     supabase.rpc("lenden_closing_summaries", { p_closing_date: closingDate }),
     closingSummariesRpcAvailable ? Promise.resolve({ data: null, error: null }) : closingLedgerQuery(),
-    supabase.from("record_change_requests").select("*").order("created_at", { ascending: false }).limit(100),
-    supabase.from("agent_settlements").select("*").order("created_at", { ascending: false }).limit(300),
-    supabase.from("app_notifications").select("*").order("created_at", { ascending: false }).limit(80),
+    supabase.from("record_change_requests").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(100),
+    supabase.from("agent_settlements").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(300),
+    supabase.from("app_notifications").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(80),
   ]);
 
   const movementRows = (movementsResult.data ?? []) as MoneyMovement[];
@@ -376,12 +417,23 @@ async function loadDashboard(
         visibleStudentPayments,
       )
     : [];
+  const signedLibraryStudents = await Promise.all(libraryStudents.map(async (student) => ({
+    ...student,
+    photo_url: await signedStorageUrl(supabase, "library-student-photos", student.photo_url),
+    aadhar_photo_url: await signedStorageUrl(supabase, "library-student-photos", student.aadhar_photo_url),
+    aadhar_back_photo_url: await signedStorageUrl(supabase, "library-student-photos", student.aadhar_back_photo_url),
+  })));
+  const signedStudentPayments = await Promise.all(visibleStudentPayments.map(async (payment) => ({
+    ...payment,
+    aadhar_photo_url: await signedStorageUrl(supabase, "library-student-photos", payment.aadhar_photo_url),
+    aadhar_back_photo_url: await signedStorageUrl(supabase, "library-student-photos", payment.aadhar_back_photo_url),
+  })));
   const paymentRows = mergeById((paymentsResult.data ?? []) as Payment[], (pendingPaymentsResult.data ?? []) as Payment[]);
   const expenseRows = mergeById((expensesResult.data ?? []) as Expense[], (pendingExpensesResult.data ?? []) as Expense[]);
 
   return {
-    libraryStudents,
-    studentPayments: visibleStudentPayments,
+    libraryStudents: signedLibraryStudents,
+    studentPayments: signedStudentPayments,
     payments: visibleData(paymentRows, (payment) =>
       salesAgent
         ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
@@ -423,24 +475,38 @@ async function loadDashboard(
   };
 }
 
-export async function getBootstrapData(): Promise<BootstrapPayload> {
-  const supabase = await createClient();
-  const { user, profile } = await requireUserAndProfile(supabase);
-  return loadBootstrap(supabase, user.id, profile);
+export async function getBootstrapData(
+  businessContext: BusinessContext,
+  identity: Omit<Profile, "membership_role" | "membership_status" | "role">,
+): Promise<BootstrapPayload> {
+  const supabase = await createClient({ businessId: businessContext.business.id });
+  const role = businessContext.membership?.role ?? "co_owner";
+  const profile = profileForBusiness(identity, role);
+  return loadBootstrap(supabase, identity.id, profile, businessContext);
 }
 
-export async function getDashboardData(viewState?: AppViewState): Promise<DashboardPayload> {
-  const supabase = await createClient();
-  const { user, profile } = await requireUserAndProfile(supabase);
-  const bootstrap = await loadBootstrap(supabase, user.id, profile);
-  return loadDashboard(supabase, user.id, bootstrap, viewState);
+export async function getDashboardData(
+  businessContext: BusinessContext,
+  identity: Omit<Profile, "membership_role" | "membership_status" | "role">,
+  viewState?: AppViewState,
+): Promise<DashboardPayload> {
+  const supabase = await createClient({ businessId: businessContext.business.id });
+  const role = businessContext.membership?.role ?? "co_owner";
+  const profile = profileForBusiness(identity, role);
+  const bootstrap = await loadBootstrap(supabase, identity.id, profile, businessContext);
+  return loadDashboard(supabase, identity.id, bootstrap, viewState);
 }
 
-export async function getAppData(viewState?: AppViewState): Promise<AppData> {
-  const supabase = await createClient();
-  const { user, profile } = await requireUserAndProfile(supabase);
-  const bootstrap = await loadBootstrap(supabase, user.id, profile);
-  const dashboard = await loadDashboard(supabase, user.id, bootstrap, viewState);
+export async function getAppData(
+  businessContext: BusinessContext,
+  identity: Omit<Profile, "membership_role" | "membership_status" | "role">,
+  viewState?: AppViewState,
+): Promise<AppData> {
+  const supabase = await createClient({ businessId: businessContext.business.id });
+  const role = businessContext.membership?.role ?? "co_owner";
+  const profile = profileForBusiness(identity, role);
+  const bootstrap = await loadBootstrap(supabase, identity.id, profile, businessContext);
+  const dashboard = await loadDashboard(supabase, identity.id, bootstrap, viewState);
 
   return {
     ...bootstrap,

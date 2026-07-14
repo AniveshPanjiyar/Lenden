@@ -14,11 +14,12 @@ Payment collection, transfer, settlement, and daily closing app for Guest House,
 
 Lenden runs as a Next.js backend-for-frontend over Supabase. There is no active Supabase Edge Function in the request path.
 
-- Initial page render: `src/app/page.tsx` loads authenticated data on the server and renders `AppShell`.
-- Client refreshes: `src/app/api/app/bootstrap/route.ts` and `src/app/api/app/dashboard/route.ts` expose focused GET payloads for React Query.
-- Mutations: forms call Server Actions in `src/app/actions.ts`; those actions validate the signed-in profile and execute business logic in `src/lib/lenden-actions.ts`.
+- Entry routing: `src/app/page.tsx` sends platform administrators to `/admin/businesses` and members to `/b/[businessSlug]`.
+- Business reads: `/api/businesses/[businessId]/bootstrap` and `/api/businesses/[businessId]/dashboard` validate membership/support access and include the business in every React Query cache key.
+- Mutations: forms call Server Actions in `src/app/actions.ts`; those actions resolve the business from the authenticated request URL, verify membership/support access, and use an authenticated tenant client so RLS remains active.
 - Auth/session refresh: `src/proxy.ts` runs the Supabase cookie refresh helper before application routes.
-- Database/storage: Supabase owns Auth, Postgres tables, RLS policies, the private `receipts` bucket, and the `lenden_closing_summaries(date)` RPC.
+- Database/storage: every operational row has `business_id`; tenant files use `<business_id>/<entity>/<record_id>/...`; storage and table policies enforce the same boundary.
+- Elevated client: the service role is limited to direct account provisioning/recovery, initial setup, and audited platform operations.
 
 ## Local Setup
 
@@ -30,7 +31,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_j7srvJgYdT9dEyqDwOW9mQ_-GSZD
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ```
 
-The service role key is required only on the Next.js server for the first-owner setup flow and direct server action execution. Transaction, ledger, approval, settlement, staff, room, course, and referral mutations run directly from the Next.js server to Supabase.
+The service role key is required only on the Next.js server for first-owner setup, direct account provisioning/recovery, and platform operations. Financial mutations use the signed-in user's authenticated Supabase client and remain subject to RLS.
 
 Run locally:
 
@@ -43,22 +44,26 @@ Open `http://localhost:4000`.
 
 ## Database Migration
 
-Apply the Supabase migrations before deploying a fresh environment. The latest performance migration adds dashboard indexes and the `public.lenden_closing_summaries(date)` RPC used by the fast dashboard path.
+Apply the Supabase migrations before deploying the matching application build. The multi-business rollout is additive: it creates the tenant/membership tables, backfills the “Lenden Legacy Business,” then enables tenant constraints and RLS.
 
 ```bash
 supabase db push
+supabase test db
 ```
 
 This app no longer ships a Supabase Edge Function. Keep mutation logic in Next.js Server Actions unless a new deployment boundary is deliberately introduced.
 
 ## First Owner
 
-With the service role key set, open `/setup` and create the first admin/owner. After that, use the Settings tab to add staff, owners, and sales agents.
+With the service role key set, open `/setup` and create the first platform administrator/primary owner. Platform administrators create tenants and generate primary-owner credentials at `/admin/businesses`; owners manage modules, memberships, credentials, and ownership from business settings.
 
 ## Implemented Workflows
 
 - Email/password login, no public signup screen
-- Role-aware dashboard for admin, owner, staff, and sales agent
+- Global platform-admin access plus per-business primary owner, co-owner, staff, and sales-agent roles
+- Audited 30-minute configuration-only support sessions that reject financial mutations
+- Direct temporary-password provisioning, owner-managed member password resets, and forced password replacement
+- Atomic primary-ownership transfer and audited platform recovery
 - Business payment forms for room booking, library subscription, course payment, and general payment
 - Optional payment/expense photo upload to Supabase Storage
 - Expense entry with pending approval and immediate cash balance effect

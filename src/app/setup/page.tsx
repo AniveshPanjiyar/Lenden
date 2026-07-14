@@ -3,6 +3,7 @@
 import { FormEvent, useState, useTransition } from "react";
 import { Landmark } from "lucide-react";
 import { setupOwnerAction } from "@/app/actions";
+import { showOfflineDialogEvent } from "@/lib/client-events";
 
 const actionIdempotencyField = "_action_idempotency_key";
 
@@ -19,6 +20,11 @@ export default function SetupPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (document.body.dataset.lendenNetwork === "offline") {
+      window.dispatchEvent(new CustomEvent(showOfflineDialogEvent));
+      setState({ ok: false, message: "Reconnect to the internet before creating the owner account." });
+      return;
+    }
     const form = event.currentTarget;
     if (form.dataset.submitting === "true") return;
     const formData = new FormData(form);

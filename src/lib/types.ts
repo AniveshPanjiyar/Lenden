@@ -1,4 +1,8 @@
 export type AppRole = "admin" | "owner" | "staff" | "sales_agent";
+export type PlatformRole = "user" | "platform_admin";
+export type BusinessRole = "primary_owner" | "co_owner" | "staff" | "sales_agent";
+export type BusinessStatus = "active" | "suspended";
+export type MembershipStatus = "invited" | "active" | "suspended";
 export type BusinessType = "guest_house" | "library" | "course" | "general";
 export type PaymentMode = "cash" | "online" | "mixed";
 export type ApprovalStatus =
@@ -15,8 +19,51 @@ export type Profile = {
   email: string;
   full_name: string;
   avatar_url: string | null;
+  platform_role: PlatformRole;
+  account_status: BusinessStatus;
+  must_change_password: boolean;
+  last_business_id: string | null;
+  membership_role: BusinessRole;
+  membership_status: MembershipStatus;
+  /** UI compatibility projection only. Server authorization uses membership_role. */
   role: AppRole;
   active: boolean;
+};
+
+export type Business = {
+  id: string;
+  name: string;
+  slug: string;
+  status: BusinessStatus;
+  timezone: string;
+  currency: string;
+  created_at: string;
+};
+
+export type BusinessMembership = {
+  id: string;
+  business_id: string;
+  profile_id: string;
+  role: BusinessRole;
+  status: MembershipStatus;
+  joined_at: string | null;
+};
+
+export type BusinessContext = {
+  business: Business;
+  membership: BusinessMembership | null;
+  permissions: string[];
+  enabledModules: BusinessType[];
+  accessMode: "member" | "support";
+  supportSession: {
+    id: string;
+    reason: string;
+    expires_at: string;
+  } | null;
+  availableBusinesses: Array<{
+    business: Business;
+    role: BusinessRole;
+  }>;
 };
 
 export type StaffPermission = {
@@ -26,6 +73,7 @@ export type StaffPermission = {
 
 export type Room = {
   id: string;
+  business_id: string;
   room_number: string;
   label: string | null;
   active: boolean;
@@ -33,6 +81,7 @@ export type Room = {
 
 export type Course = {
   id: string;
+  business_id: string;
   name: string;
   kind: "main" | "skill";
   active: boolean;
@@ -40,6 +89,7 @@ export type Course = {
 
 export type ReferralCode = {
   id: string;
+  business_id: string;
   code: string;
   agent_id: string | null;
   discount_amount: number;
@@ -52,6 +102,7 @@ export type ReferralCode = {
 
 export type Payment = {
   id: string;
+  business_id: string;
   business_type: BusinessType;
   mode: PaymentMode;
   amount: number;
@@ -100,6 +151,7 @@ export type Payment = {
 
 export type LibraryStudent = {
   id: string;
+  business_id: string;
   roll_number: string;
   phone_number: string | null;
   address: string | null;
@@ -131,6 +183,7 @@ export type LibraryStudent = {
 
 export type LibraryStudentSubscriptionEvent = {
   id: string;
+  business_id: string;
   library_student_id: string;
   payment_id: string | null;
   event_key: string;
@@ -155,6 +208,7 @@ export type LibraryStudentSubscriptionEvent = {
 
 export type Expense = {
   id: string;
+  business_id: string;
   business_type: BusinessType | null;
   mode: PaymentMode;
   amount: number;
@@ -172,6 +226,7 @@ export type Expense = {
 
 export type MoneyMovement = {
   id: string;
+  business_id: string;
   type: "transfer" | "settlement";
   mode: PaymentMode;
   amount: number;
@@ -189,6 +244,7 @@ export type MoneyMovement = {
 
 export type LedgerEntry = {
   id: string;
+  business_id: string;
   account_profile_id: string;
   amount: number;
   entry_date: string;
@@ -201,6 +257,7 @@ export type LedgerEntry = {
 
 export type ChangeRequest = {
   id: string;
+  business_id: string;
   record_type: "payment" | "expense";
   record_id: string;
   request_type: "edit" | "cancel";
@@ -216,6 +273,7 @@ export type ChangeRequest = {
 
 export type AgentSettlement = {
   id: string;
+  business_id: string;
   agent_id: string;
   amount: number;
   status: MovementStatus;
@@ -229,6 +287,7 @@ export type AgentSettlement = {
 
 export type AppNotification = {
   id: string;
+  business_id: string;
   recipient_id: string;
   actor_id: string | null;
   title: string;
@@ -255,6 +314,7 @@ export type ClosingSummary = {
 };
 
 export type AppData = {
+  businessContext: BusinessContext;
   profile: Profile;
   permissions: string[];
   allPermissions: StaffPermission[];
@@ -276,7 +336,7 @@ export type AppData = {
 
 export type BootstrapPayload = Pick<
   AppData,
-  "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals"
+  "businessContext" | "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals"
 >;
 
 export type DashboardPayload = Pick<
