@@ -9,6 +9,13 @@ import {
 } from "./actions";
 import { OwnershipTransferForm } from "./ownership-transfer-form";
 
+function membershipRoleLabel(role: BusinessMembership["role"]) {
+  if (role === "primary_owner") return "Owner";
+  if (role === "co_owner") return "Manager";
+  if (role === "sales_agent") return "Sales agent";
+  return "Staff";
+}
+
 export default async function BusinessManagePage({ params }: { params: Promise<{ businessSlug: string }> }) {
   const { businessSlug } = await params;
   const { context } = await resolveBusinessContext({ slug: businessSlug });
@@ -24,7 +31,7 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
   ]);
   const profileMap = new Map(((profiles ?? []) as Array<Pick<Profile, "id" | "full_name" | "email" | "active">>).map((profile) => [profile.id, profile]));
   const memberRows = (memberships ?? []) as BusinessMembership[];
-  const coOwners = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
+  const managers = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
   const enabledModules = new Set((modules ?? []).filter((module) => module.enabled).map((module) => module.module));
   const canManageBusinessSettings = context.accessMode === "support" || isPrimaryOwner(context.membership?.role);
 
@@ -43,7 +50,7 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
         <h2>Enabled modules</h2>
         <p>{canManageBusinessSettings
           ? "Disabled modules stop new actions while keeping historical records."
-          : "Only the primary owner can change business modules."}</p>
+          : "Only the Owner can change business modules."}</p>
         {canManageBusinessSettings ? (
           <form action={saveBusinessModulesAction} className="module-config-form">
             {(["library", "guest_house", "course", "general"] as const).map((module) => (
@@ -59,18 +66,18 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
       <section className="admin-panel">
         <h2>User accounts</h2>
         <p>{isPrimaryOwner(context.membership?.role) || context.accessMode === "support"
-          ? "Create co-owners, staff, and sales agents with a login email and temporary password."
+          ? "Create Managers, Staff, and Sales Agents with a login email and temporary password."
           : "Create staff and sales agents with a login email and temporary password."}</p>
         <Link className="primary-button" href={`/b/${businessSlug}?tab=settings`}>Open user settings</Link>
       </section>
 
       {(context.accessMode !== "support" && isPrimaryOwner(context.membership?.role)) ? (
         <section className="admin-panel">
-          <h2>Transfer primary ownership</h2>
-          <p>The selected co-owner becomes primary owner atomically; you become a co-owner.</p>
+          <h2>Transfer ownership</h2>
+          <p>The selected Manager becomes the Owner atomically, and you become a Manager.</p>
           <OwnershipTransferForm
             businessName={context.business.name}
-            candidates={coOwners.map((membership) => ({
+            candidates={managers.map((membership) => ({
               profileId: membership.profile_id,
               label: profileMap.get(membership.profile_id)?.full_name ?? membership.profile_id,
             }))}
@@ -80,13 +87,13 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
 
       <section className="admin-panel">
         <h2>Members</h2>
-        <p>Removing access suspends the business membership and preserves historical records. The main owner cannot be removed.</p>
+        <p>Removing access suspends the business membership and preserves historical records. The Owner cannot be removed.</p>
         <div className="member-list">{memberRows.map((membership) => {
           const member = profileMap.get(membership.profile_id);
           const canRemove = canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode);
           return <article className="member-row" key={membership.id}>
             <div><strong>{member?.full_name ?? membership.profile_id}</strong><span>{member?.email}</span></div>
-            <div><span className="status-pill">{membership.role.replace("_", " ")}</span><span className={`status-pill ${membership.status}`}>{membership.status}</span></div>
+            <div><span className="status-pill">{membershipRoleLabel(membership.role)}</span><span className={`status-pill ${membership.status}`}>{membership.status}</span></div>
             {canRemove && membership.status === "active" ? <form action={suspendBusinessMemberAction}><input type="hidden" name="membership_id" value={membership.id} /><button className="text-button danger" type="submit">Remove access</button></form> : null}
           </article>;
         })}</div>

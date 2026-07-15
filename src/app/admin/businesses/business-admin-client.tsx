@@ -14,8 +14,8 @@ export function BusinessCreateForm() {
         <label>URL slug<input name="slug" placeholder="generated-from-name" pattern="[a-z0-9-]+" /></label>
         <label>Timezone<input name="timezone" defaultValue="Asia/Kolkata" required /></label>
         <label>Currency<input name="currency" defaultValue="INR" maxLength={3} required /></label>
-        <label>Primary owner name<input name="owner_name" required /></label>
-        <label>Primary owner email<input name="owner_email" type="email" required /></label>
+        <label>Owner name<input name="owner_name" required /></label>
+        <label>Owner email<input name="owner_email" type="email" required /></label>
       </div>
       <fieldset>
         <legend>Enabled modules</legend>

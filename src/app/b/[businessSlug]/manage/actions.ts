@@ -13,7 +13,7 @@ function read(formData: FormData, key: string) {
 export async function saveBusinessModulesAction(formData: FormData) {
   const { identity, context } = await resolveBusinessContextFromRequest();
   if (context.accessMode !== "support" && !isPrimaryOwner(context.membership?.role)) {
-    throw new Error("Only the primary owner can change business settings.");
+    throw new Error("Only the Owner can change business settings.");
   }
   const client = await createClient({ businessId: context.business.id });
   const enabled = new Set(formData.getAll("modules").filter((item): item is string => typeof item === "string"));
@@ -44,7 +44,7 @@ export async function saveBusinessModulesAction(formData: FormData) {
 export async function transferPrimaryOwnershipAction(formData: FormData) {
   const { context } = await resolveBusinessContextFromRequest();
   const targetProfileId = read(formData, "profile_id");
-  if (!targetProfileId) throw new Error("Choose an active co-owner.");
+  if (!targetProfileId) throw new Error("Choose an active Manager.");
   const client = await createClient({ businessId: context.business.id });
   const { error } = await client.rpc("transfer_primary_ownership", {
     target_business_id: context.business.id,
@@ -69,8 +69,8 @@ export async function suspendBusinessMemberAction(formData: FormData) {
   if (lookupError || !membership) throw new Error(lookupError?.message ?? "Membership not found.");
   if (!canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode)) {
     throw new Error(membership.role === "primary_owner"
-      ? "The main owner cannot be removed. Transfer primary ownership first."
-      : "Co-owners can remove only staff and sales agents.");
+      ? "The Owner cannot be removed. Transfer ownership first."
+      : "Managers can remove only Staff and Sales Agents.");
   }
   if (membership.status !== "active") throw new Error("This member no longer has active access.");
   const { error } = await client.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", membershipId);

@@ -279,6 +279,7 @@ async function loadDashboard(
 ): Promise<DashboardPayload> {
   const ownerish = bootstrap.businessContext.accessMode === "support" || isBusinessOwner(bootstrap.businessContext.membership?.role);
   const salesAgent = isBusinessSalesAgent(bootstrap.businessContext.membership?.role);
+  const viewerBusinessRole = bootstrap.businessContext.membership?.role;
   const accessibleBusinesses = accessibleBusinessTypes(bootstrap.businessContext.membership?.role, bootstrap.permissions);
   const canViewLibraryStudents = !salesAgent && (ownerish || accessibleBusinesses.has("library"));
   const canViewStudentPayments = !salesAgent && (ownerish || accessibleBusinesses.has("library") || accessibleBusinesses.has("course"));
@@ -430,24 +431,42 @@ async function loadDashboard(
   })));
   const paymentRows = mergeById((paymentsResult.data ?? []) as Payment[], (pendingPaymentsResult.data ?? []) as Payment[]);
   const expenseRows = mergeById((expensesResult.data ?? []) as Expense[], (pendingExpensesResult.data ?? []) as Expense[]);
+  const visiblePayments = visibleData(paymentRows, (payment) =>
+    salesAgent
+      ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
+      : ownerish ||
+        accessibleBusinesses.has(payment.business_type) ||
+        payment.collected_by === userId ||
+        payment.current_holder_id === userId ||
+        visibleMovementPaymentIds.has(payment.id),
+  );
+  const visibleExpenses = salesAgent
+    ? []
+    : visibleData(expenseRows, (expense) =>
+        ownerish || expense.spent_by === userId || (expense.business_type ? accessibleBusinesses.has(expense.business_type) : false),
+      );
+  const [signedPayments, signedExpenses] = await Promise.all([
+    Promise.all(visiblePayments.map(async (payment) => ({ ...payment, photo_path: await signedStorageUrl(supabase, "receipts", payment.photo_path) }))),
+    Promise.all(visibleExpenses.map(async (expense) => ({ ...expense, photo_path: await signedStorageUrl(supabase, "receipts", expense.photo_path) }))),
+  ]);
+  const closingVisibleProfileIds = new Set(
+    bootstrap.profiles
+      .filter((item) => {
+        if (!item.active || item.membership_role === "sales_agent") return false;
+        if (bootstrap.businessContext.accessMode === "support" || viewerBusinessRole === "primary_owner") return true;
+        if (viewerBusinessRole === "co_owner") {
+          return item.membership_role === "co_owner" || item.membership_role === "staff";
+        }
+        return item.id === userId;
+      })
+      .map((item) => item.id),
+  );
 
   return {
     libraryStudents: signedLibraryStudents,
     studentPayments: signedStudentPayments,
-    payments: visibleData(paymentRows, (payment) =>
-      salesAgent
-        ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
-        : ownerish ||
-          accessibleBusinesses.has(payment.business_type) ||
-          payment.collected_by === userId ||
-          payment.current_holder_id === userId ||
-          visibleMovementPaymentIds.has(payment.id),
-    ),
-    expenses: salesAgent
-      ? []
-      : visibleData(expenseRows, (expense) =>
-          ownerish || expense.spent_by === userId || (expense.business_type ? accessibleBusinesses.has(expense.business_type) : false),
-        ),
+    payments: signedPayments,
+    expenses: signedExpenses,
     movements: salesAgent
       ? []
       : visibleData(movementRows, (movement) =>
@@ -461,7 +480,7 @@ async function loadDashboard(
     closingSummaries: salesAgent
       ? []
       : visibleData((closingSummariesResult.data ?? []) as ClosingSummary[], (summary) =>
-          ownerish || summary.profile_id === userId,
+          closingVisibleProfileIds.has(summary.profile_id),
         ),
     changeRequests: visibleData((changesResult.data ?? []) as ChangeRequest[], (request) =>
       !salesAgent && (ownerish || request.requested_by === userId),

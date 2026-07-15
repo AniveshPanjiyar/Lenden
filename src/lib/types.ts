@@ -144,6 +144,8 @@ export type Payment = {
   online_approval_status: ApprovalStatus | null;
   cash_approved_at: string | null;
   online_approved_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
   created_at: string;

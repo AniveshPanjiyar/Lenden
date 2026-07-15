@@ -126,8 +126,8 @@ export async function createBusinessAction(
     return {
       ok: true,
       message: generatedPassword
-        ? "Business and primary-owner login created."
-        : "Business created and existing user assigned as primary owner.",
+        ? "Business and Owner login created."
+        : "Business created and existing user assigned as Owner.",
       temporaryPassword: generatedPassword,
     };
   } catch (error) {
@@ -143,7 +143,7 @@ export async function resetPrimaryOwnerPasswordAction(
     const { user } = await requirePlatformAdmin();
   const businessId = value(formData, "business_id");
     const profileId = value(formData, "profile_id");
-    if (!businessId || !profileId) throw new Error("An active primary owner is required.");
+    if (!businessId || !profileId) throw new Error("An active Owner is required.");
 
   const admin = createAdminClient();
     const [{ data: membership, error: membershipError }, { data: ownerProfile, error: profileError }] = await Promise.all([
@@ -159,10 +159,10 @@ export async function resetPrimaryOwnerPasswordAction(
         .eq("id", profileId)
         .single(),
   ]);
-    if (membershipError || !membership) throw new Error(membershipError?.message ?? "Primary-owner membership was not found.");
-    if (profileError || !ownerProfile) throw new Error(profileError?.message ?? "Primary-owner profile was not found.");
+    if (membershipError || !membership) throw new Error(membershipError?.message ?? "Owner membership was not found.");
+    if (profileError || !ownerProfile) throw new Error(profileError?.message ?? "Owner profile was not found.");
     if (membership.role !== "primary_owner" || membership.status !== "active" || !ownerProfile.active) {
-      throw new Error("Only an active primary-owner password can be reset here.");
+      throw new Error("Only an active Owner password can be reset here.");
     }
 
     const generatedPassword = temporaryPassword();
@@ -246,7 +246,7 @@ export async function recoverPrimaryOwnerAction(formData: FormData) {
   const businessId = value(formData, "business_id");
   const targetProfileId = value(formData, "profile_id");
   const reason = value(formData, "reason");
-  if (!businessId || !targetProfileId || reason.length < 10) throw new Error("Choose a co-owner and provide a detailed recovery reason.");
+  if (!businessId || !targetProfileId || reason.length < 10) throw new Error("Choose a Manager and provide a detailed recovery reason.");
   const client = await createClient({ businessId });
   const { error } = await client.rpc("platform_recover_primary_ownership", {
     target_business_id: businessId,

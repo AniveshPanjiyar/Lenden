@@ -18,6 +18,7 @@ import {
   ChevronRight,
   ClipboardList,
   Copy,
+  CreditCard,
   GraduationCap,
   Hotel,
   Landmark,
@@ -85,10 +86,17 @@ type MutationRefreshScope = "dashboard" | "bootstrap" | "dashboard-library" | "n
 type MutationRefreshDetail = {
   scope: MutationRefreshScope;
   savingMessageKey: string;
-  refreshingMessageKey: string;
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
-type TransactionActionKind = "transfer" | "edit" | "delete";
+type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
+type TransactionJourneyStep = {
+  id: string;
+  person: string;
+  action: string;
+  role: string | null;
+  state: "complete" | "pending" | "rejected" | "verified";
+  timestamp: string | null;
+};
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive";
 type StudentRecordSource =
@@ -430,7 +438,7 @@ const messages: Record<Language, Record<string, string>> = {
     out: "OUT",
     owner: "Owner",
     primaryOwner: "Owner",
-    coOwner: "Co-owner",
+    coOwner: "Manager",
     ownerSettlement: "Owner Settlement",
     ownerSettlementLower: "Owner settlement",
     outflowsOnly: "Outflows only",
@@ -506,9 +514,6 @@ const messages: Record<Language, Record<string, string>> = {
     saving: "Saving...",
     savingChanges: "Saving changes...",
     savingTransaction: "Saving transaction...",
-    refreshingData: "Refreshing app data...",
-    updatingAppData: "Updating app data...",
-    updatingTransactionList: "Updating transaction list...",
     select: "Select",
     selectAgent: "Select agent",
     selectAnotherType: "Select another type",
@@ -567,6 +572,14 @@ const messages: Record<Language, Record<string, string>> = {
     transferred: "Transferred",
     transferHistory: "Transfer history",
     transfers: "Transfers",
+    paymentJourney: "Payment journey",
+    journeyCollected: "Collected",
+    journeyAccepted: "Accepted",
+    journeyAwaitingAcceptance: "Waiting for acceptance",
+    journeyRejected: "Rejected",
+    journeyAwaitingApproval: "Waiting for approval",
+    approvalPending: "Approval pending",
+    approvedBy: "Approved by",
     transaction: "Transaction",
     transactionHistory: "Transaction history",
     transactionReview: "Transactions review",
@@ -788,7 +801,7 @@ const messages: Record<Language, Record<string, string>> = {
     out: "OUT",
     owner: "मालिक",
     primaryOwner: "मालिक",
-    coOwner: "सह-मालिक",
+    coOwner: "मैनेजर",
     ownerSettlement: "मालिक को जमा",
     ownerSettlementLower: "मालिक को जमा",
     outflowsOnly: "सिर्फ खर्च",
@@ -864,9 +877,6 @@ const messages: Record<Language, Record<string, string>> = {
     saving: "सेव हो रहा है...",
     savingChanges: "बदलाव सेव हो रहे हैं...",
     savingTransaction: "लेनदेन सेव हो रहा है...",
-    refreshingData: "ऐप डेटा रीफ्रेश हो रहा है...",
-    updatingAppData: "ऐप डेटा अपडेट हो रहा है...",
-    updatingTransactionList: "लेनदेन सूची अपडेट हो रही है...",
     select: "चुनें",
     selectAgent: "एजेंट चुनें",
     selectAnotherType: "दूसरा प्रकार चुनें",
@@ -925,6 +935,14 @@ const messages: Record<Language, Record<string, string>> = {
     transferred: "ट्रांसफर हुए",
     transferHistory: "भेजने का हिसाब",
     transfers: "पैसा भेजना",
+    paymentJourney: "पेमेंट का सफर",
+    journeyCollected: "जमा किया",
+    journeyAccepted: "स्वीकार किया",
+    journeyAwaitingAcceptance: "स्वीकार होने का इंतजार",
+    journeyRejected: "अस्वीकार किया",
+    journeyAwaitingApproval: "मंजूरी का इंतजार",
+    approvalPending: "मंजूरी बाकी",
+    approvedBy: "मंजूरी दी",
     transaction: "लेनदेन",
     transactionHistory: "लेनदेन हिसाब",
     transactionReview: "लेनदेन जांच",
@@ -1093,7 +1111,6 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     return {
       scope: "dashboard-library",
       savingMessageKey: action === createPaymentAction ? "savingTransaction" : "savingChanges",
-      refreshingMessageKey: action === createPaymentAction ? "updatingTransactionList" : "updatingAppData",
     };
   }
 
@@ -1101,7 +1118,6 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     return {
       scope: "dashboard",
       savingMessageKey: "savingTransaction",
-      refreshingMessageKey: "updatingTransactionList",
     };
   }
 
@@ -1109,14 +1125,12 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     return {
       scope: "bootstrap",
       savingMessageKey: "savingChanges",
-      refreshingMessageKey: "updatingAppData",
     };
   }
 
   return {
     scope: "none",
     savingMessageKey: "savingChanges",
-    refreshingMessageKey: "updatingAppData",
   };
 }
 
@@ -1338,8 +1352,7 @@ function paymentReviewProfileId(payment: Payment) {
 }
 
 function paymentModeLabel(payment: Payment, t: (key: string) => string) {
-  if (payment.mode !== "mixed") return labelForMode(payment.mode, t);
-  return `${labelForMode("mixed", t)}: ${t("cash")} ${formatMoney(paymentCashAmount(payment))}, ${t("online")} ${formatMoney(paymentOnlineAmount(payment))}`;
+  return labelForMode(payment.mode, t);
 }
 
 function paymentTransfers(movements: MoneyMovement[], paymentId: string) {
@@ -1358,6 +1371,60 @@ function transferSummaryLines(transfers: MoneyMovement[], profiles: Profile[], t
     const to = profileName(profiles, movement.to_profile_id, t);
     return `${from} → ${to}`;
   });
+}
+
+function paymentJourneySteps(
+  payment: Payment,
+  transfers: MoneyMovement[],
+  profiles: Profile[],
+  t: (key: string) => string,
+): TransactionJourneyStep[] {
+  const collector = profiles.find((item) => item.id === payment.collected_by);
+  const steps: TransactionJourneyStep[] = [{
+    id: `${payment.id}-collected`,
+    person: collector?.full_name ?? profileName(profiles, payment.collected_by, t),
+    action: t("journeyCollected"),
+    role: collector ? profileRoleLabel(collector, t) : null,
+    state: "complete",
+    timestamp: payment.created_at,
+  }];
+
+  transfers.forEach((movement) => {
+    const recipientId = movement.responded_by ?? movement.to_profile_id;
+    const recipient = profiles.find((item) => item.id === recipientId);
+    steps.push({
+      id: movement.id,
+      person: recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t),
+      action: movement.status === "accepted"
+        ? t("journeyAccepted")
+        : movement.status === "rejected"
+          ? t("journeyRejected")
+          : t("journeyAwaitingAcceptance"),
+      role: recipient ? profileRoleLabel(recipient, t) : null,
+      state: movement.status === "accepted" ? "complete" : movement.status === "rejected" ? "rejected" : "pending",
+      timestamp: movement.responded_at ?? movement.created_at,
+    });
+  });
+
+  const ownerIds = ownerProfileIdSet(profiles);
+  const approved = isEffectivelyApprovedPayment(payment, ownerIds);
+  const inferredApproverId = payment.approved_by ?? (ownerIds.has(payment.collected_by) ? payment.collected_by : null);
+  const approver = profiles.find((item) => item.id === inferredApproverId);
+  const approverRole = approver ? profileRoleLabel(approver, t) : null;
+  steps.push({
+    id: `${payment.id}-approval`,
+    person: approved
+      ? approver
+        ? `${t("approvedBy")} ${approver.full_name} (${approverRole})`
+        : labelForStatus("approved", t)
+      : t("approvalPending"),
+    action: approved ? "" : t("journeyAwaitingApproval"),
+    role: null,
+    state: approved ? "verified" : "pending",
+    timestamp: approved ? payment.approved_at : null,
+  });
+
+  return steps;
 }
 
 function paymentDisplayTitle(payment: Payment, t: (key: string) => string) {
@@ -1646,7 +1713,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     queryKey: ["bootstrap", cacheScope],
     queryFn: () => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`),
     initialData: () => bootstrapFromAppData(data),
-    refetchInterval: isOwnerish(data.profile.role) ? 30_000 : false,
+    refetchInterval: isOwnerish(data.profile.role) ? 120_000 : false,
     refetchOnWindowFocus: true,
   });
   const dashboardQuery = useQuery({
@@ -1664,6 +1731,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const unreadNotifications = notifications.filter((notification) => !notification.read_at).length;
   const currentUserIsSalesAgent = isSalesAgent(appData.profile.role);
   const owner = isOwnerish(appData.profile.role);
+  const primaryOwner = appData.profile.membership_role === "primary_owner";
+  const manager = appData.profile.membership_role === "co_owner";
   const supportMode = appData.businessContext.accessMode === "support";
   const enabledModules = new Set(appData.businessContext.enabledModules);
   const permissions = activePermissions(appData.profile.role, appData.permissions).filter((permission) => {
@@ -1718,44 +1787,37 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     }
 
     async function refreshCachedData(detail: MutationRefreshDetail) {
-      setDocumentAppBusy(true);
-      setActionBusyMessageKey(detail.refreshingMessageKey);
-
-      try {
-        const refreshes: Promise<unknown>[] = [];
-        if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
-          refreshes.push(
-            queryClient.refetchQueries({
-              queryKey: ["dashboard", cacheScope, dashboardParams],
-              exact: true,
-              type: "active",
-            }),
-          );
-        }
-        if (detail.scope === "bootstrap") {
-          refreshes.push(
-            queryClient.refetchQueries({
-              queryKey: ["bootstrap", cacheScope],
-              exact: true,
-              type: "active",
-            }),
-          );
-        }
-        if (detail.scope === "dashboard-library") {
-          refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }));
-        }
-        await Promise.all(refreshes);
-      } finally {
-        endBusy();
+      const refreshes: Promise<unknown>[] = [];
+      if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
+        refreshes.push(
+          queryClient.refetchQueries({
+            queryKey: ["dashboard", cacheScope, dashboardParams],
+            exact: true,
+            type: "active",
+          }),
+        );
       }
+      if (detail.scope === "bootstrap") {
+        refreshes.push(
+          queryClient.refetchQueries({
+            queryKey: ["bootstrap", cacheScope],
+            exact: true,
+            type: "active",
+          }),
+        );
+      }
+      if (detail.scope === "dashboard-library") {
+        refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }));
+      }
+      await Promise.all(refreshes);
     }
 
     function commitMutation(event: Event) {
       const detail = (event as CustomEvent<MutationRefreshDetail>).detail ?? {
         scope: "none",
         savingMessageKey: "savingChanges",
-        refreshingMessageKey: "updatingAppData",
       };
+      endBusy();
       void refreshCachedData(detail);
     }
 
@@ -1780,8 +1842,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         return;
       }
 
-      setDocumentAppBusy(true);
-      setActionBusyMessageKey("refreshingData");
       try {
         await Promise.all([
           queryClient.refetchQueries({ queryKey: ["bootstrap", cacheScope], exact: true, type: "active" }),
@@ -1794,8 +1854,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           message: error instanceof Error ? error.message : "Could not refresh app data.",
         });
       } finally {
-        setActionBusyMessageKey(null);
-        setDocumentAppBusy(false);
         window.dispatchEvent(new CustomEvent(pullRefreshCompleteEvent));
       }
     }
@@ -1910,12 +1968,17 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const skillCourses = appData.courses.filter((course) => course.kind === "skill" && course.active);
   const activeRooms = appData.rooms.filter((room) => room.active);
   const salesAgents = appData.profiles.filter((profile) => profile.active && profile.role === "sales_agent");
-  const staffProfiles = appData.profiles.filter(
-    (profile) => profile.active && profile.role === "staff" && profile.id !== appData.profile.id,
-  );
-  const moneyMovementProfiles = appData.profiles.filter((item) => {
+  const receiveMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
-    return owner;
+    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
+    if (manager) return item.membership_role === "staff";
+    return false;
+  });
+  const sendMoneyProfiles = appData.profiles.filter((item) => {
+    if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
+    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
+    if (manager) return item.membership_role === "primary_owner";
+    return false;
   });
   const permissionsByProfile = useMemo(() => {
     return appData.profiles.reduce<Record<string, string[]>>((acc, profile) => {
@@ -2100,9 +2163,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     ? t(actionBusyMessageKey)
     : pending
       ? t("saving")
-      : bootstrapQuery.isFetching || dashboardQuery.isFetching
-        ? t("refreshingData")
-        : null;
+      : null;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
@@ -2309,8 +2370,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
             {showQuickActions ? (
               <BottomActions
-                canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || moneyMovementProfiles.length > 0}
-                canAddNegative={canUsePayment("expense") || (owner && (moneyMovementProfiles.length > 0 || staffProfiles.length > 0))}
+                canAddPositive={(Object.keys(businessPermissions) as BusinessType[]).some((type) => canUsePayment(type)) || receiveMoneyProfiles.length > 0}
+                canAddNegative={canUsePayment("expense") || sendMoneyProfiles.length > 0 || (primaryOwner && agentIncentiveBalances.length > 0)}
                 onPositive={() => openAction("positive")}
                 onNegative={() => openAction("negative")}
               />
@@ -2451,16 +2512,17 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           setSelectedPositive={setSelectedPositive}
           setSelectedNegative={setSelectedNegative}
           canUsePayment={canUsePayment}
-          owner={owner}
           rooms={activeRooms}
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
           payments={appData.studentPayments ?? appData.payments}
           libraryStudents={appData.libraryStudents}
-          moneyMovementProfiles={moneyMovementProfiles}
+          receiveMoneyProfiles={receiveMoneyProfiles}
+          sendMoneyProfiles={sendMoneyProfiles}
           settlementDate={closingDate}
           agentIncentiveBalances={agentIncentiveBalances}
+          canPayAgentIncentive={primaryOwner}
           closeAction={closeAction}
           setNotice={pushNotice}
           startTransition={startTransition}
@@ -3319,6 +3381,54 @@ function HomeView({
   );
 }
 
+function TransactionJourney({ steps, children }: { steps: TransactionJourneyStep[]; children?: ReactNode }) {
+  const { t } = useLanguage();
+  const isApproved = steps.at(-1)?.state === "verified";
+
+  return (
+    <div
+      className={`transaction-journey ${isApproved ? "approved" : "unapproved"}`}
+      aria-label={t("paymentJourney")}
+    >
+      <div className="transaction-journey-track" role="list">
+        {steps.map((step, index) => (
+          <div className="transaction-journey-segment" key={step.id}>
+            {index > 0 ? <ChevronRight className="transaction-journey-arrow" size={16} aria-hidden="true" /> : null}
+            <div className={`transaction-journey-step ${step.state}`} role="listitem">
+              <span className="transaction-journey-icon" aria-hidden="true">
+                {step.state === "verified" ? <ShieldCheck size={16} /> : step.state === "rejected" ? <X size={15} /> : step.state === "pending" ? <MoreHorizontal size={16} /> : <Check size={15} />}
+              </span>
+              <span className="transaction-journey-copy">
+                <strong>{step.person}</strong>
+                {step.action || step.role ? <small>{step.action}{step.role ? ` · ${step.role}` : ""}</small> : null}
+                {step.timestamp ? <time dateTime={step.timestamp}>{formatIndiaTime(step.timestamp)}</time> : null}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function PaymentAmountSplit({ cashAmount, onlineAmount }: { cashAmount: number; onlineAmount: number }) {
+  const { t } = useLanguage();
+
+  return (
+    <div className="history-payment-split" aria-label={`${t("cash")} / ${t("online")}`}>
+      <span className="history-payment-split-part cash" title={t("cash")}>
+        <Banknote size={14} aria-hidden="true" />
+        <span>{formatMoney(cashAmount)}</span>
+      </span>
+      <span className="history-payment-split-part online" title={t("online")}>
+        <CreditCard size={14} aria-hidden="true" />
+        <span>{formatMoney(onlineAmount)}</span>
+      </span>
+    </div>
+  );
+}
+
 function TransactionsView({
   dateLabel,
   dateRange,
@@ -3369,6 +3479,16 @@ function TransactionsView({
     kind: TransactionActionKind;
     recordKey: string;
   } | null>(null);
+  useEffect(() => {
+    const closeMenuOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target;
+      document.querySelectorAll<HTMLElement>("details.history-actions-menu[open]").forEach((menu) => {
+        if (target instanceof Node && !menu.contains(target)) menu.removeAttribute("open");
+      });
+    };
+    document.addEventListener("pointerdown", closeMenuOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeMenuOnOutsideClick);
+  }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
   const effectiveTransactionFilter = owner && transactionFilter === "pending" ? "transactions" : transactionFilter;
@@ -3397,7 +3517,6 @@ function TransactionsView({
       cashAmount: number;
       onlineAmount: number;
       amountTone?: "positive" | "negative" | "neutral" | "online-approved";
-      onlineTone?: "neutral" | "online-approved";
       title: string;
       meta: string;
       status: string;
@@ -3408,6 +3527,7 @@ function TransactionsView({
       description: string;
       remark: string;
       reason: string | null;
+      businessLabel?: string;
       icon: ReactNode;
       recordType?: "payment" | "expense";
       editDate?: string;
@@ -3415,6 +3535,7 @@ function TransactionsView({
       canEdit?: boolean;
       canDelete?: boolean;
       transferLines?: string[];
+      journey?: TransactionJourneyStep[];
       transferRecipients?: Profile[];
       canRequestTransfer?: boolean;
       incomingTransferId?: string | null;
@@ -3510,6 +3631,7 @@ function TransactionsView({
           date: payment.payment_date,
           sortAt: payment.created_at,
           title: paymentDisplayTitle(payment, t),
+          businessLabel: labelForBusiness(payment.business_type, t),
           status: paymentStatus,
           statusTone: paymentStatusTone,
           modeLabel: paymentModeLabel(payment, t),
@@ -3521,11 +3643,10 @@ function TransactionsView({
           recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
-          canEdit: owner
-            ? (effectivePaymentApproved || (effectivePaymentPending && !hasApprovedComponent)) && !activeTransfer
-            : payment.collected_by === profile.id && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
+          canEdit: (owner || payment.collected_by === profile.id) && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
           canDelete: owner,
           transferLines: transferSummaryLines(linkedTransfers, profiles, t),
+          journey: paymentJourneySteps(payment, linkedTransfers, profiles, t),
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
@@ -3554,7 +3675,6 @@ function TransactionsView({
             cashAmount: cashImpact,
             onlineAmount: onlineImpact,
             amountTone: "neutral",
-            onlineTone: onlineApproved ? "online-approved" : "neutral",
             meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
           });
 
@@ -3571,11 +3691,11 @@ function TransactionsView({
                 cashAmount: ownerCashAmount,
                 onlineAmount: ownerOnlineAmount,
                 amountTone: ownerOnlineAmount > 0 && ownerCashAmount === 0 ? "online-approved" : "positive",
-                onlineTone: ownerOnlineAmount > 0 ? "online-approved" : "neutral",
                 meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
                 recordType: collectedByOwner ? "payment" : undefined,
                 canDelete: collectedByOwner,
                 transferLines: [],
+                journey: [],
                 transferRecipients: [],
                 canRequestTransfer: false,
                 incomingTransferId: null,
@@ -3609,7 +3729,6 @@ function TransactionsView({
             cashAmount: rowCashAmount,
             onlineAmount: rowOnlineAmount,
             amountTone: shownAmount === 0 ? "neutral" : shownAmount > 0 ? "positive" : "negative",
-            onlineTone: onlineApproved ? "online-approved" : "neutral",
             meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
           });
         }
@@ -3625,7 +3744,6 @@ function TransactionsView({
             cashAmount: 0,
             onlineAmount,
             amountTone: onlineApproved ? "online-approved" : "neutral",
-            onlineTone: onlineApproved ? "online-approved" : "neutral",
             title: t("ownerAccountCredit"),
             meta: `${paymentDisplayTitle(payment, t)} · ${labelForBusiness(payment.business_type, t)}`,
             modeLabel: t("online"),
@@ -3633,6 +3751,7 @@ function TransactionsView({
             canEdit: onlineOnly ? baseRecord.canEdit : false,
             canDelete: false,
             transferLines: [],
+            journey: onlineOnly ? baseRecord.journey : [],
             transferRecipients: [],
             canRequestTransfer: false,
             incomingTransferId: null,
@@ -3671,7 +3790,7 @@ function TransactionsView({
           recordType: "expense" as const,
           editDate: expense.expense_date,
           editAmount: numberValue(expense.amount),
-          canEdit: owner || (expense.spent_by === profile.id && pendingApproval),
+          canEdit: pendingApproval && (owner || expense.spent_by === profile.id),
           canDelete: owner,
           pendingApproval,
           icon: <ReceiptText size={24} />,
@@ -3834,6 +3953,12 @@ function TransactionsView({
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
+  const selectedPayment = selectedTransactionActionRecord?.recordType === "payment"
+    ? payments.find((payment) => payment.id === selectedTransactionActionRecord.id || `${payment.id}-online` === selectedTransactionActionRecord.id) ?? null
+    : null;
+  const selectedExpense = selectedTransactionActionRecord?.recordType === "expense"
+    ? expenses.find((expense) => expense.id === selectedTransactionActionRecord.id) ?? null
+    : null;
   const closeTransactionAction = () => setTransactionAction(null);
   const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
     trigger.closest("details")?.removeAttribute("open");
@@ -3958,16 +4083,71 @@ function TransactionsView({
                     <div className="history-card-icon">{record.icon}</div>
                     <div className="history-card-main">
                       <strong>{record.title}</strong>
-                      <p>{record.meta}</p>
-                      <div className="history-badge-row">
-                        <span className={`status-chip status-${record.statusTone}`}>{record.status}</span>
-                        {record.modeLabel ? <span className="history-mode-badge">{record.modeLabel}</span> : null}
+                      {record.businessLabel ? <span className="history-business-badge">{record.businessLabel}</span> : <p>{record.meta}</p>}
+                    </div>
+                    <div className="history-card-side">
+                      <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
+                        {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
+                      </strong>
+                      {record.kind === "collection" ? (
+                        <PaymentAmountSplit cashAmount={record.cashAmount} onlineAmount={record.onlineAmount} />
+                      ) : null}
+                      {record.kind === "settlement" && record.filter === "cash_out" && record.amount < 0 && record.onlineAmount > 0 ? (
+                        <PaymentAmountSplit cashAmount={record.cashAmount} onlineAmount={record.onlineAmount} />
+                      ) : null}
+                      {!record.journey || record.journey.length === 0 ? (
+                        <time className="history-transaction-time" dateTime={record.sortAt}>{formatIndiaTime(record.sortAt)}</time>
+                      ) : null}
+                      {record.kind === "settlement" ? <span>{record.filter === "cash_in" ? t("cashIn") : t("cashOut")}</span> : null}
+                    </div>
+                    <details className="history-actions-menu">
+                      <summary aria-label={t("moreOptions")}>
+                        <MoreHorizontal size={18} />
+                      </summary>
+                      <div className="details-menu transaction-options-menu">
+                        <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("detail", `${record.kind}-${record.id}`, event.currentTarget)}>
+                          <ReceiptText size={18} />
+                          <span>View details</span>
+                        </button>
+                        {record.recordType && record.canApprove ? (
+                          <form onSubmit={(event) => submitWith(event, approveRecordAction, setNotice, startTransition, false)}>
+                            <input type="hidden" name="record_type" value={record.recordType} />
+                            <input type="hidden" name="id" value={record.id} />
+                            <input type="hidden" name="decision" value="approved" />
+                            <button className="transaction-option-button" type="submit">
+                              <Check size={18} />
+                              <span>{t("approve")}</span>
+                            </button>
+                          </form>
+                        ) : record.recordType && record.approvalBlockedByTransfer ? (
+                          <button className="transaction-option-button" type="button" disabled title={t("resolveTransferFirst")}>
+                            <Check size={18} />
+                            <span>{t("resolveTransferFirst")}</span>
+                          </button>
+                        ) : null}
+                        {record.recordType && record.canEdit ? (
+                          <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("edit", `${record.kind}-${record.id}`, event.currentTarget)}>
+                            <Pencil size={18} />
+                            <span>{t("editTransaction")}</span>
+                          </button>
+                        ) : null}
+                        {record.recordType && record.canRequestTransfer ? (
+                          <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}>
+                            <ArrowUp size={18} />
+                            <span>{t("transferTransaction")}</span>
+                          </button>
+                        ) : null}
+                        {record.recordType && record.canDelete ? (
+                          <button className="transaction-option-button danger" type="button" onClick={(event) => openTransactionAction("delete", `${record.kind}-${record.id}`, event.currentTarget)}>
+                            <Trash2 size={18} />
+                            <span>{t("deleteTransaction")}</span>
+                          </button>
+                        ) : null}
                       </div>
-                      {record.transferLines && record.transferLines.length > 0 ? (
-                        <div className="history-transfer-panel">
-                          {record.transferLines.map((line, index) => (
-                            <span key={`${line}-${index}`}>{line}</span>
-                          ))}
+                    </details>
+                    {record.journey && record.journey.length > 0 ? (
+                      <div className="history-card-flow">
+                        <TransactionJourney steps={record.journey}>
                           {record.incomingTransferId ? (
                             <div className="history-transfer-actions">
                               <MiniAction
@@ -3988,82 +4168,17 @@ function TransactionsView({
                               />
                             </div>
                           ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="history-card-side">
-                      <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
-                        {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
-                      </strong>
-                      <time className="history-transaction-time" dateTime={record.sortAt}>{formatIndiaTime(record.sortAt)}</time>
-                      {record.filter === "cash_in" && record.amount > 0 ? (
-                        <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
-                          {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
-                        </span>
-                      ) : null}
-                      {record.filter === "cash_out" && record.amount < 0 && record.onlineAmount > 0 ? (
-                        <span className={`history-online-amount ${record.onlineTone ?? "neutral"}`}>
-                          {t("cash")} {formatMoney(record.cashAmount)} · {t("online")} {formatMoney(record.onlineAmount)}
-                        </span>
-                      ) : null}
-                      {record.kind === "settlement" ? <span>{record.filter === "cash_in" ? t("cashIn") : t("cashOut")}</span> : null}
-                      <div className="history-card-controls">
-                        {record.canApprove && record.recordType ? (
-                          <MiniAction
-                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
-                            label={t("approve")}
-                            tone="approve"
-                            icon={<Check size={20} strokeWidth={3} />}
-                            action={approveRecordAction}
-                            setNotice={setNotice}
-                            startTransition={startTransition}
-                          />
-                        ) : record.approvalBlockedByTransfer ? (
-                          <button className="history-approve-button blocked" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
-                            <Check size={20} strokeWidth={3} />
-                          </button>
-                        ) : null}
-                        {record.recordType && (record.canEdit || record.canDelete || record.canRequestTransfer) ? (
-                          <details className="history-actions-menu">
-                            <summary aria-label={t("moreOptions")}>
-                              <MoreHorizontal size={18} />
-                            </summary>
-                            <div className="details-menu transaction-options-menu">
-                              {record.canEdit ? (
-                                <button
-                                  className="transaction-option-button"
-                                  type="button"
-                                  onClick={(event) => openTransactionAction("edit", `${record.kind}-${record.id}`, event.currentTarget)}
-                                >
-                                  <Pencil size={18} />
-                                  <span>{t("editTransaction")}</span>
-                                </button>
-                              ) : null}
-                              {record.canRequestTransfer ? (
-                                <button
-                                  className="transaction-option-button"
-                                  type="button"
-                                  onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}
-                                >
-                                  <ArrowUp size={18} />
-                                  <span>{t("transferTransaction")}</span>
-                                </button>
-                              ) : null}
-                              {record.canDelete ? (
-                                <button
-                                  className="transaction-option-button danger"
-                                  type="button"
-                                  onClick={(event) => openTransactionAction("delete", `${record.kind}-${record.id}`, event.currentTarget)}
-                                >
-                                  <Trash2 size={18} />
-                                  <span>{t("deleteTransaction")}</span>
-                                </button>
-                              ) : null}
-                            </div>
-                          </details>
-                        ) : null}
+                        </TransactionJourney>
                       </div>
-                    </div>
+                    ) : record.transferLines && record.transferLines.length > 0 ? (
+                      <div className="history-card-flow">
+                        <div className="history-transfer-panel">
+                          {record.transferLines.map((line, index) => (
+                            <span key={`${line}-${index}`}>{line}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
@@ -4074,12 +4189,12 @@ function TransactionsView({
         )}
       </section>
 
-      {transactionAction && selectedTransactionActionRecord?.recordType ? (
+      {transactionAction && selectedTransactionActionRecord ? (
         <div
           className="modal-layer"
           role="dialog"
           aria-modal="true"
-          aria-label={transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : t("deleteTransaction")}
+          aria-label={transactionAction.kind === "detail" ? "Transaction details" : transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : t("deleteTransaction")}
         >
           <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeTransactionAction} />
           <section className="action-sheet transaction-action-sheet">
@@ -4087,7 +4202,9 @@ function TransactionsView({
               <div>
                 <p className="eyebrow">{selectedTransactionActionRecord.title}</p>
                 <h2>
-                  {transactionAction.kind === "transfer"
+                  {transactionAction.kind === "detail"
+                    ? "Transaction details"
+                    : transactionAction.kind === "transfer"
                     ? t("transferTransaction")
                     : transactionAction.kind === "edit"
                       ? t("editTransaction")
@@ -4099,6 +4216,31 @@ function TransactionsView({
                 <X size={18} />
               </button>
             </header>
+
+            {transactionAction.kind === "detail" ? (
+              <div className="transaction-detail-page">
+                <section className="transaction-detail-summary">
+                  <span>{selectedTransactionActionRecord.businessLabel ?? selectedTransactionActionRecord.meta}</span>
+                  <strong className={selectedTransactionActionRecord.amountTone ?? (selectedTransactionActionRecord.amount >= 0 ? "positive" : "negative")}>
+                    {selectedTransactionActionRecord.amount >= 0 ? "+" : "-"}{formatMoney(Math.abs(selectedTransactionActionRecord.amount))}
+                  </strong>
+                  {selectedPayment ? <PaymentAmountSplit cashAmount={paymentCashAmount(selectedPayment)} onlineAmount={paymentOnlineAmount(selectedPayment)} /> : null}
+                </section>
+                <dl className="transaction-detail-grid">
+                  <div><dt>Made by</dt><dd>{profileName(profiles, selectedTransactionActionRecord.ownerId, t)}</dd></div>
+                  <div><dt>Date and time</dt><dd>{selectedTransactionActionRecord.date} · {formatIndiaTime(selectedTransactionActionRecord.sortAt)}</dd></div>
+                  {selectedPayment?.customer_name ? <div><dt>For</dt><dd>{selectedPayment.customer_name}</dd></div> : null}
+                  {selectedPayment?.roll_number ? <div><dt>Roll number</dt><dd>{selectedPayment.roll_number}</dd></div> : null}
+                  {selectedPayment?.room_number_snapshot ? <div><dt>Room</dt><dd>{selectedPayment.room_number_snapshot}</dd></div> : null}
+                  {selectedPayment?.seat_number ? <div><dt>Seat</dt><dd>{selectedPayment.seat_number}</dd></div> : null}
+                  {selectedPayment?.description || selectedExpense?.description ? <div className="full"><dt>Purpose</dt><dd>{selectedPayment?.description ?? selectedExpense?.description}</dd></div> : null}
+                  {selectedPayment?.remark || selectedExpense?.remark ? <div className="full"><dt>Note</dt><dd>{selectedPayment?.remark ?? selectedExpense?.remark}</dd></div> : null}
+                </dl>
+                {selectedTransactionActionRecord.journey?.length ? <section><h3>Transaction flow</h3><TransactionJourney steps={selectedTransactionActionRecord.journey} /></section> : null}
+                {selectedTransactionActionRecord.transferLines?.length ? <section><h3>Transfer activity</h3><div className="history-transfer-panel">{selectedTransactionActionRecord.transferLines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}</div></section> : null}
+                {selectedPayment?.photo_path || selectedExpense?.photo_path ? <section><h3>Attachment</h3><a className="transaction-attachment" href={selectedPayment?.photo_path ?? selectedExpense?.photo_path ?? undefined} target="_blank" rel="noreferrer">Open attachment</a></section> : null}
+              </div>
+            ) : null}
 
             {transactionAction.kind === "transfer" ? (
               <form
@@ -5738,16 +5880,17 @@ function ActionSheet({
   setSelectedPositive,
   setSelectedNegative,
   canUsePayment,
-  owner,
   rooms,
   mainCourses,
   skillCourses,
   referrals,
   payments,
   libraryStudents,
-  moneyMovementProfiles,
+  receiveMoneyProfiles,
+  sendMoneyProfiles,
   settlementDate,
   agentIncentiveBalances,
+  canPayAgentIncentive,
   closeAction,
   setNotice,
   startTransition,
@@ -5758,16 +5901,17 @@ function ActionSheet({
   setSelectedPositive: (type: PositiveFlow | null) => void;
   setSelectedNegative: (type: NegativeFlow | null) => void;
   canUsePayment: (type: BusinessType | "expense") => boolean;
-  owner: boolean;
   rooms: { id: string; room_number: string; label: string | null }[];
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
   payments: Payment[];
   libraryStudents: LibraryStudent[];
-  moneyMovementProfiles: Profile[];
+  receiveMoneyProfiles: Profile[];
+  sendMoneyProfiles: Profile[];
   settlementDate: string;
   agentIncentiveBalances: AgentIncentiveBalance[];
+  canPayAgentIncentive: boolean;
   closeAction: () => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
@@ -5776,15 +5920,15 @@ function ActionSheet({
   const positiveOptions = paymentOptions.filter((option): option is { type: BusinessType; labelKey: string; icon: ReactNode } =>
     option.type !== "expense" && canUsePayment(option.type),
   );
-  const positiveSettlementOptions = owner && moneyMovementProfiles.length > 0
+  const positiveSettlementOptions = receiveMoneyProfiles.length > 0
     ? [{ type: "receive_money" as const, labelKey: "receiveMoney", icon: <ArrowDown size={18} /> }]
     : [];
   const negativeOptions = [
     ...(canUsePayment("expense") ? [{ type: "expense" as const, labelKey: "expense", icon: <Banknote size={18} /> }] : []),
-    ...(owner && moneyMovementProfiles.length > 0
+    ...(sendMoneyProfiles.length > 0
       ? [{ type: "send_money" as const, labelKey: "sendMoney", icon: <ArrowUp size={18} /> }]
       : []),
-    ...(owner && agentIncentiveBalances.length > 0
+    ...(canPayAgentIncentive && agentIncentiveBalances.length > 0
       ? [{ type: "agent_settlement" as const, labelKey: "agentPayout", icon: <WalletCards size={18} /> }]
       : []),
   ];
@@ -5853,7 +5997,7 @@ function ActionSheet({
             </button>
             <MoneySettlementForm
               direction="received_from_user"
-              profiles={moneyMovementProfiles}
+              profiles={receiveMoneyProfiles}
               settlementDate={settlementDate}
               setNotice={setNotice}
               startTransition={startTransition}
@@ -5892,7 +6036,7 @@ function ActionSheet({
             </button>
             <MoneySettlementForm
               direction="sent_to_user"
-              profiles={moneyMovementProfiles}
+              profiles={sendMoneyProfiles}
               settlementDate={settlementDate}
               setNotice={setNotice}
               startTransition={startTransition}
@@ -7392,15 +7536,24 @@ function ClosingView({
   const { t } = useLanguage();
   const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
-  const visibleSummaries = owner
-    ? summaries
-        .filter((summary) => summary.profile.active && summary.profile.membership_role !== "sales_agent")
-        .sort((left, right) => {
-          const leftRank = left.profile.id === profile.id ? 0 : isOwnerish(left.profile.role) ? 1 : 2;
-          const rightRank = right.profile.id === profile.id ? 0 : isOwnerish(right.profile.role) ? 1 : 2;
-          return leftRank - rightRank || left.profile.full_name.localeCompare(right.profile.full_name);
-        })
-    : summaries.filter((summary) => summary.profile.id === profile.id);
+  const visibleSummaries = summaries
+    .filter((summary) => {
+      if (!summary.profile.active || summary.profile.membership_role === "sales_agent") return false;
+      if (profile.membership_role === "primary_owner") return true;
+      if (profile.membership_role === "co_owner") {
+        return summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff";
+      }
+      return summary.profile.id === profile.id;
+    })
+    .sort((left, right) => {
+      const rank = (item: UserClosingSummary) => {
+        if (item.profile.id === profile.id) return 0;
+        if (item.profile.membership_role === "primary_owner") return 1;
+        if (item.profile.membership_role === "co_owner") return 2;
+        return 3;
+      };
+      return rank(left) - rank(right) || left.profile.full_name.localeCompare(right.profile.full_name);
+    });
   const visibleClosingProfileIds = new Set(visibleSummaries.map((summary) => summary.profile.id));
   const selectedReviewSummary = reviewProfileId ? visibleSummaries.find((summary) => summary.profile.id === reviewProfileId) ?? null : null;
   const pendingReviewSummary = (summary: UserClosingSummary) => {
@@ -7524,6 +7677,12 @@ function ClosingView({
           {visibleSummaries.map((summary) => {
             const pendingSummary = pendingReviewSummary(summary);
             const cashToReceive = Math.max(summary.closing, 0);
+            const canReceiveFromUser = summary.profile.id !== profile.id && (
+              (profile.membership_role === "primary_owner" && (
+                summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff"
+              )) ||
+              (profile.membership_role === "co_owner" && summary.profile.membership_role === "staff")
+            );
             const settlementEntryKey = `${date}:${summary.profile.id}`;
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey] ?? (cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
@@ -7573,7 +7732,7 @@ function ClosingView({
                     <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
                       {t("reviewAndSettle")}
                     </button>
-                    {summary.profile.id !== profile.id ? (
+                    {canReceiveFromUser ? (
                       <form
                         className="closing-receive-form"
                         onSubmit={(event) =>
@@ -7667,6 +7826,7 @@ function ClosingReviewDetail({
         onlineStatus: paymentComponentStatus(payment, "online"),
         note: paymentReference(payment, t),
         transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
+        journey: paymentJourneySteps(payment, paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
         tone: "positive" as const,
         icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
@@ -7695,6 +7855,7 @@ function ClosingReviewDetail({
         onlineStatus: null,
         note: expenseReference(expense, t),
         transferLines: [] as string[],
+        journey: [] as TransactionJourneyStep[],
         hasPendingTransfer: false,
         tone: "negative" as const,
         icon: <ReceiptText size={22} />,
@@ -7845,7 +8006,9 @@ function ClosingReviewDetail({
                     </div>
                   )}
                   <p>{record.note}</p>
-                  {record.transferLines.length > 0 ? (
+                  {record.journey.length > 0 ? (
+                    <TransactionJourney steps={record.journey} />
+                  ) : record.transferLines.length > 0 ? (
                     <div className="review-transfer-note">
                       {record.transferLines.map((line, index) => (
                         <span key={`${line}-${index}`}>{line}</span>
@@ -8325,8 +8488,8 @@ function SettingsView({
             <h2 className="font-headline text-xl font-bold text-primary mb-1">Add user account</h2>
             <p className="text-sm text-on-surface-variant mb-4">
               {primaryOwner
-                ? "Create co-owner, staff, or sales-agent access. The account is active immediately; no invitation email is sent."
-                : "Create staff or sales-agent access. The account is active immediately; no invitation email is sent."}
+                ? "Create Manager, Staff, or Sales Agent access. The account is active immediately; no invitation email is sent."
+                : "Create Staff or Sales Agent access. The account is active immediately; no invitation email is sent."}
               {" "}If the email already has a Lenden account, its existing password is kept.
             </p>
             <form
@@ -8355,7 +8518,7 @@ function SettingsView({
                 >
                   <option value="staff">{t("staff")}</option>
                   <option value="sales_agent">{t("salesAgent")}</option>
-                  {primaryOwner ? <option value="owner">Co-owner</option> : null}
+                  {primaryOwner ? <option value="owner">Manager</option> : null}
                 </select>
               </label>
               {newUserRole === "staff" ? (
@@ -8399,9 +8562,9 @@ function SettingsView({
                       <span className="text-xs text-on-surface-variant block truncate">{item.email}</span>
                       <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">
                         {item.membership_role === "primary_owner"
-                          ? "Primary owner"
+                          ? "Owner"
                           : item.membership_role === "co_owner"
-                            ? "Co-owner"
+                            ? "Manager"
                             : t(roleLabelKeys[item.role] ?? item.role)}
                       </span>
                     </div>

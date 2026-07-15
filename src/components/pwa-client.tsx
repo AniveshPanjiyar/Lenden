@@ -1,6 +1,6 @@
 "use client";
 
-import { CloudOff, RefreshCw, Wifi, X } from "lucide-react";
+import { CloudOff, RefreshCw, Wifi } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -9,38 +9,10 @@ import {
   showOfflineDialogEvent,
 } from "@/lib/client-events";
 
-type NetworkState = "checking" | "online" | "slow" | "offline";
-
-type NetworkInformation = EventTarget & {
-  downlink?: number;
-  effectiveType?: string;
-  rtt?: number;
-};
-
-type NavigatorWithConnection = Navigator & {
-  connection?: NetworkInformation;
-  mozConnection?: NetworkInformation;
-  webkitConnection?: NetworkInformation;
-};
+type NetworkState = "checking" | "online" | "offline";
 
 const pullThreshold = 72;
 const maxPullDistance = 112;
-
-function browserConnection() {
-  if (typeof navigator === "undefined") return undefined;
-  const connectedNavigator = navigator as NavigatorWithConnection;
-  return connectedNavigator.connection ?? connectedNavigator.mozConnection ?? connectedNavigator.webkitConnection;
-}
-
-function connectionLooksSlow(connection = browserConnection()) {
-  if (!connection) return false;
-  return (
-    connection.effectiveType === "slow-2g" ||
-    connection.effectiveType === "2g" ||
-    (typeof connection.downlink === "number" && connection.downlink > 0 && connection.downlink < 1) ||
-    (typeof connection.rtt === "number" && connection.rtt > 900)
-  );
-}
 
 function scrollContainerFor(target: EventTarget | null) {
   let element = target instanceof HTMLElement ? target : null;
@@ -58,7 +30,6 @@ export function PwaClient() {
   const router = useRouter();
   const [networkState, setNetworkState] = useState<NetworkState>("checking");
   const [offlineDialogDismissed, setOfflineDialogDismissed] = useState(false);
-  const [slowNoticeDismissed, setSlowNoticeDismissed] = useState(false);
   const [recovered, setRecovered] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -76,8 +47,7 @@ export function PwaClient() {
     networkStateRef.current = nextState;
     setNetworkState(nextState);
     if (nextState === "offline" && previousState !== "offline") setOfflineDialogDismissed(false);
-    if (nextState === "slow" && previousState !== "slow") setSlowNoticeDismissed(false);
-    if (nextState === "online" && (previousState === "offline" || previousState === "slow")) {
+    if (nextState === "online" && previousState === "offline") {
       setRecovered(true);
       window.setTimeout(() => setRecovered(false), 4200);
     }
@@ -89,8 +59,7 @@ export function PwaClient() {
     const controller = new AbortController();
     probeAbortRef.current = controller;
     setCheckingConnection(true);
-    const timeoutId = window.setTimeout(() => controller.abort(), 5000);
-    const startedAt = performance.now();
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
 
     try {
       const response = await fetch(`/api/health?probe=${Date.now()}`, {
@@ -100,10 +69,13 @@ export function PwaClient() {
       });
       if (!response.ok) throw new Error(`Health probe failed (${response.status})`);
       if (probeId !== probeIdRef.current) return;
-      const tookMs = performance.now() - startedAt;
-      updateNetworkState(connectionLooksSlow() || tookMs > 2500 ? "slow" : "online");
+      updateNetworkState("online");
     } catch {
-      if (probeId === probeIdRef.current) updateNetworkState("offline");
+      if (probeId === probeIdRef.current) {
+        // A health endpoint can time out while the device still has internet.
+        // Only the browser's offline signal is allowed to open the offline dialog.
+        updateNetworkState(navigator.onLine === false ? "offline" : "online");
+      }
     } finally {
       window.clearTimeout(timeoutId);
       if (probeId === probeIdRef.current) setCheckingConnection(false);
@@ -157,7 +129,9 @@ export function PwaClient() {
     }
 
     function handleShowOfflineDialog() {
-      setOfflineDialogDismissed(false);
+      if (navigator.onLine === false) {
+        setOfflineDialogDismissed(false);
+      }
       void probeConnection();
     }
 
@@ -198,9 +172,7 @@ export function PwaClient() {
       }
     }
 
-    const connection = browserConnection();
-    const initialProbeId = window.setTimeout(() => void probeConnection(), 0);
-    const probeIntervalId = window.setInterval(() => void probeConnection(), 30000);
+    const initialProbeId = window.setTimeout(handleConnectionChange, 0);
 
     window.addEventListener("online", handleConnectionChange);
     window.addEventListener("offline", handleConnectionChange);
@@ -213,7 +185,6 @@ export function PwaClient() {
     window.addEventListener("touchmove", handleTouchMove, { passive: false });
     window.addEventListener("touchend", handleTouchEnd, { passive: true });
     window.addEventListener("touchcancel", handleTouchEnd, { passive: true });
-    connection?.addEventListener("change", handleConnectionChange);
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
@@ -227,7 +198,6 @@ export function PwaClient() {
     return () => {
       probeAbortRef.current?.abort();
       window.clearTimeout(initialProbeId);
-      window.clearInterval(probeIntervalId);
       if (refreshSafetyTimerRef.current !== null) window.clearTimeout(refreshSafetyTimerRef.current);
       window.removeEventListener("online", handleConnectionChange);
       window.removeEventListener("offline", handleConnectionChange);
@@ -240,9 +210,8 @@ export function PwaClient() {
       window.removeEventListener("touchmove", handleTouchMove);
       window.removeEventListener("touchend", handleTouchEnd);
       window.removeEventListener("touchcancel", handleTouchEnd);
-      connection?.removeEventListener("change", handleConnectionChange);
     };
-  }, [finishRefresh, probeConnection, triggerRefresh]);
+  }, [finishRefresh, probeConnection, triggerRefresh, updateNetworkState]);
 
   useEffect(() => {
     document.body.dataset.lendenNetwork = networkState;
@@ -254,8 +223,7 @@ export function PwaClient() {
   const showOfflineDialog = networkState === "offline" && !offlineDialogDismissed;
   const showStatusPill =
     recovered ||
-    (networkState === "offline" && offlineDialogDismissed) ||
-    (networkState === "slow" && !slowNoticeDismissed);
+    (networkState === "offline" && offlineDialogDismissed);
 
   return (
     <>
@@ -272,22 +240,16 @@ export function PwaClient() {
       ) : null}
 
       {showStatusPill ? (
-        <div className={`network-status-pill ${networkState === "offline" ? "offline" : networkState === "slow" ? "slow" : "online"}`} role="status" aria-live="polite">
+        <div className={`network-status-pill ${networkState === "offline" ? "offline" : "online"}`} role="status" aria-live="polite">
           {networkState === "offline" ? <CloudOff size={18} aria-hidden="true" /> : <Wifi size={18} aria-hidden="true" />}
           <span>
             {recovered
               ? "Back online. Your app can update again."
-              : networkState === "offline"
-                ? "Offline — showing saved data"
-                : "Slow connection — updates may take longer"}
+              : "Offline — showing saved data"}
           </span>
           {networkState === "offline" ? (
             <button className={checkingConnection ? "network-checking" : ""} type="button" onClick={() => void probeConnection()} aria-label="Retry connection" disabled={checkingConnection}>
               <RefreshCw size={17} />
-            </button>
-          ) : networkState === "slow" ? (
-            <button type="button" onClick={() => setSlowNoticeDismissed(true)} aria-label="Dismiss slow connection message">
-              <X size={17} />
             </button>
           ) : null}
         </div>

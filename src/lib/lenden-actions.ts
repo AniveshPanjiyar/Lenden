@@ -244,6 +244,25 @@ function isMissingPaymentComponentApprovalSchemaError(error: unknown) {
   ]);
 }
 
+function isMissingPaymentApprovalJourneySchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["approved_by", "approved_at"]);
+}
+
+async function updatePaymentApprovalFields(
+  admin: SupabaseAdminClient,
+  paymentId: string,
+  updates: Record<string, unknown>,
+) {
+  let updateResult = await admin.from("payments").update(updates).eq("id", paymentId);
+  if (updateResult.error && isMissingPaymentApprovalJourneySchemaError(updateResult.error)) {
+    const fallbackUpdates = { ...updates };
+    delete fallbackUpdates.approved_by;
+    delete fallbackUpdates.approved_at;
+    updateResult = await admin.from("payments").update(fallbackUpdates).eq("id", paymentId);
+  }
+  return updateResult;
+}
+
 function isMissingStudentAadharSidesSchemaError(error: unknown) {
   return isMissingDbSchemaError(error, ["aadhar_photo_url", "aadhar_back_photo_url"]);
 }
@@ -297,7 +316,7 @@ function requireBusinessOwner(role: BusinessRole) {
 
 function requireBusinessSettingsManager(profile: LendenActionProfile) {
   if (profile.businessRole !== "primary_owner" && profile.accessMode !== "support") {
-    throw new Error("Only the primary owner can change business settings.");
+    throw new Error("Only the Owner can change business settings.");
   }
 }
 
@@ -1195,7 +1214,7 @@ const handlers = {
     }
     const membershipRole: BusinessRole = role === "owner" ? "co_owner" : role as "staff" | "sales_agent";
     if (membershipRole === "co_owner" && profile.businessRole !== "primary_owner" && profile.accessMode !== "support") {
-      return fail("Only the primary owner can add another owner.");
+      return fail("Only the Owner can add a Manager.");
     }
     const permissions = membershipRole === "staff" ? permissionsFromForm(formData) : [];
 
@@ -1346,7 +1365,7 @@ const handlers = {
 
   changeUserPassword: withErrors("Could not change password.", async (formData, { admin, authAdmin, profile, idempotencyKey }) => {
     if (profile.businessRole !== "primary_owner" || profile.accessMode !== "member") {
-      return fail("Only the primary owner can reset member passwords.");
+      return fail("Only the Owner can reset member passwords.");
     }
 
     const profileId = asString(formData, "profile_id");
@@ -1365,7 +1384,7 @@ const handlers = {
     if (targetMembershipResponse.error || !targetMembership) {
       throw new Error(targetMembershipResponse.error?.message ?? "Business membership not found.");
     }
-    if (targetMembership.role === "primary_owner") return fail("The primary owner must manage their own password.");
+    if (targetMembership.role === "primary_owner") return fail("The Owner must manage their own password.");
     if (targetMembership.status !== "active") return fail("Reactivate this member before resetting their password.");
 
     const activeMembershipsResponse = await authAdmin
@@ -1431,8 +1450,8 @@ const handlers = {
       .single();
     const targetMembership = typedData<{ id: string; role: BusinessRole; status: string }>(targetMembershipResponse);
     if (targetMembershipResponse.error || !targetMembership) throw new Error(targetMembershipResponse.error?.message ?? "Membership not found.");
-    if (targetMembership.role === "primary_owner") return fail("Transfer primary ownership before removing this owner.");
-    if (profile.businessRole === "co_owner" && targetMembership.role === "co_owner") return fail("Co-owners cannot remove other owners.");
+    if (targetMembership.role === "primary_owner") return fail("Transfer ownership before removing the Owner.");
+    if (profile.businessRole === "co_owner" && targetMembership.role === "co_owner") return fail("Managers cannot remove other Managers.");
 
     const { error } = await admin.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", targetMembership.id);
     if (error) throw new Error(error.message);
@@ -1666,6 +1685,8 @@ const handlers = {
       online_approval_status: onlineCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
       cash_approved_at: ownerCreated && cashCollection > 0 ? createdAt : null,
       online_approved_at: ownerCreated && onlineCollection > 0 ? createdAt : null,
+      approved_by: ownerCreated ? profile.id : null,
+      approved_at: ownerCreated ? createdAt : null,
       client_request_id: requestKey,
     };
     if (libraryStudentId) {
@@ -1690,6 +1711,15 @@ const handlers = {
         ("aadhar_photo_url" in paymentPayloadForInsert || "aadhar_back_photo_url" in paymentPayloadForInsert)
       ) {
         return fail("Apply the student Aadhar sides migration before saving Aadhar images.");
+      }
+
+      if (
+        isMissingPaymentApprovalJourneySchemaError(paymentResult.error) &&
+        "approved_by" in paymentPayloadForInsert
+      ) {
+        delete paymentPayloadForInsert.approved_by;
+        delete paymentPayloadForInsert.approved_at;
+        continue;
       }
 
       if (
@@ -2143,14 +2173,17 @@ const handlers = {
         (onlineAmount <= 0 || nextOnlineDecision === "approved");
       const componentStatusField = paymentComponent === "cash" ? "cash_approval_status" : "online_approval_status";
       const componentApprovedAtField = paymentComponent === "cash" ? "cash_approved_at" : "online_approved_at";
-      const updateResult = await admin
-        .from("payments")
-        .update({
-          [componentStatusField]: "approved",
-          [componentApprovedAtField]: new Date().toISOString(),
-          approval_status: allComponentsApproved ? "approved" : currentDecision,
-        })
-        .eq("id", id);
+      const approvedAt = new Date().toISOString();
+      const componentUpdates: Record<string, unknown> = {
+        [componentStatusField]: "approved",
+        [componentApprovedAtField]: approvedAt,
+        approval_status: allComponentsApproved ? "approved" : currentDecision,
+      };
+      if (allComponentsApproved) {
+        componentUpdates.approved_by = profile.id;
+        componentUpdates.approved_at = approvedAt;
+      }
+      const updateResult = await updatePaymentApprovalFields(admin, id, componentUpdates);
       if (updateResult.error) {
         if (isMissingPaymentComponentApprovalSchemaError(updateResult.error)) {
           return fail("Apply the mixed payment approval migration before approving payment values separately.");
@@ -2219,8 +2252,12 @@ const handlers = {
           updates.online_approval_status = "approved";
           updates.online_approved_at = reviewedAt;
         }
+        updates.approved_by = profile.id;
+        updates.approved_at = reviewedAt;
       }
-      const { error } = await admin.from(table).update(updates).eq("id", id);
+      const { error } = recordType === "payment"
+        ? await updatePaymentApprovalFields(admin, id, updates)
+        : await admin.from(table).update(updates).eq("id", id);
       if (error) {
         if (recordType === "payment" && isMissingPaymentComponentApprovalSchemaError(error)) {
           if (String(existing.mode) === "mixed") {
@@ -2349,8 +2386,8 @@ const handlers = {
     if (String(record.record_status ?? "active") !== "active") {
       return fail("Only active transactions can be edited.");
     }
-    if (effectivelyApproved && !isBusinessOwner(profile.businessRole)) {
-      return fail("Only an owner can edit an approved transaction.");
+    if (effectivelyApproved) {
+      return fail("Approved transactions cannot be edited.");
     }
     if (recordType === "payment") {
       if (!effectivelyApproved && paymentHasApprovedComponent(record)) {
@@ -2400,26 +2437,6 @@ const handlers = {
 
     const { error } = await admin.from(table).update(updates).eq("id", id);
     if (error) throw new Error(error.message);
-
-    if (effectivelyApproved) {
-      await removeRecordLedgerEntries(admin, recordType, id);
-      const updatedCashAmount = recordType === "expense"
-        ? record.mode === "cash" ? amount : 0
-        : record.mode === "mixed" ? paymentCashCollection(record) : record.mode === "cash" ? amount : 0;
-      if (updatedCashAmount > 0) {
-        await ensureLedgerEntry(admin, {
-          accountProfileId: String(recordType === "expense" ? record.spent_by : record.current_holder_id ?? record.collected_by),
-          amount: recordType === "expense" ? -updatedCashAmount : updatedCashAmount,
-          entryDate: date,
-          sourceType: recordType,
-          sourceId: id,
-          description: recordType === "expense"
-            ? `Expense: ${String(description ?? record.description ?? "Expense")}`
-            : `Cash collected for ${String(record.business_type ?? "payment").replace("_", " ")}`,
-          createdBy: profile.id,
-        });
-      }
-    }
 
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id ? await ownerRecipientIds(admin, profile.businessId, profile.id) : [recordOwnerId],
@@ -2970,22 +2987,28 @@ const handlers = {
     if (!selectedProfile?.active || selectedProfile.status !== "active") {
       return fail("Choose an active user.");
     }
-    if (isBusinessSalesAgent(selectedProfile.role) && !isBusinessOwner(profile.businessRole)) {
-      return fail("Only an owner can send or receive money with a sales agent.");
+    if (isBusinessSalesAgent(selectedProfile.role)) {
+      return fail("Use the agent incentive payout flow for a sales agent.");
     }
-
-    const actorOwnerish = isBusinessOwner(profile.businessRole);
-    const counterpartyOwnerish = isBusinessOwner(selectedProfile.role);
-    if (!actorOwnerish && !counterpartyOwnerish) {
-      return fail("Staff can only send or receive money with an owner.");
+    if (profile.businessRole === "co_owner") {
+      if (direction === "received_from_user" && selectedProfile.role !== "staff") {
+        return fail("A Manager can receive cash only from Staff.");
+      }
+      if (direction === "sent_to_user" && selectedProfile.role !== "primary_owner") {
+        return fail("A Manager can settle cash only to the Owner.");
+      }
+    } else if (profile.businessRole === "primary_owner" && !["co_owner", "staff"].includes(selectedProfile.role)) {
+      return fail("Choose an active Manager or Staff member.");
     }
 
     const fromProfileId = direction === "received_from_user" ? counterpartyProfileId : profile.id;
     const toProfileId = direction === "received_from_user" ? profile.id : counterpartyProfileId;
-    const senderOwnerish = direction === "received_from_user" ? counterpartyOwnerish : actorOwnerish;
-    const movementType = !senderOwnerish && (direction === "sent_to_user" ? counterpartyOwnerish : actorOwnerish)
-      ? "settlement"
-      : "transfer";
+    const senderRole = direction === "received_from_user" ? selectedProfile.role : profile.businessRole;
+    const receiverRole = direction === "received_from_user" ? profile.businessRole : selectedProfile.role;
+    const movementType = (
+      (senderRole === "staff" && (receiverRole === "co_owner" || receiverRole === "primary_owner")) ||
+      (senderRole === "co_owner" && receiverRole === "primary_owner")
+    ) ? "settlement" : "transfer";
 
     const existingMovement = await existingByClientRequest<{
       id: string;
@@ -3023,7 +3046,7 @@ const handlers = {
     }
 
     const senderBalance = await profileCashBalanceAt(admin, fromProfileId, settlementDate);
-    if (!senderOwnerish) {
+    if (senderRole !== "primary_owner") {
       if (senderBalance <= 0) return fail("No cash is available to send from this user.");
       if (amount > senderBalance) return fail("Amount is higher than this user's closing balance.");
     }
@@ -3085,7 +3108,9 @@ const handlers = {
   }),
 
   createAgentSettlement: withErrors("Could not record incentive payout.", async (formData, { admin, profile, idempotencyKey }) => {
-    requireBusinessOwner(profile.businessRole);
+    if (profile.businessRole !== "primary_owner") {
+      return fail("Only the Owner can record agent incentive payouts.");
+    }
     const agentId = asString(formData, "agent_id");
     const amount = asNumber(formData, "amount") ?? 0;
     const requestKey = idempotencyKey ?? crypto.randomUUID();

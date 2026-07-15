@@ -15,7 +15,7 @@ export function OwnershipTransferForm({
     const targetId = String(formData.get("profile_id") ?? "");
     const target = candidates.find((candidate) => candidate.profileId === targetId);
     const confirmed = window.confirm(
-      `Transfer ownership of ${businessName} to ${target?.label ?? "this co-owner"}? You will become a co-owner and they will receive primary-owner control.`,
+      `Transfer ownership of ${businessName} to ${target?.label ?? "this Manager"}? You will become a Manager and they will receive full Owner control.`,
     );
     if (!confirmed) event.preventDefault();
   }
@@ -23,7 +23,7 @@ export function OwnershipTransferForm({
   return (
     <form action={transferPrimaryOwnershipAction} className="inline-admin-form" onSubmit={confirmTransfer}>
       <select name="profile_id" required defaultValue="">
-        <option value="" disabled>Choose active co-owner</option>
+        <option value="" disabled>Choose active Manager</option>
         {candidates.map((candidate) => (
           <option key={candidate.profileId} value={candidate.profileId}>{candidate.label}</option>
         ))}

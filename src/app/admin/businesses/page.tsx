@@ -36,7 +36,7 @@ export default async function BusinessAdminPage() {
           const businessMemberships = (memberships ?? []).filter((membership) => membership.business_id === business.id);
           const primary = businessMemberships.find((membership) => membership.role === "primary_owner" && membership.status === "active");
           const primaryProfile = primary ? profileMap.get(primary.profile_id) : null;
-          const coOwners = businessMemberships.filter((membership) => membership.role === "co_owner" && membership.status === "active");
+          const managers = businessMemberships.filter((membership) => membership.role === "co_owner" && membership.status === "active");
           return (
             <article className="admin-business-card" key={business.id}>
               <div className="admin-business-card-heading">
@@ -44,7 +44,7 @@ export default async function BusinessAdminPage() {
                 <span className={`status-pill ${business.status}`}>{business.status}</span>
               </div>
               <dl>
-                <div><dt>Primary owner</dt><dd>{primaryProfile ? `${primaryProfile.full_name} · ${primaryProfile.email}` : "Not assigned"}</dd></div>
+                <div><dt>Owner</dt><dd>{primaryProfile ? `${primaryProfile.full_name} · ${primaryProfile.email}` : "Not assigned"}</dd></div>
                 <div><dt>Active members</dt><dd>{businessMemberships.filter((membership) => membership.status === "active").length}</dd></div>
               </dl>
               <div className="admin-business-actions">
@@ -71,12 +71,12 @@ export default async function BusinessAdminPage() {
                     <button className="primary-button" type="submit">Start 30-minute support</button>
                   </form>
                 ) : null}
-                {coOwners.length > 0 ? (
+                {managers.length > 0 ? (
                   <details className="owner-recovery-panel">
-                    <summary>Primary-owner recovery</summary>
+                    <summary>Owner recovery</summary>
                     <form action={recoverPrimaryOwnerAction} className="support-start-form">
                       <input type="hidden" name="business_id" value={business.id} />
-                      <label>New primary owner<select name="profile_id" required defaultValue=""><option value="" disabled>Choose co-owner</option>{coOwners.map((membership) => {
+                      <label>New Owner<select name="profile_id" required defaultValue=""><option value="" disabled>Choose Manager</option>{managers.map((membership) => {
                         const candidate = profileMap.get(membership.profile_id);
                         return <option key={membership.profile_id} value={membership.profile_id}>{candidate?.full_name ?? membership.profile_id}</option>;
                       })}</select></label>

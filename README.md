@@ -55,15 +55,15 @@ This app no longer ships a Supabase Edge Function. Keep mutation logic in Next.j
 
 ## First Owner
 
-With the service role key set, open `/setup` and create the first platform administrator/primary owner. Platform administrators create tenants and generate primary-owner credentials at `/admin/businesses`; primary owners manage modules, credentials, and ownership, while co-owners can manage staff and sales-agent access.
+With the service role key set, open `/setup` and create the first platform administrator and business Owner. Platform administrators create tenants and generate Owner credentials at `/admin/businesses`; Owners manage modules, credentials, and ownership, while Managers can manage staff and sales-agent access.
 
 ## Implemented Workflows
 
 - Email/password login, no public signup screen
-- Global platform-admin access plus per-business primary owner, co-owner, staff, and sales-agent roles
+- Global platform-admin access plus per-business Owner, Manager, Staff, and Sales Agent roles
 - Audited 30-minute configuration-only support sessions that reject financial mutations
 - Direct temporary-password provisioning, owner-managed member password resets, and forced password replacement
-- Atomic primary-ownership transfer and audited platform recovery
+- Atomic ownership transfer and audited platform recovery
 - Business payment forms for room booking, library subscription, course payment, and general payment
 - Optional payment/expense photo upload to Supabase Storage
 - Expense entry with pending approval and immediate cash balance effect
@@ -71,8 +71,8 @@ With the service role key set, open `/setup` and create the first platform admin
 - Owner settlement by amount
 - Daily closing screen calculated from all previous unsettled ledger entries
 - Staff permissions by collection type
-- Primary-owner settings for rooms, courses, skill courses, and referral codes
-- Owner-to-co-owner cash movement, including the reverse direction
+- Owner-only settings for rooms, courses, skill courses, and referral codes
+- Cash settlement chain from Staff to Manager to Owner, with Owner funding transfers to Managers or Staff
 - Automatic referral-code deactivation when its sales-agent membership is suspended
 - Referral code linkage for sales-agent visibility
 - Owner approval/rejection and cancel request review

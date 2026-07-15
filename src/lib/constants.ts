@@ -6,7 +6,6 @@ export const permissionOptions = [
   { value: "collect_course", label: "Course collection" },
   { value: "collect_general", label: "General payment" },
   { value: "add_expense", label: "Add expense" },
-  { value: "transfer_money", label: "Transfer money" },
 ] as const;
 
 export const businessLabels: Record<BusinessType, string> = {
