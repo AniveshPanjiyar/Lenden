@@ -94,7 +94,7 @@ type TransactionJourneyStep = {
   person: string;
   action: string;
   role: string | null;
-  state: "complete" | "pending" | "rejected" | "verified";
+  state: "complete" | "sent" | "received" | "pending" | "rejected" | "verified";
   timestamp: string | null;
 };
 type LibraryMemberMode = "new" | "existing";
@@ -293,6 +293,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashInCollected: "IN",
     cashOut: "OUT",
     cashOutExpenses: "OUT",
+    cashTransfer: "CASH Transfer",
     cashWithStaff: "Cash with staff",
     remainingCashWithStaff: "Remaining cash in hand of staff",
     includesPendingStaffCash: "Includes pending cash held by staff",
@@ -596,6 +597,8 @@ const messages: Record<Language, Record<string, string>> = {
     yesterday: "Yesterday",
     receivedFromStaff: "Received from staff",
     receivedFromUser: "Received from user",
+    receivedBy: "Received by",
+    receiptPending: "Receipt pending",
     cashReceived: "Cash Received",
     cashSent: "Cash Sent",
     cashSettled: "Cash Settled",
@@ -656,6 +659,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashInCollected: "IN",
     cashOut: "OUT",
     cashOutExpenses: "OUT",
+    cashTransfer: "नकद ट्रांसफर",
     cashWithStaff: "स्टाफ के पास नकद",
     remainingCashWithStaff: "स्टाफ के पास बचा नकद",
     includesPendingStaffCash: "स्टाफ के पास बाकी मंजूरी वाला नकद भी शामिल है",
@@ -959,6 +963,8 @@ const messages: Record<Language, Record<string, string>> = {
     yesterday: "कल",
     receivedFromStaff: "स्टाफ से मिला",
     receivedFromUser: "यूजर से मिला",
+    receivedBy: "इन्होंने प्राप्त किया",
+    receiptPending: "प्राप्ति बाकी",
     cashReceived: "नकद मिला",
     cashSent: "नकद भेजा",
     cashSettled: "नकद जमा किया",
@@ -1017,6 +1023,11 @@ function useLanguage() {
 
 function labelForBusiness(type: BusinessType, t: (key: string) => string) {
   return t(businessLabelKeys[type]);
+}
+
+function transactionBusinessTag(type: BusinessType | null, t: (key: string) => string) {
+  if (type === "guest_house") return t("room");
+  return type ? labelForBusiness(type, t) : t("general");
 }
 
 function labelForMode(mode: PaymentMode, t: (key: string) => string) {
@@ -1411,6 +1422,32 @@ function paymentJourneySteps(
   const inferredApproverId = payment.approved_by ?? (ownerIds.has(payment.collected_by) ? payment.collected_by : null);
   const approver = profiles.find((item) => item.id === inferredApproverId);
   const approverRole = approver ? profileRoleLabel(approver, t) : null;
+  const cashAmount = paymentCashAmount(payment);
+  const onlineAmount = paymentOnlineAmount(payment);
+
+  if (cashAmount > 0 && onlineAmount > 0) {
+    const componentSteps: Array<{ component: "cash" | "online"; amount: number; approvedAt: string | null }> = [
+      { component: "cash", amount: cashAmount, approvedAt: payment.cash_approved_at },
+      { component: "online", amount: onlineAmount, approvedAt: payment.online_approved_at },
+    ];
+
+    componentSteps.forEach(({ component, amount, approvedAt }) => {
+      const status = paymentComponentStatus(payment, component) ?? "pending";
+      const componentApproved = status === "approved";
+      const componentRejected = status === "rejected" || status === "cancelled";
+      steps.push({
+        id: `${payment.id}-${component}-approval`,
+        person: `${t(component)} · ${labelForStatus(status, t)}`,
+        action: formatMoney(amount),
+        role: null,
+        state: componentApproved ? "verified" : componentRejected ? "rejected" : "pending",
+        timestamp: componentApproved ? approvedAt : null,
+      });
+    });
+
+    return steps;
+  }
+
   steps.push({
     id: `${payment.id}-approval`,
     person: approved
@@ -1427,8 +1464,117 @@ function paymentJourneySteps(
   return steps;
 }
 
+function expenseJourneySteps(
+  expense: Expense,
+  profiles: Profile[],
+  t: (key: string) => string,
+): TransactionJourneyStep[] {
+  const spender = profiles.find((item) => item.id === expense.spent_by);
+  const ownerIds = ownerProfileIdSet(profiles);
+  const approved = isEffectivelyApprovedExpense(expense, ownerIds);
+  const ownerAuthored = ownerIds.has(expense.spent_by);
+  const approverRole = spender ? profileRoleLabel(spender, t) : null;
+
+  return [
+    {
+      id: `${expense.id}-recorded`,
+      person: spender?.full_name ?? profileName(profiles, expense.spent_by, t),
+      action: t("expense"),
+      role: spender ? profileRoleLabel(spender, t) : null,
+      state: "complete",
+      timestamp: expense.created_at,
+    },
+    {
+      id: `${expense.id}-approval`,
+      person: approved
+        ? ownerAuthored && spender
+          ? `${t("approvedBy")} ${spender.full_name} (${approverRole})`
+          : labelForStatus("approved", t)
+        : t("approvalPending"),
+      action: approved ? "" : t("journeyAwaitingApproval"),
+      role: null,
+      state: approved ? "verified" : "pending",
+      timestamp: null,
+    },
+  ];
+}
+
+function cashTransferJourneySteps(
+  movement: MoneyMovement,
+  profiles: Profile[],
+  t: (key: string) => string,
+  perspective: "cash_in" | "cash_out",
+): TransactionJourneyStep[] {
+  const sender = profiles.find((item) => item.id === movement.from_profile_id);
+  const recipient = profiles.find((item) => item.id === movement.to_profile_id);
+  const recipientName = recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t);
+  const recipientRole = recipient ? profileRoleLabel(recipient, t) : null;
+
+  return [
+    {
+      id: `${movement.id}-${perspective}`,
+      person: sender?.full_name ?? profileName(profiles, movement.from_profile_id, t),
+      action: perspective === "cash_in" ? t("cashReceived") : t("cashSent"),
+      role: sender ? profileRoleLabel(sender, t) : null,
+      state: perspective === "cash_in" ? "received" : "sent",
+      timestamp: perspective === "cash_in" ? movement.responded_at ?? movement.created_at : movement.created_at,
+    },
+    {
+      id: `${movement.id}-received`,
+      person: movement.status === "accepted"
+        ? `${t("receivedBy")} ${recipientName}${recipientRole ? ` (${recipientRole})` : ""}`
+        : recipientName,
+      action: movement.status === "accepted"
+        ? ""
+        : movement.status === "rejected"
+          ? t("journeyRejected")
+          : t("receiptPending"),
+      role: movement.status === "accepted" ? null : recipientRole,
+      state: movement.status === "accepted" ? "verified" : movement.status === "rejected" ? "rejected" : "pending",
+      timestamp: movement.responded_at,
+    },
+  ];
+}
+
+function agentPayoutJourneySteps(
+  settlement: AgentSettlement,
+  profiles: Profile[],
+  t: (key: string) => string,
+  perspective: "cash_in" | "cash_out",
+): TransactionJourneyStep[] {
+  const sender = profiles.find((item) => item.id === settlement.paid_by);
+  const recipient = profiles.find((item) => item.id === settlement.agent_id);
+  const recipientName = recipient?.full_name ?? profileName(profiles, settlement.agent_id, t);
+  const recipientRole = recipient ? profileRoleLabel(recipient, t) : null;
+
+  return [
+    {
+      id: `${settlement.id}-${perspective}`,
+      person: sender?.full_name ?? profileName(profiles, settlement.paid_by, t),
+      action: perspective === "cash_in" ? t("cashReceived") : t("cashSent"),
+      role: sender ? profileRoleLabel(sender, t) : null,
+      state: perspective === "cash_in" ? "received" : "sent",
+      timestamp: perspective === "cash_in" ? settlement.responded_at ?? settlement.created_at : settlement.created_at,
+    },
+    {
+      id: `${settlement.id}-received`,
+      person: settlement.status === "accepted"
+        ? `${t("receivedBy")} ${recipientName}${recipientRole ? ` (${recipientRole})` : ""}`
+        : recipientName,
+      action: settlement.status === "accepted"
+        ? ""
+        : settlement.status === "rejected"
+          ? t("journeyRejected")
+          : t("receiptPending"),
+      role: settlement.status === "accepted" ? null : recipientRole,
+      state: settlement.status === "accepted" ? "verified" : settlement.status === "rejected" ? "rejected" : "pending",
+      timestamp: settlement.responded_at,
+    },
+  ];
+}
+
 function paymentDisplayTitle(payment: Payment, t: (key: string) => string) {
-  return payment.description || payment.customer_name || payment.room_number_snapshot || labelForBusiness(payment.business_type, t);
+  return payment.customer_name || payment.room_number_snapshot || payment.description || transactionBusinessTag(payment.business_type, t);
 }
 
 function expenseDisplayTitle(expense: Expense) {
@@ -3383,11 +3529,17 @@ function HomeView({
 
 function TransactionJourney({ steps, children }: { steps: TransactionJourneyStep[]; children?: ReactNode }) {
   const { t } = useLanguage();
-  const isApproved = steps.at(-1)?.state === "verified";
+  const tone = steps.some((step) => step.state === "rejected")
+    ? "rejected"
+    : steps.some((step) => step.state === "pending")
+      ? "pending"
+      : steps.at(-1)?.state === "verified"
+        ? "approved"
+        : "neutral";
 
   return (
     <div
-      className={`transaction-journey ${isApproved ? "approved" : "unapproved"}`}
+      className={`transaction-journey ${tone}`}
       aria-label={t("paymentJourney")}
     >
       <div className="transaction-journey-track" role="list">
@@ -3396,7 +3548,7 @@ function TransactionJourney({ steps, children }: { steps: TransactionJourneyStep
             {index > 0 ? <ChevronRight className="transaction-journey-arrow" size={16} aria-hidden="true" /> : null}
             <div className={`transaction-journey-step ${step.state}`} role="listitem">
               <span className="transaction-journey-icon" aria-hidden="true">
-                {step.state === "verified" ? <ShieldCheck size={16} /> : step.state === "rejected" ? <X size={15} /> : step.state === "pending" ? <MoreHorizontal size={16} /> : <Check size={15} />}
+                {step.state === "verified" ? <ShieldCheck size={16} /> : step.state === "rejected" ? <X size={15} /> : step.state === "pending" ? <MoreHorizontal size={16} /> : step.state === "sent" ? <ArrowUp size={15} /> : step.state === "received" ? <ArrowDown size={15} /> : <Check size={15} />}
               </span>
               <span className="transaction-journey-copy">
                 <strong>{step.person}</strong>
@@ -3412,20 +3564,71 @@ function TransactionJourney({ steps, children }: { steps: TransactionJourneyStep
   );
 }
 
-function PaymentAmountSplit({ cashAmount, onlineAmount }: { cashAmount: number; onlineAmount: number }) {
+function PaymentAmountSplit({
+  cashAmount,
+  onlineAmount,
+  totalAmount,
+}: {
+  cashAmount: number;
+  onlineAmount: number;
+  totalAmount?: number;
+}) {
   const { t } = useLanguage();
+  const hasCash = cashAmount > 0;
+  const hasOnline = onlineAmount > 0;
+  const showEquation = hasCash && hasOnline && totalAmount !== undefined;
+
+  if (!hasCash && !hasOnline) return null;
 
   return (
-    <div className="history-payment-split" aria-label={`${t("cash")} / ${t("online")}`}>
-      <span className="history-payment-split-part cash" title={t("cash")}>
-        <Banknote size={14} aria-hidden="true" />
-        <span>{formatMoney(cashAmount)}</span>
-      </span>
-      <span className="history-payment-split-part online" title={t("online")}>
-        <CreditCard size={14} aria-hidden="true" />
-        <span>{formatMoney(onlineAmount)}</span>
-      </span>
+    <div className="history-payment-split" aria-label={hasCash && hasOnline ? `${t("cash")} / ${t("online")}` : hasCash ? t("cash") : t("online")}>
+      {hasCash ? (
+        <span className="history-payment-split-part cash" title={t("cash")}>
+          <Banknote size={14} aria-hidden="true" />
+          <span>{formatMoney(cashAmount)}</span>
+        </span>
+      ) : null}
+      {hasCash && hasOnline ? <span className="history-payment-split-operator">+</span> : null}
+      {hasOnline ? (
+        <span className="history-payment-split-part online" title={t("online")}>
+          <CreditCard size={14} aria-hidden="true" />
+          <span>{formatMoney(onlineAmount)}</span>
+        </span>
+      ) : null}
+      {showEquation ? (
+        <>
+          <span className="history-payment-split-operator">=</span>
+          <strong className="history-payment-split-total">{formatMoney(totalAmount)}</strong>
+        </>
+      ) : null}
     </div>
+  );
+}
+
+function TransactionCardAmount({
+  amount,
+  cashAmount,
+  onlineAmount,
+  tone,
+}: {
+  amount: number;
+  cashAmount: number;
+  onlineAmount: number;
+  tone: "positive" | "negative" | "neutral" | "online-approved";
+}) {
+  const hasCash = cashAmount > 0;
+  const hasOnline = onlineAmount > 0;
+  const mixed = hasCash && hasOnline;
+
+  return (
+    <>
+      <strong className={`history-card-total ${tone}`}>
+        {!mixed && hasCash ? <Banknote className="history-card-total-icon cash" size={19} aria-hidden="true" /> : null}
+        {!mixed && hasOnline ? <CreditCard className="history-card-total-icon online" size={19} aria-hidden="true" /> : null}
+        <span>{amount === 0 ? "" : amount > 0 ? "+" : "-"}{formatMoney(Math.abs(amount))}</span>
+      </strong>
+      {mixed ? <PaymentAmountSplit cashAmount={cashAmount} onlineAmount={onlineAmount} totalAmount={Math.abs(amount)} /> : null}
+    </>
   );
 }
 
@@ -3631,7 +3834,7 @@ function TransactionsView({
           date: payment.payment_date,
           sortAt: payment.created_at,
           title: paymentDisplayTitle(payment, t),
-          businessLabel: labelForBusiness(payment.business_type, t),
+          businessLabel: transactionBusinessTag(payment.business_type, t),
           status: paymentStatus,
           statusTone: paymentStatusTone,
           modeLabel: paymentModeLabel(payment, t),
@@ -3695,7 +3898,6 @@ function TransactionsView({
                 recordType: collectedByOwner ? "payment" : undefined,
                 canDelete: collectedByOwner,
                 transferLines: [],
-                journey: [],
                 transferRecipients: [],
                 canRequestTransfer: false,
                 incomingTransferId: null,
@@ -3751,7 +3953,7 @@ function TransactionsView({
             canEdit: onlineOnly ? baseRecord.canEdit : false,
             canDelete: false,
             transferLines: [],
-            journey: onlineOnly ? baseRecord.journey : [],
+            journey: baseRecord.journey,
             transferRecipients: [],
             canRequestTransfer: false,
             incomingTransferId: null,
@@ -3793,6 +3995,8 @@ function TransactionsView({
           canEdit: pendingApproval && (owner || expense.spent_by === profile.id),
           canDelete: owner,
           pendingApproval,
+          businessLabel: transactionBusinessTag(expense.business_type, t),
+          journey: expenseJourneySteps(expense, profiles, t),
           icon: <ReceiptText size={24} />,
         };
 
@@ -3869,7 +4073,9 @@ function TransactionsView({
           description: entry?.description ?? "",
           remark: movement.note ?? "",
           reason: null,
+          businessLabel: t("cashTransfer"),
           transferLines: [movementChain],
+          journey: cashTransferJourneySteps(movement, profiles, t, ownerReceivedSettlement ? "cash_in" : "cash_out"),
           pendingApproval: pendingMovement,
           icon: ownerReceivedSettlement ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
         }];
@@ -3909,7 +4115,9 @@ function TransactionsView({
         description: entry?.description ?? "",
         remark: movement.note ?? "",
         reason: null,
+        businessLabel: t("cashTransfer"),
         transferLines: [movementChain],
+        journey: cashTransferJourneySteps(movement, profiles, t, staffCashIn ? "cash_in" : "cash_out"),
         pendingApproval: pendingMovement,
         icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
       }];
@@ -3942,6 +4150,8 @@ function TransactionsView({
         description: "",
         remark: settlement.note ?? "",
         reason: null,
+        businessLabel: t("cashTransfer"),
+        journey: agentPayoutJourneySteps(settlement, profiles, t, visibleToAgent ? "cash_in" : "cash_out"),
         pendingApproval: settlement.status === "pending",
         icon: <WalletCards size={24} />,
       }];
@@ -4077,7 +4287,7 @@ function TransactionsView({
               <div className="history-card-list">
                 {group.records.map((record) => (
                   <article
-                    className={`history-card ${record.kind === "settlement" ? "settlement" : record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
+                    className={`history-card ${record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
                     key={`${record.kind}-${record.id}`}
                   >
                     <div className="history-card-icon">{record.icon}</div>
@@ -4086,19 +4296,15 @@ function TransactionsView({
                       {record.businessLabel ? <span className="history-business-badge">{record.businessLabel}</span> : <p>{record.meta}</p>}
                     </div>
                     <div className="history-card-side">
-                      <strong className={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}>
-                        {record.amount === 0 ? "" : record.amount > 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
-                      </strong>
-                      {record.kind === "collection" ? (
-                        <PaymentAmountSplit cashAmount={record.cashAmount} onlineAmount={record.onlineAmount} />
-                      ) : null}
-                      {record.kind === "settlement" && record.filter === "cash_out" && record.amount < 0 && record.onlineAmount > 0 ? (
-                        <PaymentAmountSplit cashAmount={record.cashAmount} onlineAmount={record.onlineAmount} />
-                      ) : null}
+                      <TransactionCardAmount
+                        amount={record.amount}
+                        cashAmount={record.cashAmount}
+                        onlineAmount={record.onlineAmount}
+                        tone={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}
+                      />
                       {!record.journey || record.journey.length === 0 ? (
                         <time className="history-transaction-time" dateTime={record.sortAt}>{formatIndiaTime(record.sortAt)}</time>
                       ) : null}
-                      {record.kind === "settlement" ? <span>{record.filter === "cash_in" ? t("cashIn") : t("cashOut")}</span> : null}
                     </div>
                     <details className="history-actions-menu">
                       <summary aria-label={t("moreOptions")}>
@@ -7819,7 +8025,7 @@ function ClosingReviewDetail({
         recordDate: payment.payment_date,
         isBacklog: payment.payment_date < date,
         createdAt: payment.created_at,
-        businessLabel: labelForBusiness(payment.business_type, t),
+        businessLabel: transactionBusinessTag(payment.business_type, t),
         cashAmount: paymentCashAmount(payment),
         onlineAmount: paymentOnlineAmount(payment),
         cashStatus: paymentComponentStatus(payment, "cash"),
@@ -7848,14 +8054,14 @@ function ClosingReviewDetail({
         recordDate: expense.expense_date,
         isBacklog: expense.expense_date < date,
         createdAt: expense.created_at,
-        businessLabel: labelForBusiness(expense.business_type ?? "general", t),
+        businessLabel: transactionBusinessTag(expense.business_type, t),
         cashAmount: numberValue(expense.amount),
         onlineAmount: 0,
         cashStatus: null,
         onlineStatus: null,
         note: expenseReference(expense, t),
         transferLines: [] as string[],
-        journey: [] as TransactionJourneyStep[],
+        journey: expenseJourneySteps(expense, profiles, t),
         hasPendingTransfer: false,
         tone: "negative" as const,
         icon: <ReceiptText size={22} />,
@@ -7953,103 +8159,98 @@ function ClosingReviewDetail({
             const isMixedPayment = record.recordType === "payment" && record.cashAmount > 0 && record.onlineAmount > 0;
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
-              <article className={`review-transaction-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
-                <div className="review-transaction-icon">{record.icon}</div>
-                <div className="review-transaction-main">
+              <article className={`history-card closing-history-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
+                <div className="history-card-icon">{record.icon}</div>
+                <div className="history-card-main">
                   <strong>{record.title}</strong>
-                  <p>{recordWhen} · {record.businessLabel} · {record.mode}</p>
-                  {isMixedPayment ? (
-                    <div className="component-approval-grid" aria-label={t("mixed")}>
-                      <div className="component-approval-half cash-half">
-                        <span>{t("cash")}</span>
-                        <strong>{formatMoney(record.cashAmount)}</strong>
-                        {record.cashStatus === "approved" ? (
-                          <span className="component-approved"><Check size={16} /> {labelForStatus("approved", t)}</span>
-                        ) : record.hasPendingTransfer ? (
-                          <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
-                            <Check size={18} />
-                          </button>
-                        ) : canApproveRecordStatus(record.cashStatus ?? record.status) ? (
-                          <MiniAction
-                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
-                            label={`${t("approve")} ${t("cash")}`}
-                            tone="approve"
-                            icon={<Check size={18} />}
-                            action={approveRecordAction}
-                            setNotice={setNotice}
-                            startTransition={startTransition}
-                          />
-                        ) : null}
-                      </div>
-                      <div className="component-approval-half online-half">
-                        <span>{t("online")}</span>
-                        <strong>{formatMoney(record.onlineAmount)}</strong>
-                        {record.onlineStatus === "approved" ? (
-                          <span className="component-approved"><Check size={16} /> {labelForStatus("approved", t)}</span>
-                        ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
-                          <MiniAction
-                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
-                            label={`${t("approve")} ${t("online")}`}
-                            tone="approve"
-                            icon={<Check size={18} />}
-                            action={approveRecordAction}
-                            setNotice={setNotice}
-                            startTransition={startTransition}
-                          />
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="pending-review-split">
-                      <span>{t("cash")} {formatMoney(record.cashAmount)}</span>
-                      <span>{t("online")} {formatMoney(record.onlineAmount)}</span>
-                    </div>
-                  )}
-                  <p>{record.note}</p>
-                  {record.journey.length > 0 ? (
-                    <TransactionJourney steps={record.journey} />
-                  ) : record.transferLines.length > 0 ? (
-                    <div className="review-transfer-note">
+                  <span className="history-business-badge">{record.businessLabel}</span>
+                </div>
+                <div className="history-card-side">
+                  <TransactionCardAmount
+                    amount={record.amount}
+                    cashAmount={record.cashAmount}
+                    onlineAmount={record.onlineAmount}
+                    tone={record.tone}
+                  />
+                </div>
+                <details className="history-actions-menu closing-history-actions">
+                  <summary aria-label={t("moreOptions")}>
+                    <MoreHorizontal size={18} />
+                  </summary>
+                  <div className="details-menu transaction-options-menu closing-history-menu">
+                    <div className="closing-history-menu-copy">
+                      <strong>{recordWhen}</strong>
+                      <span>{record.mode} · {labelForStatus(record.status, t)}</span>
+                      <span>{record.note}</span>
                       {record.transferLines.map((line, index) => (
                         <span key={`${line}-${index}`}>{line}</span>
                       ))}
                     </div>
-                  ) : null}
-                  <span className={`status-chip status-${record.status}`}>{labelForStatus(record.status, t)}</span>
-                </div>
-                <strong className="review-transaction-amount">
-                  {record.amount >= 0 ? "+" : "-"}{formatMoney(Math.abs(record.amount))}
-                </strong>
-                {canReview && !isMixedPayment ? (
-                  <div className="review-transaction-actions">
-                    {record.recordType === "expense" ? (
+                    {canReview && record.recordType === "expense" ? (
                       <MiniAction
                         hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
                         label={t("reject")}
                         tone="reject"
-                        icon={<X size={18} />}
                         action={approveRecordAction}
                         setNotice={setNotice}
                         startTransition={startTransition}
                       />
                     ) : null}
-                    {record.hasPendingTransfer ? (
-                      <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
-                        <Check size={18} />
-                      </button>
-                    ) : (
-                      <MiniAction
-                        hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
-                        label={t("approve")}
-                        tone="approve"
-                        icon={<Check size={18} />}
-                        action={approveRecordAction}
-                        setNotice={setNotice}
-                        startTransition={startTransition}
-                      />
-                    )}
                   </div>
-                ) : null}
+                </details>
+                <div className="history-card-flow">
+                  <TransactionJourney steps={record.journey}>
+                    <div className="closing-history-approval-actions">
+                      {isMixedPayment ? (
+                        <>
+                          {record.cashStatus === "approved" ? (
+                            <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                          ) : record.hasPendingTransfer ? (
+                            <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                              {t("approve")} {t("cash")}
+                            </button>
+                          ) : canApproveRecordStatus(record.cashStatus ?? record.status) ? (
+                            <MiniAction
+                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
+                              label={`${t("approve")} ${t("cash")}`}
+                              tone="approve"
+                              action={approveRecordAction}
+                              setNotice={setNotice}
+                              startTransition={startTransition}
+                            />
+                          ) : null}
+                          {record.onlineStatus === "approved" ? (
+                            <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
+                          ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
+                            <MiniAction
+                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
+                              label={`${t("approve")} ${t("online")}`}
+                              tone="approve"
+                              action={approveRecordAction}
+                              setNotice={setNotice}
+                              startTransition={startTransition}
+                            />
+                          ) : null}
+                        </>
+                      ) : canReview ? (
+                        record.hasPendingTransfer ? (
+                          <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                            {t("resolveTransferFirst")}
+                          </button>
+                        ) : (
+                          <MiniAction
+                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                            label={t("approve")}
+                            tone="approve"
+                            action={approveRecordAction}
+                            setNotice={setNotice}
+                            startTransition={startTransition}
+                          />
+                        )
+                      ) : null}
+                    </div>
+                  </TransactionJourney>
+                </div>
               </article>
             );
           }) : (
@@ -8058,18 +8259,39 @@ function ClosingReviewDetail({
           {reviewTab === "pending" && pendingSettlementMovements.length > 0 ? (
             <div className="pending-context-group">
               <h3>{t("settlementLikePending")}</h3>
-              {pendingSettlementMovements.map((movement) => (
-                <article className="review-transaction-card neutral" key={movement.id}>
-                  <div className="review-transaction-icon"><ShieldCheck size={22} /></div>
-                  <div className="review-transaction-main">
-                    <strong>{t("settlements")}</strong>
-                    <p>{indiaDateIso(movement.created_at)} · {formatIndiaTime(movement.created_at)} · {profileName(profiles, movement.from_profile_id === summary.profile.id ? movement.to_profile_id : movement.from_profile_id, t)}</p>
-                    <p>{movement.note ?? t("noReason")}</p>
-                    <span className="status-chip status-pending">{labelForStatus(movement.status, t)}</span>
-                  </div>
-                  <strong className="review-transaction-amount">{formatMoney(movement.amount)}</strong>
-                </article>
-              ))}
+              {pendingSettlementMovements.map((movement) => {
+                const perspective = movement.to_profile_id === summary.profile.id ? "cash_in" as const : "cash_out" as const;
+                const movementAmount = numberValue(movement.amount);
+                const signedAmount = perspective === "cash_in" ? movementAmount : -movementAmount;
+                const otherProfileId = perspective === "cash_in" ? movement.from_profile_id : movement.to_profile_id;
+                return (
+                  <article className={`history-card closing-history-card ${perspective === "cash_in" ? "positive" : "negative"}`} key={movement.id}>
+                    <div className="history-card-icon">{perspective === "cash_in" ? <ArrowDown size={22} /> : <ArrowUp size={22} />}</div>
+                    <div className="history-card-main">
+                      <strong>{perspective === "cash_in" ? t("cashReceived") : t("cashSent")}</strong>
+                      <span className="history-business-badge">{t("cashTransfer")}</span>
+                    </div>
+                    <div className="history-card-side">
+                      <TransactionCardAmount amount={signedAmount} cashAmount={movementAmount} onlineAmount={0} tone={perspective === "cash_in" ? "positive" : "negative"} />
+                    </div>
+                    <details className="history-actions-menu closing-history-actions">
+                      <summary aria-label={t("moreOptions")}>
+                        <MoreHorizontal size={18} />
+                      </summary>
+                      <div className="details-menu transaction-options-menu closing-history-menu">
+                        <div className="closing-history-menu-copy">
+                          <strong>{indiaDateIso(movement.created_at)} · {formatIndiaTime(movement.created_at)}</strong>
+                          <span>{profileName(profiles, otherProfileId, t)} · {labelForStatus(movement.status, t)}</span>
+                          <span>{movement.note ?? t("noReason")}</span>
+                        </div>
+                      </div>
+                    </details>
+                    <div className="history-card-flow">
+                      <TransactionJourney steps={cashTransferJourneySteps(movement, profiles, t, perspective)} />
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : null}
         </div>
