@@ -3527,15 +3527,25 @@ function HomeView({
   );
 }
 
-function TransactionJourney({ steps, children }: { steps: TransactionJourneyStep[]; children?: ReactNode }) {
+function TransactionJourney({
+  steps,
+  amount,
+  children,
+}: {
+  steps: TransactionJourneyStep[];
+  amount: number;
+  children?: ReactNode;
+}) {
   const { t } = useLanguage();
   const tone = steps.some((step) => step.state === "rejected")
     ? "rejected"
     : steps.some((step) => step.state === "pending")
       ? "pending"
-      : steps.at(-1)?.state === "verified"
-        ? "approved"
-        : "neutral";
+      : amount < 0
+        ? "negative"
+        : amount > 0
+          ? "positive"
+          : "neutral";
 
   return (
     <div
@@ -3619,10 +3629,11 @@ function TransactionCardAmount({
   const hasCash = cashAmount > 0;
   const hasOnline = onlineAmount > 0;
   const mixed = hasCash && hasOnline;
+  const displayTone = amount > 0 ? "positive" : amount < 0 ? "negative" : tone;
 
   return (
     <>
-      <strong className={`history-card-total ${tone}`}>
+      <strong className={`history-card-total ${displayTone}`}>
         {!mixed && hasCash ? <Banknote className="history-card-total-icon cash" size={19} aria-hidden="true" /> : null}
         {!mixed && hasOnline ? <CreditCard className="history-card-total-icon online" size={19} aria-hidden="true" /> : null}
         <span>{amount === 0 ? "" : amount > 0 ? "+" : "-"}{formatMoney(Math.abs(amount))}</span>
@@ -4353,7 +4364,7 @@ function TransactionsView({
                     </details>
                     {record.journey && record.journey.length > 0 ? (
                       <div className="history-card-flow">
-                        <TransactionJourney steps={record.journey}>
+                        <TransactionJourney steps={record.journey} amount={record.amount}>
                           {record.incomingTransferId ? (
                             <div className="history-transfer-actions">
                               <MiniAction
@@ -4427,7 +4438,7 @@ function TransactionsView({
               <div className="transaction-detail-page">
                 <section className="transaction-detail-summary">
                   <span>{selectedTransactionActionRecord.businessLabel ?? selectedTransactionActionRecord.meta}</span>
-                  <strong className={selectedTransactionActionRecord.amountTone ?? (selectedTransactionActionRecord.amount >= 0 ? "positive" : "negative")}>
+                  <strong className={selectedTransactionActionRecord.amount > 0 ? "positive" : selectedTransactionActionRecord.amount < 0 ? "negative" : "neutral"}>
                     {selectedTransactionActionRecord.amount >= 0 ? "+" : "-"}{formatMoney(Math.abs(selectedTransactionActionRecord.amount))}
                   </strong>
                   {selectedPayment ? <PaymentAmountSplit cashAmount={paymentCashAmount(selectedPayment)} onlineAmount={paymentOnlineAmount(selectedPayment)} /> : null}
@@ -4442,7 +4453,7 @@ function TransactionsView({
                   {selectedPayment?.description || selectedExpense?.description ? <div className="full"><dt>Purpose</dt><dd>{selectedPayment?.description ?? selectedExpense?.description}</dd></div> : null}
                   {selectedPayment?.remark || selectedExpense?.remark ? <div className="full"><dt>Note</dt><dd>{selectedPayment?.remark ?? selectedExpense?.remark}</dd></div> : null}
                 </dl>
-                {selectedTransactionActionRecord.journey?.length ? <section><h3>Transaction flow</h3><TransactionJourney steps={selectedTransactionActionRecord.journey} /></section> : null}
+                {selectedTransactionActionRecord.journey?.length ? <section><h3>Transaction flow</h3><TransactionJourney steps={selectedTransactionActionRecord.journey} amount={selectedTransactionActionRecord.amount} /></section> : null}
                 {selectedTransactionActionRecord.transferLines?.length ? <section><h3>Transfer activity</h3><div className="history-transfer-panel">{selectedTransactionActionRecord.transferLines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}</div></section> : null}
                 {selectedPayment?.photo_path || selectedExpense?.photo_path ? <section><h3>Attachment</h3><a className="transaction-attachment" href={selectedPayment?.photo_path ?? selectedExpense?.photo_path ?? undefined} target="_blank" rel="noreferrer">Open attachment</a></section> : null}
               </div>
@@ -8199,7 +8210,7 @@ function ClosingReviewDetail({
                   </div>
                 </details>
                 <div className="history-card-flow">
-                  <TransactionJourney steps={record.journey}>
+                  <TransactionJourney steps={record.journey} amount={record.amount}>
                     <div className="closing-history-approval-actions">
                       {isMixedPayment ? (
                         <>
@@ -8287,7 +8298,7 @@ function ClosingReviewDetail({
                       </div>
                     </details>
                     <div className="history-card-flow">
-                      <TransactionJourney steps={cashTransferJourneySteps(movement, profiles, t, perspective)} />
+                      <TransactionJourney steps={cashTransferJourneySteps(movement, profiles, t, perspective)} amount={signedAmount} />
                     </div>
                   </article>
                 );
