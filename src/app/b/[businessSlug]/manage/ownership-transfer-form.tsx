@@ -1,7 +1,17 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+import { useFormStatus } from "react-dom";
 import { transferPrimaryOwnershipAction } from "./actions";
+
+function TransferOwnershipButton({ ready }: { ready: boolean }) {
+  const { pending } = useFormStatus();
+  return (
+    <button className="ownership-transfer-button" type="submit" disabled={!ready || pending}>
+      {pending ? "Transferring ownership…" : "Transfer primary ownership"}
+    </button>
+  );
+}
 
 export function OwnershipTransferForm({
   businessName,
@@ -10,6 +20,8 @@ export function OwnershipTransferForm({
   businessName: string;
   candidates: Array<{ profileId: string; label: string }>;
 }) {
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+
   function confirmTransfer(event: FormEvent<HTMLFormElement>) {
     const formData = new FormData(event.currentTarget);
     const targetId = String(formData.get("profile_id") ?? "");
@@ -20,15 +32,31 @@ export function OwnershipTransferForm({
     if (!confirmed) event.preventDefault();
   }
 
+  if (candidates.length === 0) {
+    return <div className="ownership-transfer-empty">Add or reactivate a Manager before transferring primary ownership.</div>;
+  }
+
   return (
-    <form action={transferPrimaryOwnershipAction} className="inline-admin-form" onSubmit={confirmTransfer}>
-      <select name="profile_id" required defaultValue="">
-        <option value="" disabled>Choose active Manager</option>
-        {candidates.map((candidate) => (
-          <option key={candidate.profileId} value={candidate.profileId}>{candidate.label}</option>
-        ))}
-      </select>
-      <button className="danger-button" type="submit">Transfer ownership</button>
+    <form action={transferPrimaryOwnershipAction} className="ownership-transfer-form" onSubmit={confirmTransfer}>
+      <div className="ownership-transfer-warning">
+        <strong>Primary Owner role swap</strong>
+        <span>The selected Manager receives full Owner control. Your role changes to Manager immediately.</span>
+      </div>
+      <label>
+        New Primary Owner
+        <select
+          name="profile_id"
+          required
+          value={selectedProfileId}
+          onChange={(event) => setSelectedProfileId(event.target.value)}
+        >
+          <option value="" disabled>Choose an active Manager</option>
+          {candidates.map((candidate) => (
+            <option key={candidate.profileId} value={candidate.profileId}>{candidate.label}</option>
+          ))}
+        </select>
+      </label>
+      <TransferOwnershipButton ready={Boolean(selectedProfileId)} />
     </form>
   );
 }

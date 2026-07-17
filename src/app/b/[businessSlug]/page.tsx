@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { getAppData } from "@/lib/data";
 import { BusinessAccessError, resolveBusinessContext } from "@/lib/tenancy";
@@ -23,6 +23,9 @@ export default async function BusinessHome({
       identity.id,
     );
   } catch (error) {
+    if (error instanceof BusinessAccessError && error.details) {
+      redirect(`/access-pending?reason=${error.details.reason}&business=${encodeURIComponent(error.details.business.name)}`);
+    }
     if (error instanceof BusinessAccessError && error.status === 403) notFound();
     throw error;
   }

@@ -284,24 +284,29 @@ async function loadDashboard(
   const canViewLibraryStudents = !salesAgent && (ownerish || accessibleBusinesses.has("library"));
   const canViewStudentPayments = !salesAgent && (ownerish || accessibleBusinesses.has("library") || accessibleBusinesses.has("course"));
   const range = viewState?.dateRange ?? rangeForPreset("today");
+  const dateFilterKey = viewState?.dateFilterKey ?? "approval";
   const closingDate = range.to;
 
-  const paymentsQuery = supabase
+  const paymentsQueryBase = supabase
     .from("payments")
     .select("*")
-    .eq("business_id", bootstrap.businessContext.business.id)
-    .gte("payment_date", range.from)
-    .lte("payment_date", range.to)
+    .eq("business_id", bootstrap.businessContext.business.id);
+  const paymentsQuery = (dateFilterKey === "transaction"
+    ? paymentsQueryBase.gte("payment_date", range.from).lte("payment_date", range.to)
+    : paymentsQueryBase.or(
+        `and(cash_posted_on.gte.${range.from},cash_posted_on.lte.${range.to}),and(online_posted_on.gte.${range.from},online_posted_on.lte.${range.to})`,
+      ))
     .order("created_at", { ascending: false })
-    .limit(300);
-  const expensesQuery = supabase
+    .limit(1000);
+  const expensesQueryBase = supabase
     .from("expenses")
     .select("*")
-    .eq("business_id", bootstrap.businessContext.business.id)
-    .gte("expense_date", range.from)
-    .lte("expense_date", range.to)
+    .eq("business_id", bootstrap.businessContext.business.id);
+  const expensesQuery = (dateFilterKey === "transaction"
+    ? expensesQueryBase.gte("expense_date", range.from).lte("expense_date", range.to)
+    : expensesQueryBase.gte("posted_on", range.from).lte("posted_on", range.to))
     .order("created_at", { ascending: false })
-    .limit(300);
+    .limit(1000);
   const pendingPaymentsQuery = supabase
     .from("payments")
     .select("*")
@@ -326,10 +331,8 @@ async function loadDashboard(
     .from("ledger_entries")
     .select("*")
     .eq("business_id", bootstrap.businessContext.business.id)
-    .gte("entry_date", range.from)
-    .lte("entry_date", closingDate)
     .order("entry_date", { ascending: false })
-    .limit(1000);
+    .limit(5000);
   const closingLedgerQuery = () =>
     supabase
       .from("ledger_entries")
@@ -378,7 +381,7 @@ async function loadDashboard(
     expensesQuery,
     pendingPaymentsQuery,
     pendingExpensesQuery,
-    supabase.from("money_movements").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(300),
+    supabase.from("money_movements").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(1000),
     ledgerQuery,
     supabase.rpc("lenden_closing_summaries", { p_closing_date: closingDate }),
     closingSummariesRpcAvailable ? Promise.resolve({ data: null, error: null }) : closingLedgerQuery(),
@@ -386,6 +389,10 @@ async function loadDashboard(
     supabase.from("agent_settlements").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(300),
     supabase.from("app_notifications").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(80),
   ]);
+
+  if (paymentsResult.error) throw new Error(paymentsResult.error.message);
+  if (expensesResult.error) throw new Error(expensesResult.error.message);
+  if (ledgerResult.error) throw new Error(ledgerResult.error.message);
 
   const movementRows = (movementsResult.data ?? []) as MoneyMovement[];
   const visibleMovementPaymentIds = new Set(

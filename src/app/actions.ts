@@ -46,6 +46,7 @@ async function requireUserProfile() {
   return {
     ...profileForBusiness(identity, role),
     businessId: context.business.id,
+    businessTimezone: context.business.timezone,
     businessRole: role,
     accessMode: context.accessMode,
   } as LendenActionProfile;

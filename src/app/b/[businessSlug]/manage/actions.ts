@@ -1,9 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import {
+  changeUserPasswordAction as changeUserPasswordAppAction,
+  createStaffAction as createStaffAppAction,
+  saveStaffPermissionsAction as saveStaffPermissionsAppAction,
+} from "@/app/actions";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { canManageBusinessMemberRole, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
-import type { BusinessType } from "@/lib/types";
+import type { BusinessType, MembershipStatus } from "@/lib/types";
+
+export type BusinessUserActionState = {
+  ok: boolean | null;
+  message: string;
+};
 
 function read(formData: FormData, key: string) {
   const entry = formData.get(key);
@@ -43,6 +53,9 @@ export async function saveBusinessModulesAction(formData: FormData) {
 
 export async function transferPrimaryOwnershipAction(formData: FormData) {
   const { context } = await resolveBusinessContextFromRequest();
+  if (context.accessMode !== "member" || !isPrimaryOwner(context.membership?.role)) {
+    throw new Error("Only the current Owner can transfer primary ownership.");
+  }
   const targetProfileId = read(formData, "profile_id");
   if (!targetProfileId) throw new Error("Choose an active Manager.");
   const client = await createClient({ businessId: context.business.id });
@@ -55,9 +68,10 @@ export async function transferPrimaryOwnershipAction(formData: FormData) {
   revalidatePath(`/b/${context.business.slug}/manage`);
 }
 
-export async function suspendBusinessMemberAction(formData: FormData) {
+async function updateBusinessMemberStatus(formData: FormData) {
   const { identity, context } = await resolveBusinessContextFromRequest();
   const membershipId = read(formData, "membership_id");
+  const nextStatus: MembershipStatus = read(formData, "status") === "active" ? "active" : "suspended";
   if (!membershipId) throw new Error("Membership is required.");
   const client = await createClient({ businessId: context.business.id });
   const { data: membership, error: lookupError } = await client
@@ -72,10 +86,13 @@ export async function suspendBusinessMemberAction(formData: FormData) {
       ? "The Owner cannot be removed. Transfer ownership first."
       : "Managers can remove only Staff and Sales Agents.");
   }
-  if (membership.status !== "active") throw new Error("This member no longer has active access.");
-  const { error } = await client.from("business_memberships").update({ status: "suspended", suspended_at: new Date().toISOString() }).eq("id", membershipId);
+  if (membership.status === nextStatus) return nextStatus;
+  const { error } = await client.from("business_memberships").update({
+    status: nextStatus,
+    suspended_at: nextStatus === "suspended" ? new Date().toISOString() : null,
+  }).eq("id", membershipId);
   if (error) throw new Error(error.message);
-  if (membership.role === "sales_agent") {
+  if (membership.role === "sales_agent" && nextStatus === "suspended") {
     const { error: referralError } = await createAdminClient()
       .from("referral_codes")
       .update({ active: false })
@@ -86,11 +103,69 @@ export async function suspendBusinessMemberAction(formData: FormData) {
   await client.from("audit_events").insert({
     business_id: context.business.id,
     actor_profile_id: identity.id,
-    event_type: "membership_access_removed",
+    event_type: nextStatus === "active" ? "membership_reactivated" : "membership_suspended",
     entity_type: "business_membership",
     entity_id: membershipId,
     before_data: { status: membership.status },
-    after_data: { status: "suspended", removed_role: membership.role },
+    after_data: { status: nextStatus, role: membership.role },
   });
+  revalidatePath(`/b/${context.business.slug}`);
   revalidatePath(`/b/${context.business.slug}/manage`);
+  return nextStatus;
+}
+
+async function runBusinessUserAction(
+  action: (formData: FormData) => Promise<{ ok: true; message?: string } | { ok: false; message: string }>,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  const result = await action(formData);
+  const { context } = await resolveBusinessContextFromRequest();
+  if (result.ok) {
+    revalidatePath(`/b/${context.business.slug}`);
+    revalidatePath(`/b/${context.business.slug}/manage`);
+  }
+  return { ok: result.ok, message: result.message ?? (result.ok ? "Saved." : "Could not save changes.") };
+}
+
+export async function createBusinessUserAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  return runBusinessUserAction(createStaffAppAction, formData);
+}
+
+export async function saveBusinessUserPermissionsAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  return runBusinessUserAction(saveStaffPermissionsAppAction, formData);
+}
+
+export async function resetBusinessUserPasswordAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  return runBusinessUserAction(changeUserPasswordAppAction, formData);
+}
+
+export async function setBusinessMemberStatusAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  try {
+    const status = await updateBusinessMemberStatus(formData);
+    return {
+      ok: true,
+      message: status === "active" ? "Business access activated." : "Business access suspended.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not update business access.",
+    };
+  }
 }

@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
 import type {
   AppRole,
   Business,
@@ -17,7 +17,14 @@ type IdentityProfile = Omit<Profile, "membership_role" | "membership_status" | "
 };
 
 export class BusinessAccessError extends Error {
-  constructor(message: string, readonly status = 403) {
+  constructor(
+    message: string,
+    readonly status = 403,
+    readonly details?: {
+      reason: "business_suspended" | "membership_suspended";
+      business: Pick<Business, "id" | "name" | "slug" | "status">;
+    },
+  ) {
     super(message);
     this.name = "BusinessAccessError";
   }
@@ -102,6 +109,31 @@ export async function loadAvailableBusinesses(userId: string) {
   });
 }
 
+export async function loadAllBusinessAccesses(userId: string) {
+  const admin = createAdminClient();
+  const { data: membershipRows, error: membershipError } = await admin
+    .from("business_memberships")
+    .select("id,business_id,profile_id,role,status,joined_at")
+    .eq("profile_id", userId);
+  if (membershipError) throw new BusinessAccessError(membershipError.message, 500);
+
+  const memberships = (membershipRows ?? []) as BusinessMembership[];
+  if (memberships.length === 0) return [];
+
+  const { data: businessRows, error: businessError } = await admin
+    .from("businesses")
+    .select("id,name,slug,status,timezone,currency,created_at")
+    .in("id", memberships.map((membership) => membership.business_id))
+    .order("name");
+  if (businessError) throw new BusinessAccessError(businessError.message, 500);
+
+  const businesses = new Map(((businessRows ?? []) as Business[]).map((business) => [business.id, business]));
+  return memberships.flatMap((membership) => {
+    const business = businesses.get(membership.business_id);
+    return business ? [{ business, membership }] : [];
+  });
+}
+
 export async function resolveBusinessContext(identifier: { id?: string; slug?: string }): Promise<{
   identity: IdentityProfile;
   context: BusinessContext;
@@ -148,7 +180,25 @@ export async function resolveBusinessContext(identifier: { id?: string; slug?: s
     }
   }
 
-  if (!business) throw new BusinessAccessError("You do not have access to this business.");
+  if (!business) {
+    const allAccess = await loadAllBusinessAccesses(user.id);
+    const inaccessibleMatch = allAccess.find(({ business: candidate }) =>
+      identifier.id ? candidate.id === identifier.id : candidate.slug === identifier.slug,
+    );
+    if (inaccessibleMatch?.business.status === "suspended") {
+      throw new BusinessAccessError("This business is inactive.", 403, {
+        reason: "business_suspended",
+        business: inaccessibleMatch.business,
+      });
+    }
+    if (inaccessibleMatch?.membership.status === "suspended") {
+      throw new BusinessAccessError("Your access to this business is suspended.", 403, {
+        reason: "membership_suspended",
+        business: inaccessibleMatch.business,
+      });
+    }
+    throw new BusinessAccessError("You do not have access to this business.");
+  }
 
   if (membership && profile.last_business_id !== business.id) {
     const identityClient = await createClient();

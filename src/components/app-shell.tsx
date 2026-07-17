@@ -2,6 +2,7 @@
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition, WheelEvent } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -47,12 +48,9 @@ import {
   createAgentSettlementAction,
   createExpenseAction,
   createPaymentAction,
-  createStaffAction,
-  changeUserPasswordAction,
   deleteCourseAction,
   deleteReferralAction,
   deleteRoomAction,
-  deleteUserAction,
   logoutAction,
   markNotificationsReadAction,
   reviewChangeRequestAction,
@@ -62,7 +60,6 @@ import {
   saveCourseAction,
   saveReferralAction,
   saveRoomAction,
-  saveStaffPermissionsAction,
   respondPaymentTransferAction,
   settleCashAction,
   updateRecordAction,
@@ -70,9 +67,10 @@ import {
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
-import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, permissionOptions, todayIso } from "@/lib/constants";
-import type { AgentSettlement, AppData, AppNotification, AppRole, ApprovalStatus, BootstrapPayload, BusinessType, Course, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
-import { rangeForPreset, type AppTab, type AppViewState, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
+import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
+import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
+import type { AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
+import { rangeForPreset, type AppTab, type AppViewState, type DateFilterKey, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
 type Tab = AppTab;
 type Language = "en" | "hi";
@@ -139,6 +137,10 @@ type UserClosingSummary = {
   adjustments: number;
   closing: number;
   dayEntries: LedgerEntry[];
+  inCash: number;
+  inOnline: number;
+  outCash: number;
+  outOnline: number;
 };
 
 type AgentIncentiveSummary = {
@@ -276,6 +278,9 @@ const messages: Record<Language, Record<string, string>> = {
     amount: "Amount",
     amountReceived: "Amount received",
     approve: "Approve",
+    approveCollection: "Approve collection",
+    approveExpense: "Approve expense",
+    approvalDate: "Approval date",
     awaitingOwnerApproval: "Awaiting owner approval",
     back: "Back",
     backlog: "Backlog",
@@ -302,6 +307,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "Change password",
     closing: "Closing",
     closingBalance: "Closing balance",
+    closingBalancePostingNote: "IN and OUT use transaction date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
     closingCash: "Closing cash",
     code: "Code",
     closeNavigation: "Close navigation",
@@ -331,6 +337,7 @@ const messages: Record<Language, Record<string, string>> = {
     dailyTransactions: "Daily transactions",
     dashboard: "Dashboard",
     dateRange: "Date range",
+    dateKey: "Filter date by",
     deleteTransaction: "Delete",
     deleteUser: "Delete user",
     deleted: "Deleted",
@@ -559,6 +566,7 @@ const messages: Record<Language, Record<string, string>> = {
     to: "to",
     toEmployee: "To employee",
     today: "Today",
+    transactionDate: "Transaction date",
     totalClosing: "Total closing",
     totalCollected: "Total collected",
     totalExpenses: "Total expenses",
@@ -566,6 +574,7 @@ const messages: Record<Language, Record<string, string>> = {
     totalOut: "OUT",
     totalCollection: "Total collection",
     ownerAccountCredit: "Owner account credit",
+    pendingDateUsesTransaction: "Pending uses transaction date until approved.",
     totalOpening: "Total opening",
     totalRecorded: "Total recorded",
     tillDate: "Till date",
@@ -642,6 +651,9 @@ const messages: Record<Language, Record<string, string>> = {
     amount: "रकम",
     amountReceived: "मिली रकम",
     approve: "ठीक है",
+    approveCollection: "कलेक्शन मंजूर करें",
+    approveExpense: "खर्च मंजूर करें",
+    approvalDate: "मंजूरी की तारीख",
     awaitingOwnerApproval: "मालिक की मंजूरी बाकी",
     back: "वापस",
     backlog: "बैकलॉग",
@@ -668,6 +680,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     closingBalance: "बंद हिसाब",
+    closingBalancePostingNote: "IN और OUT ट्रांजैक्शन तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
     closingCash: "दिन के अंत का नकद",
     code: "कोड",
     closeNavigation: "मेनू बंद करें",
@@ -697,6 +710,7 @@ const messages: Record<Language, Record<string, string>> = {
     dailyTransactions: "आज की एंट्री",
     dashboard: "मुख्य पेज",
     dateRange: "तारीख रेंज",
+    dateKey: "तारीख का आधार",
     deleteTransaction: "हटाएं",
     deleteUser: "यूजर हटाएं",
     deleted: "हटाए गए",
@@ -925,6 +939,7 @@ const messages: Record<Language, Record<string, string>> = {
     to: "को",
     toEmployee: "किस स्टाफ को",
     today: "आज",
+    transactionDate: "ट्रांजैक्शन की तारीख",
     totalClosing: "कुल बंद हिसाब",
     totalCollected: "कुल जमा",
     totalExpenses: "कुल खर्च",
@@ -932,6 +947,7 @@ const messages: Record<Language, Record<string, string>> = {
     totalOut: "OUT",
     totalCollection: "कुल जमा",
     ownerAccountCredit: "मालिक खाते में जमा",
+    pendingDateUsesTransaction: "मंजूरी तक बाकी एंट्री ट्रांजैक्शन तारीख से दिखाई जाती है।",
     totalOpening: "कुल शुरू हिसाब",
     totalRecorded: "कुल रिकॉर्ड",
     tillDate: "आज तक",
@@ -980,22 +996,6 @@ const businessLabelKeys: Record<BusinessType, string> = {
   library: "library",
   course: "shikshanSansthan",
   general: "general",
-};
-
-const permissionLabelKeys: Record<string, string> = {
-  collect_guest_house: "guestHouse",
-  collect_library: "library",
-  collect_course: "course",
-  collect_general: "general",
-  add_expense: "addExpense",
-  transfer_money: "transferCash",
-};
-
-const roleLabelKeys: Record<string, string> = {
-  admin: "admin",
-  owner: "owner",
-  staff: "staff",
-  sales_agent: "salesAgent",
 };
 
 const membershipRoleLabelKeys: Record<Profile["membership_role"], string> = {
@@ -1085,16 +1085,12 @@ const transactionRefreshActions = new Set<ClientAction>([
 ]);
 
 const bootstrapRefreshActions = new Set<ClientAction>([
-  changeUserPasswordAction,
-  createStaffAction,
   deleteCourseAction,
   deleteReferralAction,
   deleteRoomAction,
-  deleteUserAction,
   saveCourseAction,
   saveReferralAction,
   saveRoomAction,
-  saveStaffPermissionsAction,
   updateProfileAction,
 ]);
 
@@ -1426,20 +1422,23 @@ function paymentJourneySteps(
   const onlineAmount = paymentOnlineAmount(payment);
 
   if (cashAmount > 0 && onlineAmount > 0) {
-    const componentSteps: Array<{ component: "cash" | "online"; amount: number; approvedAt: string | null }> = [
-      { component: "cash", amount: cashAmount, approvedAt: payment.cash_approved_at },
-      { component: "online", amount: onlineAmount, approvedAt: payment.online_approved_at },
+    const componentSteps: Array<{ component: "cash" | "online"; amount: number; approvedAt: string | null; approvedBy: string | null }> = [
+      { component: "cash", amount: cashAmount, approvedAt: payment.cash_approved_at, approvedBy: payment.cash_approved_by },
+      { component: "online", amount: onlineAmount, approvedAt: payment.online_approved_at, approvedBy: payment.online_approved_by },
     ];
 
-    componentSteps.forEach(({ component, amount, approvedAt }) => {
+    componentSteps.forEach(({ component, amount, approvedAt, approvedBy }) => {
       const status = paymentComponentStatus(payment, component) ?? "pending";
       const componentApproved = status === "approved";
       const componentRejected = status === "rejected" || status === "cancelled";
+      const componentApprover = profiles.find((item) => item.id === approvedBy);
       steps.push({
         id: `${payment.id}-${component}-approval`,
-        person: `${t(component)} · ${labelForStatus(status, t)}`,
+        person: componentApproved && componentApprover
+          ? `${t(component)} · ${t("approvedBy")} ${componentApprover.full_name}`
+          : `${t(component)} · ${labelForStatus(status, t)}`,
         action: formatMoney(amount),
-        role: null,
+        role: componentApprover ? profileRoleLabel(componentApprover, t) : null,
         state: componentApproved ? "verified" : componentRejected ? "rejected" : "pending",
         timestamp: componentApproved ? approvedAt : null,
       });
@@ -1473,7 +1472,8 @@ function expenseJourneySteps(
   const ownerIds = ownerProfileIdSet(profiles);
   const approved = isEffectivelyApprovedExpense(expense, ownerIds);
   const ownerAuthored = ownerIds.has(expense.spent_by);
-  const approverRole = spender ? profileRoleLabel(spender, t) : null;
+  const approver = profiles.find((item) => item.id === expense.approved_by) ?? (ownerAuthored ? spender : undefined);
+  const approverRole = approver ? profileRoleLabel(approver, t) : null;
 
   return [
     {
@@ -1487,14 +1487,14 @@ function expenseJourneySteps(
     {
       id: `${expense.id}-approval`,
       person: approved
-        ? ownerAuthored && spender
-          ? `${t("approvedBy")} ${spender.full_name} (${approverRole})`
+        ? approver
+          ? `${t("approvedBy")} ${approver.full_name} (${approverRole})`
           : labelForStatus("approved", t)
         : t("approvalPending"),
       action: approved ? "" : t("journeyAwaitingApproval"),
       role: null,
       state: approved ? "verified" : "pending",
-      timestamp: null,
+      timestamp: approved ? expense.approved_at : null,
     },
   ];
 }
@@ -1730,7 +1730,21 @@ function buildClosingSummary(profile: Profile, ledger: LedgerEntry[], date: stri
     .reduce((sum, entry) => sum + numberValue(entry.amount), 0);
   const closing = opening + dayEntries.reduce((sum, entry) => sum + numberValue(entry.amount), 0);
 
-  return { profile, opening, collected, expenses, received, sent, adjustments, closing, dayEntries };
+  return {
+    profile,
+    opening,
+    collected,
+    expenses,
+    received,
+    sent,
+    adjustments,
+    closing,
+    dayEntries,
+    inCash: collected + received,
+    inOnline: 0,
+    outCash: expenses + sent,
+    outOnline: 0,
+  };
 }
 
 function roleBadge(profile: Profile) {
@@ -1774,9 +1788,10 @@ function mergeCachedAppData(bootstrap: BootstrapPayload, dashboard: DashboardPay
   };
 }
 
-function dashboardDataSearchParams(dateRange: DateRangeState) {
+function dashboardDataSearchParams(dateRange: DateRangeState, dateFilterKey: DateFilterKey) {
   const params = new URLSearchParams();
   params.set("range", dateRange.preset);
+  params.set("dateKey", dateFilterKey);
   if (dateRange.preset === "custom") {
     params.set("from", dateRange.from);
     params.set("to", dateRange.to);
@@ -1834,6 +1849,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [tab, setTab] = useState<Tab>(initialTab);
   const [language, setLanguageState] = useState<Language>("en");
   const [dateRange, setDateRange] = useState<DateRangeState>(initialViewState.dateRange);
+  const [dateFilterKey, setDateFilterKey] = useState<DateFilterKey>(initialViewState.dateFilterKey);
   const [transactionProfileId, setTransactionProfileId] = useState(initialTransactionProfileId);
   const [transactionFilter, setTransactionFilter] = useState<TransactionFilter>(initialTransactionFilter);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
@@ -1848,12 +1864,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const queryClient = useQueryClient();
   const initialDashboardData = useMemo(() => dashboardFromAppData(data), [data]);
   const initialDashboardParams = useMemo(
-    () => dashboardDataSearchParams(initialViewState.dateRange).toString(),
-    [initialViewState.dateRange],
+    () => dashboardDataSearchParams(initialViewState.dateRange, initialViewState.dateFilterKey).toString(),
+    [initialViewState.dateFilterKey, initialViewState.dateRange],
   );
   const dashboardParams = useMemo(
-    () => dashboardDataSearchParams(dateRange).toString(),
-    [dateRange],
+    () => dashboardDataSearchParams(dateRange, dateFilterKey).toString(),
+    [dateFilterKey, dateRange],
   );
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap", cacheScope],
@@ -2012,6 +2028,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     const params = new URLSearchParams(window.location.search);
     params.set("tab", tab);
     params.set("range", dateRange.preset);
+    params.set("dateKey", dateFilterKey);
     params.set("txUser", transactionProfileId);
     params.set("txFilter", transactionFilter);
     params.delete("settlementFilter");
@@ -2030,7 +2047,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     if (nextUrl !== currentUrl) {
       window.history.replaceState(null, "", nextUrl);
     }
-  }, [dateRange, tab, transactionFilter, transactionProfileId]);
+  }, [dateFilterKey, dateRange, tab, transactionFilter, transactionProfileId]);
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
@@ -2113,15 +2130,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const mainCourses = appData.courses.filter((course) => course.kind === "main" && course.active);
   const skillCourses = appData.courses.filter((course) => course.kind === "skill" && course.active);
   const activeRooms = appData.rooms.filter((room) => room.active);
-  const salesAgents = appData.profiles.filter((profile) => profile.active && profile.role === "sales_agent");
+  const salesAgents = appData.profiles.filter((profile) => profile.active && profile.membership_status === "active" && profile.role === "sales_agent");
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
-    if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
+    if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
     if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
     if (manager) return item.membership_role === "staff";
     return false;
   });
   const sendMoneyProfiles = appData.profiles.filter((item) => {
-    if (currentUserIsSalesAgent || !item.active || item.id === appData.profile.id) return false;
+    if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
     if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
     if (manager) return item.membership_role === "primary_owner";
     return false;
@@ -2139,12 +2156,30 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const selectedDateRangeLabel = formatDateRange(selectedDateRange, t);
   const closingDate = selectedDateRange.to;
   const appOwnerProfileIds = useMemo(() => ownerProfileIdSet(appData.profiles), [appData.profiles]);
-  const filteredPayments = appData.payments.filter((payment) => dateInRange(payment.payment_date, selectedDateRange));
-  const filteredExpenses = appData.expenses.filter((expense) => dateInRange(expense.expense_date, selectedDateRange));
+  const postingEvents = useMemo(
+    () => buildDailyPostingEvents({
+      payments: appData.payments,
+      expenses: appData.expenses,
+      movements: appData.movements,
+      agentSettlements: appData.agentSettlements,
+      ledger: appData.ledger,
+      profiles: appData.profiles,
+      timezone: appData.businessContext.business.timezone,
+    }),
+    [appData.agentSettlements, appData.businessContext.business.timezone, appData.expenses, appData.ledger, appData.movements, appData.payments, appData.profiles],
+  );
+  const selectedPostingEvents = useMemo(
+    () => postingEvents.filter((event) => dateInRange(postingEventDate(event, dateFilterKey), selectedDateRange)),
+    [dateFilterKey, postingEvents, selectedDateRange],
+  );
   const transactionUserId = canViewSharedBusinessHistory ? transactionProfileId : appData.profile.id;
   const closingProfiles = appData.profiles.filter((profile) => profile.active);
   const closingSummaries = useMemo(
     () => {
+      const withPostingFlow = (summary: UserClosingSummary) => ({
+        ...summary,
+        ...postingFlowTotals(postingEventsForProfileDate(postingEvents, summary.profile.id, closingDate, dateFilterKey)),
+      });
       if (appData.closingSummaries.length > 0) {
         return appData.closingSummaries
           .map((summary) => {
@@ -2154,7 +2189,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               (entry) => entry.account_profile_id === summary.profile_id && entry.entry_date === closingDate,
             );
 
-            return summaryWithOwnerCashInAsCollection({
+            return withPostingFlow(summaryWithOwnerCashInAsCollection({
               profile,
               opening: numberValue(summary.opening),
               collected: numberValue(summary.collected),
@@ -2164,21 +2199,25 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               adjustments: numberValue(summary.adjustments),
               closing: numberValue(summary.closing),
               dayEntries,
-            }, appData.movements, appData.profiles, closingDate);
+              inCash: 0,
+              inOnline: 0,
+              outCash: 0,
+              outOnline: 0,
+            }, appData.movements, appData.profiles, closingDate));
           })
           .filter((summary): summary is UserClosingSummary => Boolean(summary));
       }
 
       return closingProfiles.map((profile) =>
-        summaryWithOwnerCashInAsCollection(
+        withPostingFlow(summaryWithOwnerCashInAsCollection(
           buildClosingSummary(profile, appData.ledger, closingDate),
           appData.movements,
           appData.profiles,
           closingDate,
-        ),
+        )),
       );
     },
-    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingProfiles],
+    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingProfiles, dateFilterKey, postingEvents],
   );
   const agentIncentiveSummary = useMemo<AgentIncentiveSummary>(() => {
     const agentPayments = appData.payments.filter(
@@ -2224,37 +2263,33 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, [appData.agentSettlements, appData.payments, appOwnerProfileIds, salesAgents]);
 
   const totals = useMemo(() => {
-    const activePayments = filteredPayments.filter(
-      (payment) => payment.record_status === "active" && isEffectivelyApprovedPayment(payment, appOwnerProfileIds),
-    );
-    const activeExpenses = filteredExpenses.filter(
-      (expense) => expense.record_status === "active" && isEffectivelyApprovedExpense(expense, appOwnerProfileIds),
-    );
+    const paymentEvents = selectedPostingEvents.filter((event) => event.source_type === "payment");
+    const expenseEvents = selectedPostingEvents.filter((event) => event.source_type === "expense");
+    const paymentsById = new Map(appData.payments.map((payment) => [payment.id, payment]));
+    const expensesById = new Map(appData.expenses.map((expense) => [expense.id, expense]));
     return {
-      total: activePayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0),
-      cash: activePayments
-        .reduce((sum, payment) => sum + paymentCashAmount(payment), 0),
-      online: activePayments
-        .reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0),
-      expense: activeExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0),
+      total: paymentEvents.reduce((sum, event) => sum + event.amount, 0),
+      cash: paymentEvents.reduce((sum, event) => sum + event.cash_amount, 0),
+      online: paymentEvents.reduce((sum, event) => sum + event.online_amount, 0),
+      expense: expenseEvents.reduce((sum, event) => sum + event.amount, 0),
       byBusiness: Object.fromEntries(
         Object.keys(businessLabels).map((business) => [
           business,
-          activePayments
-            .filter((payment) => payment.business_type === business)
-            .reduce((sum, payment) => sum + numberValue(payment.amount), 0),
+          paymentEvents
+            .filter((event) => paymentsById.get(event.source_id)?.business_type === business)
+            .reduce((sum, event) => sum + event.amount, 0),
         ]),
       ) as Record<BusinessType, number>,
       expenseByBusiness: Object.fromEntries(
         Object.keys(businessLabels).map((business) => [
           business,
-          activeExpenses
-            .filter((expense) => (expense.business_type ?? "general") === business)
-            .reduce((sum, expense) => sum + numberValue(expense.amount), 0),
+          expenseEvents
+            .filter((event) => (expensesById.get(event.source_id)?.business_type ?? "general") === business)
+            .reduce((sum, event) => sum + event.amount, 0),
         ]),
       ) as Record<BusinessType, number>,
     };
-  }, [appOwnerProfileIds, filteredExpenses, filteredPayments]);
+  }, [appData.expenses, appData.payments, selectedPostingEvents]);
 
   const cashBalances = useMemo(() => {
     if (closingSummaries.length > 0) {
@@ -2419,16 +2454,16 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             <div className="px-4">
               <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={`/b/${appData.businessContext.business.slug}/manage`}>
                 <Settings size={20} />
-                <span>Business access</span>
+                <span>Business settings</span>
               </a>
             </div>
           ) : null}
           {appData.profile.platform_role === "platform_admin" ? (
             <div className="px-4">
-              <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/admin/businesses">
+              <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/admin/businesses">
                 <ShieldCheck size={20} />
                 <span>Admin console</span>
-              </a>
+              </Link>
             </div>
           ) : null}
           <div className="px-4 mt-auto">
@@ -2510,6 +2545,20 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                       ) : null}
                     </div>
                   ) : null}
+                  {tab === "home" || tab === "payments" || tab === "closing" ? (
+                    <label className="app-date-filter date-key-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
+                      <span className="date-key-label">{t("dateKey")}</span>
+                      <select
+                        aria-label={t("dateKey")}
+                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
+                        value={dateFilterKey}
+                        onChange={(event) => setDateFilterKey(event.target.value as DateFilterKey)}
+                      >
+                        <option value="approval">{t("approvalDate")}</option>
+                        <option value="transaction">{t("transactionDate")}</option>
+                      </select>
+                    </label>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -2546,6 +2595,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 cashBalances={cashBalances}
                 owner={owner}
                 data={appData}
+                postingEvents={postingEvents}
+                dateFilterKey={dateFilterKey}
                 dateRange={selectedDateRange}
                 dateRangePreset={dateRange.preset}
                 dateLabel={selectedDateRangeLabel}
@@ -2562,6 +2613,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 dateLabel={selectedDateRangeLabel}
                 dateRange={selectedDateRange}
                 dateRangePreset={dateRange.preset}
+                dateFilterKey={dateFilterKey}
                 transactionFilter={transactionFilter}
                 setTransactionFilter={setTransactionFilter}
                 transactionProfileId={transactionUserId}
@@ -2571,6 +2623,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 movements={appData.movements}
                 ledger={appData.ledger}
                 agentSettlements={appData.agentSettlements}
+                postingEvents={postingEvents}
                 profiles={appData.profiles}
                 profile={appData.profile}
                 owner={owner}
@@ -2599,12 +2652,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             {tab === "closing" ? (
               <ClosingView
                 date={closingDate}
+                dateFilterKey={dateFilterKey}
                 owner={owner}
                 profile={appData.profile}
                 summaries={closingSummaries}
                 payments={appData.payments}
                 expenses={appData.expenses}
                 movements={appData.movements}
+                agentSettlements={appData.agentSettlements}
+                postingEvents={postingEvents}
                 profiles={appData.profiles}
                 setNotice={pushNotice}
                 startTransition={startTransition}
@@ -2622,8 +2678,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 referrals={appData.referrals}
                 salesAgents={salesAgents}
                 changeRequests={appData.changeRequests}
-                permissionsByProfile={permissionsByProfile}
-                                setNotice={pushNotice}
+                setNotice={pushNotice}
                 startTransition={startTransition}
               />
             ) : null}
@@ -2923,6 +2978,8 @@ function HomeView({
   cashBalances,
   owner,
   data,
+  postingEvents,
+  dateFilterKey,
   dateRange,
   dateRangePreset,
   dateLabel,
@@ -2943,6 +3000,8 @@ function HomeView({
   cashBalances: { profile: Profile; balance: number }[];
   owner: boolean;
   data: AppData;
+  postingEvents: DailyPostingEvent[];
+  dateFilterKey: DateFilterKey;
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
   dateLabel: string;
@@ -2954,6 +3013,7 @@ function HomeView({
 }) {
   const { t } = useLanguage();
   const [pendingReviewOpen, setPendingReviewOpen] = useState(false);
+  const rangedPostingEvents = postingEvents.filter((event) => dateInRange(postingEventDate(event, dateFilterKey), dateRange));
 
   // Outline: Calculate pending amounts and render either a personalized staff dashboard or owner business status.
   if (isSalesAgent(data.profile.role)) {
@@ -3021,62 +3081,49 @@ function HomeView({
     );
     const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
     const myBalance = myLedgerBalance + myPendingCash;
-    const myPayments = data.payments.filter(
-      (payment) =>
-        payment.record_status === "active" &&
-        dateInRange(payment.payment_date, dateRange) &&
-        (payment.collected_by === profileId || payment.current_holder_id === profileId),
+    const myPostingEvents = rangedPostingEvents.filter((event) => event.profile_id === profileId);
+    const myFlow = postingFlowTotals(myPostingEvents);
+    const rangedPaymentSourceIds = new Set(rangedPostingEvents.filter((event) => event.source_type === "payment").map((event) => event.source_id));
+    const rangedExpenseSourceIds = new Set(myPostingEvents.filter((event) => event.source_type === "expense").map((event) => event.source_id));
+    const myPayments = data.payments.filter((payment) =>
+      payment.record_status === "active" &&
+      (rangedPaymentSourceIds.has(payment.id) || myPendingPayments.some((pendingPayment) => pendingPayment.id === payment.id)) &&
+      (payment.collected_by === profileId || payment.current_holder_id === profileId),
     );
-    const myApprovedPayments = myPayments.filter((payment) => payment.approval_status === "approved");
-    const myExpenses = data.expenses.filter(
-      (expense) =>
-        expense.record_status === "active" &&
-        dateInRange(expense.expense_date, dateRange) &&
-        expense.spent_by === profileId,
+    const myExpenses = data.expenses.filter((expense) =>
+      expense.record_status === "active" &&
+      (rangedExpenseSourceIds.has(expense.id) || myPendingExpenses.some((pendingExpense) => pendingExpense.id === expense.id)) &&
+      expense.spent_by === profileId,
     );
-    const myApprovedExpenses = myExpenses.filter((expense) => expense.approval_status === "approved");
-    const mySettlementMovements = data.movements.filter(
-      (movement) =>
-        movement.status === "accepted" &&
-        movement.type === "settlement" &&
-        !movement.payment_id &&
-        dateInRange(indiaDateIso(movement.responded_at ?? movement.created_at), dateRange) &&
-        (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
-    );
-    const myOwnerCashIn = ownerCashTransferInAmount(data.movements, data.profiles, profileId, dateRange);
-    const myCollectionCash = myApprovedPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0) + myOwnerCashIn;
-    const myCollectionOnline = myApprovedPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
-    const myExpenseAmount = myApprovedExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
-    const mySettlementOut = mySettlementMovements
-      .filter((movement) => movement.from_profile_id === profileId)
-      .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-    const mySettlementIn = mySettlementMovements
-      .filter((movement) => movement.to_profile_id === profileId)
-      .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-    const myInCash = myCollectionCash + mySettlementIn;
-    const myInOnline = myCollectionOnline;
+    const myInCash = myFlow.inCash;
+    const myInOnline = myFlow.inOnline;
     const myInAmount = myInCash + myInOnline;
-    const myOutCash = myExpenseAmount + mySettlementOut;
+    const myOutCash = myFlow.outCash;
+    const myOutOnline = myFlow.outOnline;
     const myPendingAmount =
       myPendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
       myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
       myPendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
     const myPendingCount = myPendingPayments.length + myPendingExpenses.length + myPendingSettlementMovements.length;
     const myBusinessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
-      const businessPayments = myApprovedPayments.filter((payment) => payment.business_type === business);
-      const businessExpenses = myApprovedExpenses.filter((expense) => (expense.business_type ?? "general") === business);
+      const businessPaymentEvents = myPostingEvents.filter(
+        (event) => event.source_type === "payment" && data.payments.find((payment) => payment.id === event.source_id)?.business_type === business,
+      );
+      const businessExpenseEvents = myPostingEvents.filter(
+        (event) => event.source_type === "expense" && (data.expenses.find((expense) => expense.id === event.source_id)?.business_type ?? "general") === business,
+      );
       const pendingBusinessPayments = myPendingPayments.filter((payment) => payment.business_type === business);
       const pendingBusinessExpenses = myPendingExpenses.filter((expense) => (expense.business_type ?? "general") === business);
-      const cashCollection = businessPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
-      const onlineCollection = businessPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
-      const expenses = businessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+      const cashCollection = businessPaymentEvents.reduce((sum, event) => sum + event.cash_amount, 0);
+      const onlineCollection = businessPaymentEvents.reduce((sum, event) => sum + event.online_amount, 0);
+      const expenses = businessExpenseEvents.reduce((sum, event) => sum + event.amount, 0);
       const pendingAmount =
         pendingBusinessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0) +
         pendingBusinessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
 
       return {
         business,
-        collection: businessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0),
+        collection: cashCollection + onlineCollection,
         cashCollection,
         onlineCollection,
         expenses,
@@ -3136,8 +3183,8 @@ function HomeView({
               </div>
             </div>
             <div>
-              <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(myOutCash)}</p>
-              <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(myOutCash)}</p>
+              <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(myOutCash + myOutOnline)}</p>
+              <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(myOutCash)} · {t("online")} {formatMoney(myOutOnline)}</p>
             </div>
           </div>
 
@@ -3240,49 +3287,19 @@ function HomeView({
   const ownerProfileIds = ownerProfileIdSet(data.profiles);
   const activePayments = data.payments.filter((payment) => payment.record_status === "active");
   const activeExpenses = data.expenses.filter((expense) => expense.record_status === "active");
-  const approvedPayments = activePayments.filter(
-    (payment) => isEffectivelyApprovedPayment(payment, ownerProfileIds) && dateInRange(payment.payment_date, dateRange),
-  );
-  const approvedExpenses = activeExpenses.filter(
-    (expense) => isEffectivelyApprovedExpense(expense, ownerProfileIds) && dateInRange(expense.expense_date, dateRange),
-  );
   const pendingPayments = activePayments.filter(
     (payment) => isEffectivelyPendingPayment(payment, ownerProfileIds) && pendingInScope(payment.payment_date),
   );
   const pendingExpenses = activeExpenses.filter(
     (expense) => isEffectivelyPendingExpense(expense, ownerProfileIds) && pendingInScope(expense.expense_date),
   );
-  const ownerCashMovements = data.movements.filter(
-    (movement) =>
-      movement.status === "accepted" &&
-      dateInRange(indiaDateIso(movement.responded_at ?? movement.created_at), dateRange),
-  );
-  const ownerMovementIn = ownerCashMovements
-    .filter(
-      (movement) =>
-        !ownerProfileIds.has(movement.from_profile_id) &&
-        ownerProfileIds.has(movement.to_profile_id ?? ""),
-    )
-    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-  const ownerMovementOut = ownerCashMovements
-    .filter(
-      (movement) =>
-        ownerProfileIds.has(movement.from_profile_id) &&
-        !ownerProfileIds.has(movement.to_profile_id ?? ""),
-    )
-    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-  const ownerAgentPayoutOut = data.agentSettlements
-    .filter(
-      (settlement) =>
-        settlement.status === "accepted" &&
-        dateInRange(indiaDateIso(settlement.responded_at ?? settlement.created_at), dateRange),
-    )
-    .reduce((sum, settlement) => sum + numberValue(settlement.amount), 0);
-  const ownerCollectedPayments = approvedPayments.filter((payment) => ownerProfileIds.has(payment.collected_by));
-  const ownerInCash = ownerCollectedPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0) + ownerMovementIn;
-  const ownerInOnline = ownerCollectedPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
+  const ownerPostingEvents = rangedPostingEvents.filter((event) => ownerProfileIds.has(event.profile_id));
+  const ownerFlow = postingFlowTotals(ownerPostingEvents);
+  const ownerInCash = ownerFlow.inCash;
+  const ownerInOnline = ownerFlow.inOnline;
   const ownerInAmount = ownerInCash + ownerInOnline;
-  const ownerOutCash = totals.expense + ownerMovementOut + ownerAgentPayoutOut;
+  const ownerOutCash = ownerFlow.outCash;
+  const ownerOutOnline = ownerFlow.outOnline;
   const pendingSettlementMovements = data.movements.filter(
     (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(indiaDateIso(movement.created_at)),
   );
@@ -3369,20 +3386,24 @@ function HomeView({
     .reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
   const remainingStaffCash = confirmedStaffCash + pendingStaffCash;
   const businessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
-    const businessPayments = approvedPayments.filter((payment) => payment.business_type === business);
-    const businessExpenses = approvedExpenses.filter((expense) => (expense.business_type ?? "general") === business);
+    const businessPaymentEvents = rangedPostingEvents.filter(
+      (event) => event.source_type === "payment" && data.payments.find((payment) => payment.id === event.source_id)?.business_type === business,
+    );
+    const businessExpenseEvents = rangedPostingEvents.filter(
+      (event) => event.source_type === "expense" && (data.expenses.find((expense) => expense.id === event.source_id)?.business_type ?? "general") === business,
+    );
     const pendingBusinessPayments = pendingPayments.filter((payment) => payment.business_type === business);
     const pendingBusinessExpenses = pendingExpenses.filter((expense) => (expense.business_type ?? "general") === business);
-    const cashCollection = businessPayments.reduce((sum, payment) => sum + paymentCashAmount(payment), 0);
-    const onlineCollection = businessPayments.reduce((sum, payment) => sum + paymentOnlineAmount(payment), 0);
-    const expenses = businessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+    const cashCollection = businessPaymentEvents.reduce((sum, event) => sum + event.cash_amount, 0);
+    const onlineCollection = businessPaymentEvents.reduce((sum, event) => sum + event.online_amount, 0);
+    const expenses = businessExpenseEvents.reduce((sum, event) => sum + event.amount, 0);
     const pendingBusinessAmount =
       pendingBusinessPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
       pendingBusinessExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
 
     return {
       business,
-      collection: businessPayments.reduce((sum, payment) => sum + numberValue(payment.amount), 0),
+      collection: cashCollection + onlineCollection,
       cashCollection,
       onlineCollection,
       expenses,
@@ -3446,8 +3467,8 @@ function HomeView({
             </div>
           </div>
           <div>
-            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(ownerOutCash)}</p>
-            <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(ownerOutCash)}</p>
+            <p className="dashboard-card-value font-headline text-3xl font-bold text-on-error-container">{formatMoney(ownerOutCash + ownerOutOnline)}</p>
+            <p className="dashboard-card-note text-xs text-error font-medium mt-1">{t("cash")} {formatMoney(ownerOutCash)} · {t("online")} {formatMoney(ownerOutOnline)}</p>
           </div>
         </div>
 
@@ -3563,7 +3584,11 @@ function TransactionJourney({
               <span className="transaction-journey-copy">
                 <strong>{step.person}</strong>
                 {step.action || step.role ? <small>{step.action}{step.role ? ` · ${step.role}` : ""}</small> : null}
-                {step.timestamp ? <time dateTime={step.timestamp}>{formatIndiaTime(step.timestamp)}</time> : null}
+                {step.timestamp ? (
+                  <time dateTime={step.timestamp}>
+                    {indiaDateIso(step.timestamp)} · {formatIndiaTime(step.timestamp)}
+                  </time>
+                ) : null}
               </span>
             </div>
           </div>
@@ -3647,6 +3672,7 @@ function TransactionsView({
   dateLabel,
   dateRange,
   dateRangePreset,
+  dateFilterKey,
   transactionFilter,
   setTransactionFilter,
   transactionProfileId,
@@ -3656,6 +3682,7 @@ function TransactionsView({
   movements,
   ledger,
   agentSettlements,
+  postingEvents,
   profiles,
   profile,
   owner,
@@ -3669,6 +3696,7 @@ function TransactionsView({
   dateLabel: string;
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
+  dateFilterKey: DateFilterKey;
   transactionFilter: TransactionFilter;
   setTransactionFilter: (filter: TransactionFilter) => void;
   transactionProfileId: string;
@@ -3678,6 +3706,7 @@ function TransactionsView({
   movements: MoneyMovement[];
   ledger: LedgerEntry[];
   agentSettlements: AgentSettlement[];
+  postingEvents: DailyPostingEvent[];
   profiles: Profile[];
   profile: Profile;
   owner: boolean;
@@ -3756,15 +3785,31 @@ function TransactionsView({
       pendingApproval?: boolean;
       canApprove?: boolean;
       approvalBlockedByTransfer?: boolean;
+      cashApprovalStatus?: ApprovalStatus | null;
+      onlineApprovalStatus?: ApprovalStatus | null;
+      isMixedPayment?: boolean;
+      sourceId?: string;
+      transactionDate?: string;
+      approvalDate?: string;
     };
     const selectedUserId = canUseProfileFilter ? transactionProfileId : profile.id;
     const userMatches = (userId: string | null | undefined) => selectedUserId === "all" || userId === selectedUserId;
-    const movementEntry = (movement: MoneyMovement, amount: number, accountId?: string | null) =>
-      ledger.find((entry) => {
-        if (entry.source_id !== movement.id || entry.source_type !== movement.type) return false;
-        if (accountId && entry.account_profile_id !== accountId) return false;
-        return amount >= 0 ? numberValue(entry.amount) > 0 : numberValue(entry.amount) < 0;
+    const eventMatchesSelectedUser = (event: DailyPostingEvent) => selectedUserId === "all" || event.profile_id === selectedUserId;
+    const visibleSourceEvents = (sourceType: DailyPostingEvent["source_type"], sourceId: string) =>
+      postingEvents.filter((event) =>
+        event.source_type === sourceType &&
+        event.source_id === sourceId &&
+        eventMatchesSelectedUser(event) &&
+        dateInRange(postingEventDate(event, dateFilterKey), dateRange),
+      );
+    const groupEventsByDisplayDate = (events: DailyPostingEvent[]) => {
+      const groups = new Map<string, DailyPostingEvent[]>();
+      events.forEach((event) => {
+        const date = postingEventDate(event, dateFilterKey);
+        groups.set(date, [...(groups.get(date) ?? []), event]);
       });
+      return [...groups.entries()];
+    };
     const collectionStatus = (payment: Payment) => {
       if (payment.approval_status !== "approved") return labelForStatus(payment.approval_status, t);
       const onlineOnly = paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0;
@@ -3790,44 +3835,31 @@ function TransactionsView({
         linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id));
     };
 
-    const historyDateInScope = (isoDate: string, pendingApproval: boolean) =>
-      pendingApproval ? pendingRecordInScope(isoDate, dateRange, dateRangePreset) : dateInRange(isoDate, dateRange);
-
     const paymentRows = currentUserIsSalesAgent ? [] : payments
-      .filter((payment) => historyDateInScope(payment.payment_date, isEffectivelyPendingPayment(payment, ownerProfileIds)))
       .filter((payment) => payment.record_status === "active")
       .flatMap((payment): HistoryRecord[] => {
         const linkedTransfers = paymentTransfers(movements, payment.id);
-        if (!paymentMatchesSelectedProfile(payment, linkedTransfers)) return [];
-
+        const matchesActivityProfile = paymentMatchesSelectedProfile(payment, linkedTransfers);
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
-        const onlineOnly = onlineImpact > 0 && cashImpact === 0;
         const ownerAuthoredPayment = isOwnerProfile(payment.collected_by);
         const effectivePaymentApproved = isEffectivelyApprovedPayment(payment, ownerProfileIds);
         const effectivePaymentPending = isEffectivelyPendingPayment(payment, ownerProfileIds);
+        const pendingCashAmount = paymentComponentStatus(payment, "cash") === "approved" ? 0 : cashImpact;
+        const pendingOnlineAmount = paymentComponentStatus(payment, "online") === "approved" ? 0 : onlineImpact;
+        const pendingAmount = pendingCashAmount + pendingOnlineAmount;
         const hasApprovedComponent = paymentHasApprovedComponent(payment);
         const cashValueApproved = paymentComponentStatus(payment, "cash") === "approved";
-        const onlineApproved = effectivePaymentApproved;
         const paymentStatus = ownerAuthoredPayment ? t("receivedStatus") : collectionStatus(payment);
         const paymentStatusTone = ownerAuthoredPayment ? "approved" : collectionStatusTone(payment);
         const reviewProfileId = paymentReviewProfileId(payment);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
-        const transferOut = !owner && linkedTransfers.some(
-          (movement) =>
-            (movement.status === "accepted" || movement.status === "pending") &&
-            movement.from_profile_id === profile.id,
-        );
-        const transferIn = !owner && linkedTransfers.some(
-          (movement) =>
-            (movement.status === "accepted" || movement.status === "pending") &&
-            movement.to_profile_id === profile.id,
-        );
         const requiredPermission = businessPermissions[payment.business_type];
         const transferRecipients = cashImpact > 0 && requiredPermission
           ? profiles.filter((item) =>
               item.active &&
+              item.membership_status === "active" &&
               item.id !== (payment.current_holder_id ?? payment.collected_by) &&
               item.role === "staff" &&
               (permissionsByProfile[item.id] ?? []).includes(requiredPermission),
@@ -3841,9 +3873,7 @@ function TransactionsView({
           !pendingTransfer;
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
         const baseRecord = {
-          id: payment.id,
-          date: payment.payment_date,
-          sortAt: payment.created_at,
+          sourceId: payment.id,
           title: paymentDisplayTitle(payment, t),
           businessLabel: transactionBusinessTag(payment.business_type, t),
           status: paymentStatus,
@@ -3864,9 +3894,12 @@ function TransactionsView({
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
-          pendingApproval: effectivePaymentPending || Boolean(pendingTransfer),
+          pendingApproval: false,
           canApprove: owner && effectivePaymentPending && !pendingTransfer,
           approvalBlockedByTransfer: owner && effectivePaymentPending && Boolean(pendingTransfer),
+          cashApprovalStatus: paymentComponentStatus(payment, "cash"),
+          onlineApprovalStatus: paymentComponentStatus(payment, "online"),
+          isMixedPayment: cashImpact > 0 && onlineImpact > 0,
           icon: payment.business_type === "guest_house"
             ? <Hotel size={24} />
             : payment.business_type === "library"
@@ -3876,120 +3909,122 @@ function TransactionsView({
                 : <WalletCards size={24} />,
         };
 
-        if (owner) {
-          const collectedByOwner = isOwnerProfile(payment.collected_by);
-          const currentHolderIsOwner = isOwnerProfile(payment.current_holder_id);
-          const rows: HistoryRecord[] = [];
-
+        const rows: HistoryRecord[] = [];
+        groupEventsByDisplayDate(visibleSourceEvents("payment", payment.id)).forEach(([displayDate, events]) => {
+          const amount = events.reduce((sum, event) => sum + event.amount, 0);
+          const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
+          const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
+          const approvedAt = events.map((event) => event.approved_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? payment.created_at;
           rows.push({
             ...baseRecord,
+            id: `${payment.id}-${displayDate}`,
             kind: "collection",
-            filter: "transactions",
-            amount: numberValue(payment.amount),
-            cashAmount: cashImpact,
-            onlineAmount: onlineImpact,
+            filter: "cash_in",
+            date: displayDate,
+            sortAt: approvedAt,
+            amount,
+            cashAmount,
+            onlineAmount,
+            amountTone: onlineAmount > 0 && cashAmount === 0 ? "online-approved" : "positive",
+            status: labelForStatus("approved", t),
+            statusTone: "approved",
+            meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            pendingApproval: false,
+            canApprove: false,
+            approvalBlockedByTransfer: false,
+            transactionDate: payment.payment_date,
+            approvalDate: events.map((event) => event.approval_date).sort().at(-1),
+          });
+        });
+
+        if (matchesActivityProfile && pendingAmount > 0 && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
+          rows.push({
+            ...baseRecord,
+            id: `${payment.id}-pending`,
+            kind: "collection",
+            filter: owner ? "transactions" : "cash_in",
+            date: payment.payment_date,
+            sortAt: payment.created_at,
+            amount: pendingAmount,
+            cashAmount: pendingCashAmount,
+            onlineAmount: pendingOnlineAmount,
             amountTone: "neutral",
             meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            pendingApproval: true,
+            transactionDate: payment.payment_date,
+            approvalDate: undefined,
           });
+        }
 
-          if (effectivePaymentApproved) {
-            const ownerCashAmount = collectedByOwner || currentHolderIsOwner ? cashImpact : 0;
-            const ownerOnlineAmount = onlineImpact;
-            const ownerFinancialAmount = ownerCashAmount + ownerOnlineAmount;
-            if (ownerFinancialAmount > 0) {
-              rows.push({
-                ...baseRecord,
-                kind: "collection",
-                filter: "cash_in",
-                amount: ownerFinancialAmount,
-                cashAmount: ownerCashAmount,
-                onlineAmount: ownerOnlineAmount,
-                amountTone: ownerOnlineAmount > 0 && ownerCashAmount === 0 ? "online-approved" : "positive",
-                meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}${!collectedByOwner && ownerOnlineAmount > 0 ? ` · ${t("ownerAccountCredit")}` : ""}`,
-                recordType: collectedByOwner ? "payment" : undefined,
-                canDelete: collectedByOwner,
-                transferLines: [],
-                transferRecipients: [],
-                canRequestTransfer: false,
-                incomingTransferId: null,
-                pendingApproval: false,
-              });
-            }
+        if (owner && matchesActivityProfile && pendingAmount === 0) {
+          const sourceEvents = postingEvents.filter((event) => event.source_type === "payment" && event.source_id === payment.id);
+          const activityDate = dateFilterKey === "transaction"
+            ? payment.payment_date
+            : sourceEvents.map((event) => event.approval_date).sort().at(-1) ?? payment.payment_date;
+          if (dateInRange(activityDate, dateRange)) {
+            rows.push({
+              ...baseRecord,
+              id: payment.id,
+              kind: "collection",
+              filter: "transactions",
+              date: activityDate,
+              sortAt: payment.approved_at ?? payment.created_at,
+              amount: numberValue(payment.amount),
+              cashAmount: cashImpact,
+              onlineAmount: onlineImpact,
+              amountTone: "neutral",
+              meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+              pendingApproval: false,
+              transactionDate: payment.payment_date,
+              approvalDate: sourceEvents.map((event) => event.approval_date).sort().at(-1),
+            });
           }
-
-          return rows;
         }
 
-        const rows: HistoryRecord[] = [];
-        const personalStaffView = !canUseProfileFilter;
-        const staffOwnOnline = personalStaffView && payment.collected_by === profile.id && onlineImpact > 0;
-        const rowCashAmount = canUseProfileFilter
-          ? cashImpact
-          : transferOut
-            ? cashImpact
-            : payment.current_holder_id === profile.id || transferIn
-              ? cashImpact
-              : 0;
-
-        if (rowCashAmount > 0 || (canUseProfileFilter && onlineImpact > 0)) {
-          const rowOnlineAmount = canUseProfileFilter ? onlineImpact : 0;
-          const shownAmount = transferOut ? -rowCashAmount : rowCashAmount + rowOnlineAmount;
-          rows.push({
-            ...baseRecord,
-            kind: "collection",
-            filter: transferOut ? "cash_out" : "cash_in",
-            amount: shownAmount,
-            cashAmount: rowCashAmount,
-            onlineAmount: rowOnlineAmount,
-            amountTone: shownAmount === 0 ? "neutral" : shownAmount > 0 ? "positive" : "negative",
-            meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
-          });
-        }
-
-        if (staffOwnOnline && !transferOut && !transferIn) {
-          const onlineAmount = onlineImpact;
-          rows.push({
-            ...baseRecord,
-            id: onlineOnly ? payment.id : `${payment.id}-online`,
-            kind: "settlement",
-            filter: "cash_out",
-            amount: -onlineAmount,
-            cashAmount: 0,
-            onlineAmount,
-            amountTone: onlineApproved ? "online-approved" : "neutral",
-            title: t("ownerAccountCredit"),
-            meta: `${paymentDisplayTitle(payment, t)} · ${labelForBusiness(payment.business_type, t)}`,
-            modeLabel: t("online"),
-            recordType: onlineOnly ? "payment" : undefined,
-            canEdit: onlineOnly ? baseRecord.canEdit : false,
-            canDelete: false,
-            transferLines: [],
-            journey: baseRecord.journey,
-            transferRecipients: [],
-            canRequestTransfer: false,
-            incomingTransferId: null,
+        if (!owner && payment.collected_by === selectedUserId) {
+          const collectorActivityEvents = postingEvents.filter((event) =>
+            event.source_type === "payment" &&
+            event.source_id === payment.id &&
+            event.profile_id !== selectedUserId &&
+            dateInRange(postingEventDate(event, dateFilterKey), dateRange),
+          );
+          groupEventsByDisplayDate(collectorActivityEvents).forEach(([displayDate, events]) => {
+            const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
+            const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
+            rows.push({
+              ...baseRecord,
+              id: `${payment.id}-activity-${displayDate}`,
+              kind: "collection",
+              filter: "transactions",
+              date: displayDate,
+              sortAt: events.map((event) => event.approved_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? payment.created_at,
+              amount: cashAmount + onlineAmount,
+              cashAmount,
+              onlineAmount,
+              amountTone: "neutral",
+              status: labelForStatus("approved", t),
+              statusTone: "approved",
+              meta: `${labelForBusiness(payment.business_type, t)} · ${t("ownerAccountCredit")}`,
+              pendingApproval: false,
+              canApprove: false,
+              canEdit: false,
+              canDelete: false,
+              canRequestTransfer: false,
+              transactionDate: payment.payment_date,
+              approvalDate: events.map((event) => event.approval_date).sort().at(-1),
+            });
           });
         }
 
         return rows;
       });
     const expenseRows = currentUserIsSalesAgent ? [] : expenses
-      .filter((expense) => historyDateInScope(expense.expense_date, isEffectivelyPendingExpense(expense, ownerProfileIds)))
       .filter((expense) => expense.record_status === "active")
-      .filter((expense) => userMatches(expense.spent_by))
       .flatMap((expense): HistoryRecord[] => {
-        const spentByOwner = isOwnerProfile(expense.spent_by);
         const expenseEffectiveStatus = effectiveExpenseStatus(expense, ownerProfileIds);
-        const effectiveExpenseApproved = isEffectivelyApprovedExpense(expense, ownerProfileIds);
         const pendingApproval = isEffectivelyPendingExpense(expense, ownerProfileIds);
         const baseRecord = {
-          id: expense.id,
-          kind: "expense" as const,
-          date: expense.expense_date,
-          sortAt: expense.created_at,
-          amount: -numberValue(expense.amount),
-          cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
-          onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
+          sourceId: expense.id,
           title: expenseDisplayTitle(expense),
           meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
           status: labelForStatus(expenseEffectiveStatus, t),
@@ -4005,180 +4040,249 @@ function TransactionsView({
           editAmount: numberValue(expense.amount),
           canEdit: pendingApproval && (owner || expense.spent_by === profile.id),
           canDelete: owner,
-          pendingApproval,
+          pendingApproval: false,
+          canApprove: owner && pendingApproval,
           businessLabel: transactionBusinessTag(expense.business_type, t),
           journey: expenseJourneySteps(expense, profiles, t),
           icon: <ReceiptText size={24} />,
         };
+        const rows: HistoryRecord[] = [];
 
-        if (!owner) {
-          return [{ ...baseRecord, filter: "cash_out" }];
-        }
-
-        if (spentByOwner && effectiveExpenseApproved) {
-          return [{ ...baseRecord, filter: "cash_out", pendingApproval: false }];
-        }
-
-        if (!spentByOwner || pendingApproval) {
-          return [{
+        visibleSourceEvents("expense", expense.id).forEach((event) => {
+          const displayDate = postingEventDate(event, dateFilterKey);
+          rows.push({
             ...baseRecord,
-            filter: "transactions",
+            id: `${expense.id}-${displayDate}`,
+            kind: "expense",
+            filter: "cash_out",
+            date: displayDate,
+            sortAt: event.approved_at ?? expense.created_at,
+            amount: -event.amount,
+            cashAmount: event.cash_amount,
+            onlineAmount: event.online_amount,
+            amountTone: "negative",
+            pendingApproval: false,
+            transactionDate: expense.expense_date,
+            approvalDate: event.approval_date,
+          });
+        });
+
+        if (pendingApproval && userMatches(expense.spent_by) && pendingRecordInScope(expense.expense_date, dateRange, dateRangePreset)) {
+          rows.push({
+            ...baseRecord,
+            id: `${expense.id}-pending`,
+            kind: "expense",
+            filter: owner ? "transactions" : "cash_out",
+            date: expense.expense_date,
+            sortAt: expense.created_at,
+            amount: -numberValue(expense.amount),
+            cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
+            onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
             amountTone: "neutral",
-          }];
+            pendingApproval: true,
+            transactionDate: expense.expense_date,
+            approvalDate: undefined,
+          });
         }
 
-        return [];
+        if (owner && !pendingApproval && userMatches(expense.spent_by)) {
+          const sourceEvent = postingEvents.find((event) => event.source_type === "expense" && event.source_id === expense.id);
+          const activityDate = dateFilterKey === "transaction" ? expense.expense_date : sourceEvent?.approval_date ?? expense.expense_date;
+          if (dateInRange(activityDate, dateRange)) {
+            rows.push({
+              ...baseRecord,
+              id: expense.id,
+              kind: "expense",
+              filter: "transactions",
+              date: activityDate,
+              sortAt: expense.approved_at ?? expense.created_at,
+              amount: -numberValue(expense.amount),
+              cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
+              onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
+              amountTone: "neutral",
+              pendingApproval: false,
+              transactionDate: expense.expense_date,
+              approvalDate: sourceEvent?.approval_date,
+            });
+          }
+        }
+
+        return rows;
       });
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
-      if ((movement.status !== "accepted" && movement.status !== "pending") || movement.payment_id) return [];
+      if (movement.status !== "accepted" && movement.status !== "pending") return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
       const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
       const fromOwnerish = isOwnerish(fromProfile?.role ?? "");
       const toOwnerish = isOwnerish(toProfile?.role ?? "");
       const movementAmount = numberValue(movement.amount);
       const pendingMovement = movement.status === "pending";
-
-      if (owner) {
-        const ownerToOwner = fromOwnerish && toOwnerish;
-        const currentOwnerInvolved = movement.from_profile_id === profile.id || movement.to_profile_id === profile.id;
-        const ownerFacingAmount = ownerToOwner
-          ? movement.to_profile_id === profile.id
-            ? movementAmount
-            : movement.from_profile_id === profile.id
-              ? -movementAmount
-              : 0
-          : !fromOwnerish && toOwnerish
-            ? movementAmount
-            : fromOwnerish && !toOwnerish
-              ? -movementAmount
-              : 0;
-        if (ownerFacingAmount === 0) return [];
-        const ownerReceivedSettlement = ownerFacingAmount > 0;
-        const counterpartyId = ownerFacingAmount > 0 ? movement.from_profile_id : movement.to_profile_id;
-        if (selectedOwnerSelf) {
-          if (!currentOwnerInvolved) return [];
-        } else if (!userMatches(counterpartyId)) {
-          return [];
-        }
-        const entry = pendingMovement ? null : movementEntry(movement, ownerFacingAmount);
-        const date = entry?.entry_date ?? indiaDateIso(movement.created_at);
-        if (!historyDateInScope(date, pendingMovement)) return [];
-        const counterpartyName = profileName(profiles, counterpartyId, t);
-        const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
+      const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
+      if (pendingMovement) {
+        const pendingProfileId = selectedUserId === "all"
+          ? movement.from_profile_id
+          : selectedUserId;
+        const direction = movement.from_profile_id === pendingProfileId
+          ? "out"
+          : movement.to_profile_id === pendingProfileId
+            ? "in"
+            : null;
+        const transactionDate = indiaDateIso(movement.created_at);
+        if (!direction || !pendingRecordInScope(transactionDate, dateRange, dateRangePreset)) return [];
+        const counterpartyId = direction === "in" ? movement.from_profile_id : movement.to_profile_id;
         return [{
-          id: `movement-${movement.id}`,
-          kind: ownerReceivedSettlement ? "settlement" : "expense",
-          filter: ownerReceivedSettlement ? "cash_in" : "cash_out",
-          date,
-          sortAt: movement.responded_at ?? movement.created_at,
-          amount: ownerFacingAmount,
+          id: `movement-${movement.id}-pending`,
+          sourceId: movement.id,
+          kind: direction === "in" ? "collection" : "settlement",
+          filter: direction === "in" ? "cash_in" : "cash_out",
+          date: transactionDate,
+          sortAt: movement.created_at,
+          amount: direction === "in" ? movementAmount : -movementAmount,
           cashAmount: movementAmount,
           onlineAmount: 0,
-          title: ownerFacingAmount > 0 ? t("cashReceived") : t("cashSent"),
-          meta: `${ownerFacingAmount > 0 ? t("from") : t("to")}: ${counterpartyName}${movement.note ? ` · ${movement.note}` : ""}`,
-          status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
+          amountTone: "neutral",
+          title: direction === "in" ? t("cashReceived") : t("cashSent"),
+          meta: `${direction === "in" ? t("from") : t("to")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
+          status: labelForStatus(movement.status, t),
           statusTone: movement.status,
           modeLabel: labelForMode(movement.mode, t),
           recordStatus: "active",
-          ownerId: counterpartyId ?? profile.id,
+          ownerId: pendingProfileId,
+          description: "",
+          remark: movement.note ?? "",
+          reason: null,
+          businessLabel: t("cashTransfer"),
+          transferLines: [movementChain],
+          journey: cashTransferJourneySteps(movement, profiles, t, direction === "in" ? "cash_in" : "cash_out"),
+          pendingApproval: true,
+          transactionDate,
+          approvalDate: undefined,
+          icon: direction === "in" ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
+        }];
+      }
+
+      return visibleSourceEvents(movement.type, movement.id).map((event) => {
+        const incoming = event.direction === "in";
+        const incomingOwnerCash = incoming && fromOwnerish && !toOwnerish;
+        const outgoingOwnerSettlement = !incoming && toOwnerish;
+        const entry = ledger.find((item) =>
+          item.source_id === movement.id &&
+          item.source_type === movement.type &&
+          item.account_profile_id === event.profile_id,
+        );
+        return {
+          id: `movement-${movement.id}-${event.direction}`,
+          sourceId: movement.id,
+          kind: incoming ? "collection" as const : "settlement" as const,
+          filter: incoming ? "cash_in" as const : "cash_out" as const,
+          date: postingEventDate(event, dateFilterKey),
+          sortAt: movement.responded_at ?? movement.created_at,
+          amount: incoming ? event.amount : -event.amount,
+          cashAmount: event.cash_amount,
+          onlineAmount: event.online_amount,
+          title: incoming ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
+          meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, event.counterparty_profile_id, t)}${movement.note ? ` · ${movement.note}` : ""}`,
+          status: t("verified"),
+          statusTone: movement.status,
+          modeLabel: labelForMode(movement.mode, t),
+          recordStatus: "active" as const,
+          ownerId: event.profile_id,
           description: entry?.description ?? "",
           remark: movement.note ?? "",
           reason: null,
           businessLabel: t("cashTransfer"),
           transferLines: [movementChain],
-          journey: cashTransferJourneySteps(movement, profiles, t, ownerReceivedSettlement ? "cash_in" : "cash_out"),
-          pendingApproval: pendingMovement,
-          icon: ownerReceivedSettlement ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
-        }];
-      }
-
-      const staffFacingAmount = movement.from_profile_id === profile.id
-        ? -movementAmount
-        : movement.to_profile_id === profile.id
-          ? movementAmount
-          : 0;
-      if (staffFacingAmount === 0) return [];
-      if (!userMatches(profile.id)) return [];
-      const counterpartyId = staffFacingAmount < 0 ? movement.to_profile_id : movement.from_profile_id;
-      const entry = pendingMovement ? null : movementEntry(movement, staffFacingAmount, profile.id);
-      const date = entry?.entry_date ?? indiaDateIso(movement.created_at);
-      if (!historyDateInScope(date, pendingMovement)) return [];
-      const staffCashIn = staffFacingAmount > 0;
-      const incomingOwnerCash = staffFacingAmount > 0 && fromOwnerish && !toOwnerish;
-      const outgoingOwnerSettlement = staffFacingAmount < 0 && toOwnerish;
-      const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
-      return [{
-        id: `movement-${movement.id}`,
-        kind: staffCashIn ? "collection" : "settlement",
-        filter: staffCashIn ? "cash_in" : "cash_out",
-        date,
-        sortAt: movement.responded_at ?? movement.created_at,
-        amount: staffFacingAmount,
-        cashAmount: movementAmount,
-        onlineAmount: 0,
-        title: staffCashIn ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
-        meta: `${staffFacingAmount < 0 ? t("to") : t("from")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
-        status: pendingMovement ? labelForStatus(movement.status, t) : t("verified"),
-        statusTone: movement.status,
-        modeLabel: staffCashIn ? t("cashIn") : labelForMode(movement.mode, t),
-        recordStatus: "active",
-        ownerId: profile.id,
-        description: entry?.description ?? "",
-        remark: movement.note ?? "",
-        reason: null,
-        businessLabel: t("cashTransfer"),
-        transferLines: [movementChain],
-        journey: cashTransferJourneySteps(movement, profiles, t, staffCashIn ? "cash_in" : "cash_out"),
-        pendingApproval: pendingMovement,
-        icon: staffCashIn ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
-      }];
+          journey: cashTransferJourneySteps(movement, profiles, t, incoming ? "cash_in" : "cash_out"),
+          pendingApproval: false,
+          transactionDate: event.transaction_date,
+          approvalDate: event.approval_date,
+          icon: incoming ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
+        };
+      });
     });
     const agentRows = agentSettlements.flatMap((settlement): HistoryRecord[] => {
       if (settlement.status === "rejected") return [];
       const amount = numberValue(settlement.amount);
-      const visibleToOwner = owner && (selectedOwnerSelf ? settlement.paid_by === profile.id : userMatches(settlement.agent_id));
-      const visibleToAgent = !owner && settlement.agent_id === profile.id && userMatches(settlement.agent_id);
-      if (!visibleToOwner && !visibleToAgent) return [];
-      const settlementDate = indiaDateIso(settlement.created_at);
-      if (!historyDateInScope(settlementDate, settlement.status === "pending")) return [];
-      return [{
-        id: `agent-${settlement.id}`,
-        kind: "agent_payout",
-        filter: visibleToAgent ? "cash_in" : "cash_out",
-        date: settlementDate,
-        sortAt: settlement.responded_at ?? settlement.created_at,
-        amount: visibleToOwner ? -amount : amount,
-        cashAmount: amount,
-        onlineAmount: 0,
-        amountTone: visibleToOwner ? "negative" : "positive",
-        title: settlement.status === "pending" ? t("pendingIncentive") : visibleToAgent ? t("incentivePayout") : t("agentPayout"),
-        meta: `${visibleToOwner ? t("to") : t("from")}: ${profileName(profiles, visibleToOwner ? settlement.agent_id : settlement.paid_by, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
-        status: labelForStatus(settlement.status, t),
-        statusTone: settlement.status,
-        modeLabel: visibleToAgent ? t("cashIn") : t("agentPayoutLower"),
-        recordStatus: "active",
-        ownerId: visibleToOwner ? settlement.agent_id : profile.id,
-        description: "",
-        remark: settlement.note ?? "",
-        reason: null,
-        businessLabel: t("cashTransfer"),
-        journey: agentPayoutJourneySteps(settlement, profiles, t, visibleToAgent ? "cash_in" : "cash_out"),
-        pendingApproval: settlement.status === "pending",
-        icon: <WalletCards size={24} />,
-      }];
+      const transactionDate = indiaDateIso(settlement.created_at);
+      if (settlement.status === "pending") {
+        const pendingProfileId = selectedUserId === "all" ? settlement.paid_by : selectedUserId;
+        const incoming = pendingProfileId === settlement.agent_id;
+        const outgoing = pendingProfileId === settlement.paid_by;
+        if ((!incoming && !outgoing) || !pendingRecordInScope(transactionDate, dateRange, dateRangePreset)) return [];
+        return [{
+          id: `agent-${settlement.id}-pending`,
+          sourceId: settlement.id,
+          kind: "agent_payout",
+          filter: incoming ? "cash_in" : "cash_out",
+          date: transactionDate,
+          sortAt: settlement.created_at,
+          amount: incoming ? amount : -amount,
+          cashAmount: amount,
+          onlineAmount: 0,
+          amountTone: "neutral",
+          title: t("pendingIncentive"),
+          meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, incoming ? settlement.paid_by : settlement.agent_id, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
+          status: labelForStatus(settlement.status, t),
+          statusTone: settlement.status,
+          modeLabel: incoming ? t("cashIn") : t("agentPayoutLower"),
+          recordStatus: "active",
+          ownerId: pendingProfileId,
+          description: "",
+          remark: settlement.note ?? "",
+          reason: null,
+          businessLabel: t("cashTransfer"),
+          journey: agentPayoutJourneySteps(settlement, profiles, t, incoming ? "cash_in" : "cash_out"),
+          pendingApproval: true,
+          transactionDate,
+          approvalDate: undefined,
+          icon: <WalletCards size={24} />,
+        }];
+      }
+
+      return visibleSourceEvents("agent_settlement", settlement.id).map((event) => {
+        const incoming = event.direction === "in";
+        return {
+          id: `agent-${settlement.id}-${event.direction}`,
+          sourceId: settlement.id,
+          kind: "agent_payout" as const,
+          filter: incoming ? "cash_in" as const : "cash_out" as const,
+          date: postingEventDate(event, dateFilterKey),
+          sortAt: settlement.responded_at ?? settlement.created_at,
+          amount: incoming ? amount : -amount,
+          cashAmount: event.cash_amount,
+          onlineAmount: event.online_amount,
+          amountTone: incoming ? "positive" as const : "negative" as const,
+          title: incoming ? t("incentivePayout") : t("agentPayout"),
+          meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, event.counterparty_profile_id, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
+          status: labelForStatus(settlement.status, t),
+          statusTone: settlement.status,
+          modeLabel: incoming ? t("cashIn") : t("agentPayoutLower"),
+          recordStatus: "active" as const,
+          ownerId: event.profile_id,
+          description: "",
+          remark: settlement.note ?? "",
+          reason: null,
+          businessLabel: t("cashTransfer"),
+          journey: agentPayoutJourneySteps(settlement, profiles, t, incoming ? "cash_in" : "cash_out"),
+          pendingApproval: false,
+          transactionDate: event.transaction_date,
+          approvalDate: event.approval_date,
+          icon: <WalletCards size={24} />,
+        };
+      });
     });
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, profile.id, profiles, t, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profiles, t, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
   const selectedPayment = selectedTransactionActionRecord?.recordType === "payment"
-    ? payments.find((payment) => payment.id === selectedTransactionActionRecord.id || `${payment.id}-online` === selectedTransactionActionRecord.id) ?? null
+    ? payments.find((payment) => payment.id === (selectedTransactionActionRecord.sourceId ?? selectedTransactionActionRecord.id)) ?? null
     : null;
   const selectedExpense = selectedTransactionActionRecord?.recordType === "expense"
-    ? expenses.find((expense) => expense.id === selectedTransactionActionRecord.id) ?? null
+    ? expenses.find((expense) => expense.id === (selectedTransactionActionRecord.sourceId ?? selectedTransactionActionRecord.id)) ?? null
     : null;
   const closeTransactionAction = () => setTransactionAction(null);
   const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
@@ -4288,6 +4392,9 @@ function TransactionsView({
             </button>
           ))}
         </div>
+        {allTransactionRecords.some((record) => record.pendingApproval) ? (
+          <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
+        ) : null}
       </section>
 
       <section className="history-list-section">
@@ -4305,6 +4412,11 @@ function TransactionsView({
                     <div className="history-card-main">
                       <strong>{record.title}</strong>
                       {record.businessLabel ? <span className="history-business-badge">{record.businessLabel}</span> : <p>{record.meta}</p>}
+                      {record.transactionDate && record.approvalDate && record.transactionDate !== record.approvalDate ? (
+                        <small className="history-date-context">
+                          {t("transactionDate")} {record.transactionDate} · {t("approvalDate")} {record.approvalDate}
+                        </small>
+                      ) : null}
                     </div>
                     <div className="history-card-side">
                       <TransactionCardAmount
@@ -4326,22 +4438,6 @@ function TransactionsView({
                           <ReceiptText size={18} />
                           <span>View details</span>
                         </button>
-                        {record.recordType && record.canApprove ? (
-                          <form onSubmit={(event) => submitWith(event, approveRecordAction, setNotice, startTransition, false)}>
-                            <input type="hidden" name="record_type" value={record.recordType} />
-                            <input type="hidden" name="id" value={record.id} />
-                            <input type="hidden" name="decision" value="approved" />
-                            <button className="transaction-option-button" type="submit">
-                              <Check size={18} />
-                              <span>{t("approve")}</span>
-                            </button>
-                          </form>
-                        ) : record.recordType && record.approvalBlockedByTransfer ? (
-                          <button className="transaction-option-button" type="button" disabled title={t("resolveTransferFirst")}>
-                            <Check size={18} />
-                            <span>{t("resolveTransferFirst")}</span>
-                          </button>
-                        ) : null}
                         {record.recordType && record.canEdit ? (
                           <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("edit", `${record.kind}-${record.id}`, event.currentTarget)}>
                             <Pencil size={18} />
@@ -4366,7 +4462,7 @@ function TransactionsView({
                       <div className="history-card-flow">
                         <TransactionJourney steps={record.journey} amount={record.amount}>
                           {record.incomingTransferId ? (
-                            <div className="history-transfer-actions">
+                            <div className="history-transfer-actions journey-action-row">
                               <MiniAction
                                 hidden={{ movement_id: record.incomingTransferId, decision: "accepted" }}
                                 label={t("acceptTransfer")}
@@ -4383,6 +4479,51 @@ function TransactionsView({
                                 setNotice={setNotice}
                                 startTransition={startTransition}
                               />
+                            </div>
+                          ) : null}
+                          {record.recordType && record.canApprove ? (
+                            <div className="journey-action-row" aria-label={t("approve")}>
+                              {record.recordType === "payment" && record.isMixedPayment ? (
+                                <>
+                                  {record.cashApprovalStatus === "approved" ? (
+                                    <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                                  ) : canApproveRecordStatus(record.cashApprovalStatus ?? "pending") ? (
+                                    <MiniAction
+                                      hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "cash" }}
+                                      label={`${t("approve")} ${t("cash")}`}
+                                      tone="approve"
+                                      action={approveRecordAction}
+                                      setNotice={setNotice}
+                                      startTransition={startTransition}
+                                    />
+                                  ) : null}
+                                  {record.onlineApprovalStatus === "approved" ? (
+                                    <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
+                                  ) : canApproveRecordStatus(record.onlineApprovalStatus ?? "pending") ? (
+                                    <MiniAction
+                                      hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "online" }}
+                                      label={`${t("approve")} ${t("online")}`}
+                                      tone="approve"
+                                      action={approveRecordAction}
+                                      setNotice={setNotice}
+                                      startTransition={startTransition}
+                                    />
+                                  ) : null}
+                                </>
+                              ) : (
+                                <MiniAction
+                                  hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved" }}
+                                  label={record.recordType === "payment" ? t("approveCollection") : t("approveExpense")}
+                                  tone="approve"
+                                  action={approveRecordAction}
+                                  setNotice={setNotice}
+                                  startTransition={startTransition}
+                                />
+                              )}
+                            </div>
+                          ) : record.recordType && record.approvalBlockedByTransfer ? (
+                            <div className="journey-action-row">
+                              <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>{t("resolveTransferFirst")}</button>
                             </div>
                           ) : null}
                         </TransactionJourney>
@@ -7729,23 +7870,29 @@ function profileInitials(profile: Profile) {
 
 function ClosingView({
   date,
+  dateFilterKey,
   owner,
   profile,
   summaries,
   payments,
   expenses,
   movements,
+  agentSettlements,
+  postingEvents,
   profiles,
   setNotice,
   startTransition,
 }: {
   date: string;
+  dateFilterKey: DateFilterKey;
   owner: boolean;
   profile: Profile;
   summaries: UserClosingSummary[];
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
+  agentSettlements: AgentSettlement[];
+  postingEvents: DailyPostingEvent[];
   profiles: Profile[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
@@ -7832,16 +7979,17 @@ function ClosingView({
   const cumulativePendingCount = cumulativePendingPayments.length + cumulativePendingExpenses.length + cumulativePendingMovements.length;
   const overview = {
     opening: visibleSummaries.reduce((sum, summary) => sum + summary.opening, 0),
-    collected: visibleSummaries.reduce((sum, summary) => sum + summary.collected, 0),
-    expenses: visibleSummaries.reduce((sum, summary) => sum + summary.expenses, 0),
-    received: visibleSummaries.reduce((sum, summary) => sum + summary.received, 0),
-    sent: visibleSummaries.reduce((sum, summary) => sum + summary.sent, 0),
+    inCash: visibleSummaries.reduce((sum, summary) => sum + summary.inCash, 0),
+    inOnline: visibleSummaries.reduce((sum, summary) => sum + summary.inOnline, 0),
+    outCash: visibleSummaries.reduce((sum, summary) => sum + summary.outCash, 0),
+    outOnline: visibleSummaries.reduce((sum, summary) => sum + summary.outOnline, 0),
     pendingAmount: cumulativePendingAmount,
     pendingCount: cumulativePendingCount,
   };
-  const overviewInCash = overview.collected + overview.received;
-  const overviewInOnline = 0;
-  const overviewOutCash = overview.expenses + overview.sent;
+  const overviewInCash = overview.inCash;
+  const overviewInOnline = overview.inOnline;
+  const overviewOutCash = overview.outCash;
+  const overviewOutOnline = overview.outOnline;
 
   if (selectedReviewSummary && owner) {
     return (
@@ -7852,6 +8000,9 @@ function ClosingView({
         payments={payments}
         expenses={expenses}
         movements={movements}
+        agentSettlements={agentSettlements}
+        postingEvents={postingEvents}
+        dateFilterKey={dateFilterKey}
         profiles={profiles}
         close={() => setReviewProfileId(null)}
         setNotice={setNotice}
@@ -7875,14 +8026,18 @@ function ClosingView({
           </article>
           <article className="closing-overview-card negative">
             <span>{t("cashOut")}</span>
-            <strong>{formatMoney(overviewOutCash)}</strong>
-            <p className="money-split-line">{t("cash")} {formatMoney(overviewOutCash)}</p>
+            <strong>{formatMoney(overviewOutCash + overviewOutOnline)}</strong>
+            <p className="money-split-line">{t("cash")} {formatMoney(overviewOutCash)} · {t("online")} {formatMoney(overviewOutOnline)}</p>
           </article>
           <article className="closing-overview-card pending">
             <span>{t("pending")}{overview.pendingCount > 0 ? ` · ${overview.pendingCount}` : ""}</span>
             <strong>{formatMoney(overview.pendingAmount)}</strong>
           </article>
         </div>
+      ) : null}
+
+      {dateFilterKey === "transaction" ? (
+        <p className="date-filter-note closing-date-filter-note">{t("closingBalancePostingNote")}</p>
       ) : null}
 
       <section className="closing-ledger-section">
@@ -7927,13 +8082,13 @@ function ClosingView({
                   </span>
                   <span className="positive">
                     <small>{t("cashIn")}</small>
-                    <strong>{formatMoney(summary.collected + summary.received)}</strong>
-                    <em>{t("cash")} {formatMoney(summary.collected + summary.received)} · {t("online")} {formatMoney(0)}</em>
+                    <strong>{formatMoney(summary.inCash + summary.inOnline)}</strong>
+                    <em>{t("cash")} {formatMoney(summary.inCash)} · {t("online")} {formatMoney(summary.inOnline)}</em>
                   </span>
                   <span className="negative">
                     <small>{t("cashOut")}</small>
-                    <strong>{formatMoney(summary.expenses + summary.sent)}</strong>
-                    <em>{t("cash")} {formatMoney(summary.expenses + summary.sent)}</em>
+                    <strong>{formatMoney(summary.outCash + summary.outOnline)}</strong>
+                    <em>{t("cash")} {formatMoney(summary.outCash)} · {t("online")} {formatMoney(summary.outOnline)}</em>
                   </span>
                   <span className="warning">
                     <small>{t("pending")}</small>
@@ -7998,9 +8153,12 @@ function ClosingView({
 function ClosingReviewDetail({
   summary,
   date,
+  dateFilterKey,
   payments,
   expenses,
   movements,
+  agentSettlements,
+  postingEvents,
   profiles,
   close,
   setNotice,
@@ -8008,9 +8166,12 @@ function ClosingReviewDetail({
 }: {
   summary: UserClosingSummary;
   date: string;
+  dateFilterKey: DateFilterKey;
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
+  agentSettlements: AgentSettlement[];
+  postingEvents: DailyPostingEvent[];
   profiles: Profile[];
   close: () => void;
   setNotice: (notice: ActionResult | null) => void;
@@ -8018,68 +8179,261 @@ function ClosingReviewDetail({
 }) {
   const { t } = useLanguage();
   const [reviewTab, setReviewTab] = useState<"today" | "pending">("today");
-  const reviewRecords = [
-    ...payments
-      .filter(
-        (payment) =>
-          paymentReviewProfileId(payment) === summary.profile.id &&
-          payment.record_status === "active" &&
-          belongsToClosingReview(payment.payment_date, date, payment.approval_status),
-      )
-      .map((payment) => ({
-        id: payment.id,
+  type ClosingReviewRecord = {
+    id: string;
+    sourceId: string;
+    recordType: "payment" | "expense" | "movement";
+    title: string;
+    amount: number;
+    mode: string;
+    status: string;
+    recordDate: string;
+    transactionDate: string;
+    approvalDate: string | null;
+    isBacklog: boolean;
+    createdAt: string;
+    businessLabel: string;
+    cashAmount: number;
+    onlineAmount: number;
+    cashStatus: ApprovalStatus | null;
+    onlineStatus: ApprovalStatus | null;
+    note: string;
+    transferLines: string[];
+    journey: TransactionJourneyStep[];
+    hasPendingTransfer: boolean;
+    canReview: boolean;
+    isMixedPayment: boolean;
+    tone: "positive" | "negative";
+    icon: ReactNode;
+  };
+  const profileDayEvents = postingEventsForProfileDate(postingEvents, summary.profile.id, date, dateFilterKey);
+  const paymentEventGroups = new Map<string, DailyPostingEvent[]>();
+  profileDayEvents.filter((event) => event.source_type === "payment").forEach((event) => {
+    paymentEventGroups.set(event.source_id, [...(paymentEventGroups.get(event.source_id) ?? []), event]);
+  });
+
+  const approvedPaymentRecords: ClosingReviewRecord[] = [...paymentEventGroups.entries()].flatMap(([paymentId, events]) => {
+    const payment = payments.find((item) => item.id === paymentId);
+    if (!payment) return [];
+    const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
+    const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
+    return [{
+      id: `${payment.id}-${date}`,
+      sourceId: payment.id,
+      recordType: "payment",
+      title: paymentDisplayTitle(payment, t),
+      amount: cashAmount + onlineAmount,
+      mode: paymentModeLabel(payment, t),
+      status: "approved",
+      recordDate: date,
+      transactionDate: payment.payment_date,
+      approvalDate: events.map((event) => event.approval_date).sort().at(-1) ?? null,
+      isBacklog: false,
+      createdAt: events.map((event) => event.approved_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? payment.created_at,
+      businessLabel: transactionBusinessTag(payment.business_type, t),
+      cashAmount,
+      onlineAmount,
+      cashStatus: paymentComponentStatus(payment, "cash"),
+      onlineStatus: paymentComponentStatus(payment, "online"),
+      note: paymentReference(payment, t),
+      transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
+      journey: paymentJourneySteps(payment, paymentTransfers(movements, payment.id), profiles, t),
+      hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
+      canReview: false,
+      isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
+      tone: "positive",
+      icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
+    }];
+  });
+
+  const pendingPaymentRecords: ClosingReviewRecord[] = payments
+    .filter((payment) =>
+      paymentReviewProfileId(payment) === summary.profile.id &&
+      payment.record_status === "active" &&
+      belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
+      isPendingReviewStatus(payment.approval_status),
+    )
+    .map((payment) => {
+      const pendingCash = paymentComponentStatus(payment, "cash") === "approved" ? 0 : paymentCashAmount(payment);
+      const pendingOnline = paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment);
+      return {
+        id: `${payment.id}-pending`,
+        sourceId: payment.id,
         recordType: "payment" as const,
         title: paymentDisplayTitle(payment, t),
-        amount: numberValue(payment.amount),
+        amount: pendingCash + pendingOnline,
         mode: paymentModeLabel(payment, t),
         status: payment.approval_status,
         recordDate: payment.payment_date,
+        transactionDate: payment.payment_date,
+        approvalDate: null,
         isBacklog: payment.payment_date < date,
         createdAt: payment.created_at,
         businessLabel: transactionBusinessTag(payment.business_type, t),
-        cashAmount: paymentCashAmount(payment),
-        onlineAmount: paymentOnlineAmount(payment),
+        cashAmount: pendingCash,
+        onlineAmount: pendingOnline,
         cashStatus: paymentComponentStatus(payment, "cash"),
         onlineStatus: paymentComponentStatus(payment, "online"),
         note: paymentReference(payment, t),
         transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
         journey: paymentJourneySteps(payment, paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
+        canReview: true,
+        isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
         tone: "positive" as const,
         icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
-      })),
-    ...expenses
-      .filter(
-        (expense) =>
-          expense.spent_by === summary.profile.id &&
-          expense.record_status === "active" &&
-          belongsToClosingReview(expense.expense_date, date, expense.approval_status),
-      )
-      .map((expense) => ({
-        id: expense.id,
+      };
+    });
+
+  const approvedExpenseRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => event.source_type === "expense")
+    .flatMap((event) => {
+      const expense = expenses.find((item) => item.id === event.source_id);
+      if (!expense) return [];
+      return [{
+        id: `${expense.id}-${date}`,
+        sourceId: expense.id,
         recordType: "expense" as const,
         title: expenseDisplayTitle(expense),
-        amount: -numberValue(expense.amount),
-        mode: t("cash"),
-        status: expense.approval_status,
-        recordDate: expense.expense_date,
-        isBacklog: expense.expense_date < date,
-        createdAt: expense.created_at,
+        amount: -event.amount,
+        mode: labelForMode(expense.mode, t),
+        status: "approved",
+        recordDate: date,
+        transactionDate: expense.expense_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: event.approved_at ?? expense.created_at,
         businessLabel: transactionBusinessTag(expense.business_type, t),
-        cashAmount: numberValue(expense.amount),
-        onlineAmount: 0,
+        cashAmount: event.cash_amount,
+        onlineAmount: event.online_amount,
         cashStatus: null,
         onlineStatus: null,
         note: expenseReference(expense, t),
-        transferLines: [] as string[],
+        transferLines: [],
         journey: expenseJourneySteps(expense, profiles, t),
         hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
         tone: "negative" as const,
         icon: <ReceiptText size={22} />,
-      })),
+      }];
+    });
+
+  const pendingExpenseRecords: ClosingReviewRecord[] = expenses
+    .filter((expense) =>
+      expense.spent_by === summary.profile.id &&
+      expense.record_status === "active" &&
+      belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
+      isPendingReviewStatus(expense.approval_status),
+    )
+    .map((expense) => ({
+      id: `${expense.id}-pending`,
+      sourceId: expense.id,
+      recordType: "expense" as const,
+      title: expenseDisplayTitle(expense),
+      amount: -numberValue(expense.amount),
+      mode: labelForMode(expense.mode, t),
+      status: expense.approval_status,
+      recordDate: expense.expense_date,
+      transactionDate: expense.expense_date,
+      approvalDate: null,
+      isBacklog: expense.expense_date < date,
+      createdAt: expense.created_at,
+      businessLabel: transactionBusinessTag(expense.business_type, t),
+      cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
+      onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
+      cashStatus: null,
+      onlineStatus: null,
+      note: expenseReference(expense, t),
+      transferLines: [],
+      journey: expenseJourneySteps(expense, profiles, t),
+      hasPendingTransfer: false,
+      canReview: true,
+      isMixedPayment: false,
+      tone: "negative" as const,
+      icon: <ReceiptText size={22} />,
+    }));
+
+  const movementRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => event.source_type === "transfer" || event.source_type === "settlement")
+    .flatMap((event) => {
+      const movement = movements.find((item) => item.id === event.source_id);
+      if (!movement) return [];
+      const incoming = event.direction === "in";
+      return [{
+        id: `${movement.id}-${event.direction}`,
+        sourceId: movement.id,
+        recordType: "movement" as const,
+        title: incoming ? t("cashReceived") : t("cashSent"),
+        amount: incoming ? event.amount : -event.amount,
+        mode: labelForMode(movement.mode, t),
+        status: movement.status,
+        recordDate: date,
+        transactionDate: event.transaction_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: movement.responded_at ?? movement.created_at,
+        businessLabel: t("cashTransfer"),
+        cashAmount: event.cash_amount,
+        onlineAmount: 0,
+        cashStatus: null,
+        onlineStatus: null,
+        note: movement.note ?? t("noReason"),
+        transferLines: [`${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`],
+        journey: cashTransferJourneySteps(movement, profiles, t, incoming ? "cash_in" : "cash_out"),
+        hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
+        tone: incoming ? "positive" as const : "negative" as const,
+        icon: incoming ? <ArrowDown size={22} /> : <ArrowUp size={22} />,
+      }];
+    });
+
+  const agentSettlementRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => event.source_type === "agent_settlement")
+    .flatMap((event) => {
+      const settlement = agentSettlements.find((item) => item.id === event.source_id);
+      if (!settlement) return [];
+      const incoming = event.direction === "in";
+      return [{
+        id: `${settlement.id}-${event.direction}`,
+        sourceId: settlement.id,
+        recordType: "movement" as const,
+        title: incoming ? t("incentivePayout") : t("agentPayout"),
+        amount: incoming ? event.amount : -event.amount,
+        mode: t("cash"),
+        status: settlement.status,
+        recordDate: date,
+        transactionDate: event.transaction_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: settlement.responded_at ?? settlement.created_at,
+        businessLabel: t("cashTransfer"),
+        cashAmount: event.cash_amount,
+        onlineAmount: event.online_amount,
+        cashStatus: null,
+        onlineStatus: null,
+        note: settlement.note ?? t("noReason"),
+        transferLines: [`${profileName(profiles, settlement.paid_by, t)} → ${profileName(profiles, settlement.agent_id, t)}`],
+        journey: agentPayoutJourneySteps(settlement, profiles, t, incoming ? "cash_in" : "cash_out"),
+        hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
+        tone: incoming ? "positive" as const : "negative" as const,
+        icon: <WalletCards size={22} />,
+      }];
+    });
+
+  const reviewRecords = [
+    ...approvedPaymentRecords,
+    ...approvedExpenseRecords,
+    ...movementRecords,
+    ...agentSettlementRecords,
+    ...pendingPaymentRecords,
+    ...pendingExpenseRecords,
   ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
-  const todayRecords = reviewRecords.filter((record) => record.recordDate === date);
-  const pendingRecords = reviewRecords.filter((record) => isPendingReviewStatus(record.status));
+  const todayRecords = reviewRecords.filter((record) => !record.canReview && record.recordDate === date);
+  const pendingRecords = reviewRecords.filter((record) => record.canReview);
   const pendingSettlementMovements = movements.filter(
     (movement) =>
       movement.status === "pending" &&
@@ -8088,19 +8442,15 @@ function ClosingReviewDetail({
       (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
   );
   const pendingReviewAmount =
-    pendingRecords.reduce((sum, record) => {
-      if (record.recordType !== "payment") return sum + Math.abs(record.amount);
-      const pendingCash = record.cashStatus === "approved" ? 0 : record.cashAmount;
-      const pendingOnline = record.onlineStatus === "approved" ? 0 : record.onlineAmount;
-      return sum + pendingCash + pendingOnline;
-    }, 0) +
+    pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
     pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
   const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
   const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
-  const reviewInCash = summary.collected + summary.received;
-  const reviewInOnline = 0;
-  const reviewOutCash = summary.expenses + summary.sent;
+  const reviewInCash = summary.inCash;
+  const reviewInOnline = summary.inOnline;
+  const reviewOutCash = summary.outCash;
+  const reviewOutOnline = summary.outOnline;
 
   return (
     <div className="closing-review-detail">
@@ -8127,8 +8477,8 @@ function ClosingReviewDetail({
         </article>
         <article className="negative">
           <span>{t("cashOut")}</span>
-          <strong>{formatMoney(reviewOutCash)}</strong>
-          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)}</p>
+          <strong>{formatMoney(reviewOutCash + reviewOutOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)} · {t("online")} {formatMoney(reviewOutOnline)}</p>
         </article>
         <article className="pending">
           <span>{t("pending")}{pendingReviewCount > 0 ? ` · ${pendingReviewCount}` : ""}</span>
@@ -8164,10 +8514,11 @@ function ClosingReviewDetail({
             <span>{pendingRecords.length}</span>
           </button>
         </div>
+        {pendingRecords.length > 0 ? <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p> : null}
         <div className="review-transaction-list">
           {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
-            const canReview = canApproveRecordStatus(record.status);
-            const isMixedPayment = record.recordType === "payment" && record.cashAmount > 0 && record.onlineAmount > 0;
+            const canReview = record.canReview;
+            const isMixedPayment = record.isMixedPayment;
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
               <article className={`history-card closing-history-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
@@ -8175,6 +8526,11 @@ function ClosingReviewDetail({
                 <div className="history-card-main">
                   <strong>{record.title}</strong>
                   <span className="history-business-badge">{record.businessLabel}</span>
+                  {record.approvalDate && record.transactionDate !== record.approvalDate ? (
+                    <small className="history-date-context">
+                      {t("transactionDate")} {record.transactionDate} · {t("approvalDate")} {record.approvalDate}
+                    </small>
+                  ) : null}
                 </div>
                 <div className="history-card-side">
                   <TransactionCardAmount
@@ -8199,7 +8555,7 @@ function ClosingReviewDetail({
                     </div>
                     {canReview && record.recordType === "expense" ? (
                       <MiniAction
-                        hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                        hidden={{ record_type: record.recordType, id: record.sourceId, decision: "rejected" }}
                         label={t("reject")}
                         tone="reject"
                         action={approveRecordAction}
@@ -8211,7 +8567,7 @@ function ClosingReviewDetail({
                 </details>
                 <div className="history-card-flow">
                   <TransactionJourney steps={record.journey} amount={record.amount}>
-                    <div className="closing-history-approval-actions">
+                    <div className="journey-action-row closing-history-approval-actions">
                       {isMixedPayment ? (
                         <>
                           {record.cashStatus === "approved" ? (
@@ -8222,7 +8578,7 @@ function ClosingReviewDetail({
                             </button>
                           ) : canApproveRecordStatus(record.cashStatus ?? record.status) ? (
                             <MiniAction
-                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
+                              hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "cash" }}
                               label={`${t("approve")} ${t("cash")}`}
                               tone="approve"
                               action={approveRecordAction}
@@ -8234,7 +8590,7 @@ function ClosingReviewDetail({
                             <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
                           ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
                             <MiniAction
-                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
+                              hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}
                               label={`${t("approve")} ${t("online")}`}
                               tone="approve"
                               action={approveRecordAction}
@@ -8250,7 +8606,7 @@ function ClosingReviewDetail({
                           </button>
                         ) : (
                           <MiniAction
-                            hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                            hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved" }}
                             label={t("approve")}
                             tone="approve"
                             action={approveRecordAction}
@@ -8413,7 +8769,6 @@ function SettingsView({
   referrals,
   salesAgents,
   changeRequests,
-  permissionsByProfile,
   setNotice,
   startTransition,
 }: {
@@ -8426,7 +8781,6 @@ function SettingsView({
   referrals: ReferralCode[];
   salesAgents: Profile[];
   changeRequests: { id: string; record_type: string; request_type: string; reason: string | null; status: string; requested_by: string }[];
-  permissionsByProfile: Record<string, string[]>;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -8434,12 +8788,9 @@ function SettingsView({
   const [showAddRoom, setShowAddRoom] = useState(false);
   const [showAddCourse, setShowAddCourse] = useState(false);
   const [showAddReferral, setShowAddReferral] = useState(false);
-  const [newUserRole, setNewUserRole] = useState<AppRole>("staff");
   const activeRoomsCount = rooms.filter((room) => room.active).length;
   const activeCoursesCount = courses.filter((course) => course.active).length;
   const activeReferralCount = referrals.filter((referral) => referral.active).length;
-  const primaryOwner = profile.membership_role === "primary_owner";
-
   if (!owner) {
     return (
       <div className="space-y-6 max-w-xl">
@@ -8710,188 +9061,6 @@ function SettingsView({
           </SettingsBranch>
         </div>
       </SettingsBranch> : null}
-
-      <SettingsBranch
-        title="Users"
-        subtitle={`${profiles.length} accounts`}
-        icon={<UserPlus size={20} />}
-      >
-        <div className="space-y-6">
-          <section>
-            <h2 className="font-headline text-xl font-bold text-primary mb-1">Add user account</h2>
-            <p className="text-sm text-on-surface-variant mb-4">
-              {primaryOwner
-                ? "Create Manager, Staff, or Sales Agent access. The account is active immediately; no invitation email is sent."
-                : "Create Staff or Sales Agent access. The account is active immediately; no invitation email is sent."}
-              {" "}If the email already has a Lenden account, its existing password is kept.
-            </p>
-            <form
-              className="form-grid three"
-              onSubmit={(event) => submitWith(event, createStaffAction, setNotice, startTransition)}
-            >
-              <label className="text-xs text-on-surface-variant font-bold">
-                {t("fullName")}
-                <input name="full_name" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-              </label>
-              <label className="text-xs text-on-surface-variant font-bold">
-                {t("email")}
-                <input name="email" type="email" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-              </label>
-              <label className="text-xs text-on-surface-variant font-bold">
-                Temporary password
-                <input name="password" type="password" minLength={8} required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-              </label>
-              <label className="text-xs text-on-surface-variant font-bold">
-                {t("role")}
-                <select
-                  name="role"
-                  value={newUserRole}
-                  onChange={(event) => setNewUserRole(event.target.value as AppRole)}
-                  className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
-                >
-                  <option value="staff">{t("staff")}</option>
-                  <option value="sales_agent">{t("salesAgent")}</option>
-                  {primaryOwner ? <option value="owner">Manager</option> : null}
-                </select>
-              </label>
-              {newUserRole === "staff" ? (
-                <div className="checkbox-grid full-span p-4 bg-surface rounded-lg border border-outline-variant/30 space-y-2 mt-2">
-                  <span className="block text-xs text-on-surface-variant font-bold mb-2">Permissions</span>
-                  {permissionOptions.map((permission) => (
-                    <label key={permission.value} className="flex items-center gap-2 cursor-pointer font-medium text-sm text-on-surface">
-                      <input name="permissions" type="checkbox" value={permission.value} className="rounded border-outline text-primary focus:ring-primary" />
-                      {t(permissionLabelKeys[permission.value] ?? permission.label)}
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-              <button className="primary-button full-span cursor-pointer py-3" type="submit">
-                {t("createAccount")}
-              </button>
-            </form>
-          </section>
-
-          <section>
-            <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("allAccounts")}</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {profiles.map((item) => {
-                const canResetPassword = primaryOwner
-                  && item.id !== profile.id
-                  && item.membership_role !== "primary_owner"
-                  && item.membership_status === "active"
-                  && item.active;
-                const canRemoveAccess = item.id !== profile.id
-                  && item.membership_role !== "primary_owner"
-                  && (primaryOwner || item.membership_role === "staff" || item.membership_role === "sales_agent");
-
-                return (
-                  <article
-                  className="p-4 bg-surface rounded-xl border border-outline-variant/30 flex flex-col gap-4"
-                  key={item.id}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <strong className="text-on-surface text-base block truncate">{item.full_name}</strong>
-                      <span className="text-xs text-on-surface-variant block truncate">{item.email}</span>
-                      <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">
-                        {item.membership_role === "primary_owner"
-                          ? "Owner"
-                          : item.membership_role === "co_owner"
-                            ? "Manager"
-                            : t(roleLabelKeys[item.role] ?? item.role)}
-                      </span>
-                    </div>
-                    <span className={`status-chip ${item.active ? "status-approved" : "status-rejected"} shrink-0`}>
-                      {item.active ? t("active") : t("inactive")}
-                    </span>
-                  </div>
-
-                  {canResetPassword ? (
-                    <form
-                      className="grid gap-2"
-                      onSubmit={(event) => submitWith(event, changeUserPasswordAction, setNotice, startTransition)}
-                    >
-                      <input type="hidden" name="profile_id" value={item.id} />
-                      <label className="text-xs text-on-surface-variant font-bold">
-                        New temporary password
-                        <input
-                          name="new_password"
-                          type="password"
-                          minLength={8}
-                          required
-                          className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
-                        />
-                      </label>
-                      <button
-                        type="submit"
-                        className="py-2 bg-primary-container text-on-primary-container font-bold rounded-lg hover:bg-primary-container/80 transition-colors border-0 cursor-pointer text-sm"
-                      >
-                        Reset password
-                      </button>
-                    </form>
-                  ) : null}
-
-                  {canRemoveAccess ? <form
-                    onSubmit={(event) => {
-                      if (!window.confirm(`Delete ${item.full_name}? This will deactivate the account when history must be preserved.`)) {
-                        event.preventDefault();
-                        return;
-                      }
-                      submitWith(event, deleteUserAction, setNotice, startTransition, false);
-                    }}
-                  >
-                    <input type="hidden" name="profile_id" value={item.id} />
-                    <button
-                      type="submit"
-                      className="w-full py-2 border border-error/30 bg-transparent text-error font-bold rounded-lg hover:bg-error-container/50 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 text-sm flex items-center justify-center gap-2"
-                    >
-                      <Trash2 size={16} />
-                      {t("deleteUser")}
-                    </button>
-                  </form> : null}
-                </article>
-                );
-              })}
-            </div>
-          </section>
-
-          <section>
-            <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("staffPermissions")}</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {profiles.filter((item) => item.role === "staff").map((item) => (
-                <form
-                  className="p-4 bg-surface rounded-xl border border-outline-variant/30 flex flex-col gap-3 justify-between"
-                  key={item.id}
-                  onSubmit={(event) => submitWith(event, saveStaffPermissionsAction, setNotice, startTransition, false)}
-                >
-                  <input type="hidden" name="profile_id" value={item.id} />
-                  <div>
-                    <strong className="text-on-surface text-base block">{item.full_name}</strong>
-                    <span className="text-xs text-on-surface-variant uppercase font-bold tracking-wider">{t(roleLabelKeys[item.role] ?? item.role)}</span>
-                  </div>
-                  <div className="space-y-2 border-t border-outline-variant/10 pt-3">
-                    {permissionOptions.map((permission) => (
-                      <label key={permission.value} className="flex items-center gap-2 cursor-pointer text-sm">
-                        <input
-                          name="permissions"
-                          type="checkbox"
-                          value={permission.value}
-                          defaultChecked={permissionsByProfile[item.id]?.includes(permission.value)}
-                          className="rounded border-outline text-primary focus:ring-primary"
-                        />
-                        {t(permissionLabelKeys[permission.value] ?? permission.label)}
-                      </label>
-                    ))}
-                  </div>
-                  <button type="submit" className="mt-2 py-2 bg-primary-container text-on-primary-container font-bold rounded-lg hover:bg-primary-container/80 transition-colors border-0 cursor-pointer text-sm">
-                    {t("save")}
-                  </button>
-                </form>
-              ))}
-            </div>
-          </section>
-        </div>
-      </SettingsBranch>
 
       <SettingsBranch
         title="Security"

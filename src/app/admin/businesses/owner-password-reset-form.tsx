@@ -1,9 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
-import { resetPrimaryOwnerPasswordAction, type BusinessAdminState } from "./actions";
+import { resetPrimaryOwnerPasswordAction, type AdminActionState } from "./actions";
+import OneTimeSecret from "./one-time-secret";
 
-const initialState: BusinessAdminState = { ok: false, message: "" };
+const initialState: AdminActionState = { ok: null, message: "" };
 
 export default function OwnerPasswordResetForm({
   businessId,
@@ -17,15 +18,26 @@ export default function OwnerPasswordResetForm({
   const [state, action, pending] = useActionState(resetPrimaryOwnerPasswordAction, initialState);
 
   return (
-    <form action={action} className="support-start-form">
+    <form
+      action={action}
+      className="admin-settings-form"
+      onSubmit={(event) => {
+        if (!window.confirm(`Generate a new temporary password for ${ownerName}? This changes their global Lenden login across every business.`)) {
+          event.preventDefault();
+        }
+      }}
+    >
       <input type="hidden" name="business_id" value={businessId} />
       <input type="hidden" name="profile_id" value={profileId} />
-      <p className="muted">Generate a one-time password for {ownerName}. They must replace it after login.</p>
-      <button className="secondary-button" type="submit" disabled={pending}>
-        {pending ? "Generating password..." : "Reset owner password"}
+      <div className="admin-warning-callout">
+        <strong>This changes a global login</strong>
+        <p>The Owner will use the new password everywhere they access Lenden and must replace it after signing in. The secret is never written to audit data, URLs, logs, or browser storage.</p>
+      </div>
+      <button className="danger-button" type="submit" disabled={pending}>
+        {pending ? "Generating…" : "Generate temporary password"}
       </button>
-      {state.message ? <p className={state.ok ? "form-success" : "form-error"} role="status">{state.message}</p> : null}
-      {state.temporaryPassword ? <p className="one-time-secret"><strong>Copy now — shown once:</strong> <code>{state.temporaryPassword}</code></p> : null}
+      {state.message ? <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">{state.message}</p> : null}
+      {state.temporaryPassword ? <OneTimeSecret password={state.temporaryPassword} /> : null}
     </form>
   );
 }

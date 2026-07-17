@@ -1,4 +1,4 @@
-import { indiaDateIso, todayIso } from "@/lib/constants";
+import { dateIsoInTimeZone } from "@/lib/constants";
 
 type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 type AppRole = "admin" | "owner" | "staff" | "sales_agent";
@@ -17,6 +17,7 @@ export type LendenActionProfile = {
   avatar_url?: string | null;
   role: AppRole;
   businessId: string;
+  businessTimezone: string;
   businessRole: BusinessRole;
   accessMode: "member" | "support";
   active: boolean;
@@ -244,6 +245,19 @@ function isMissingPaymentComponentApprovalSchemaError(error: unknown) {
   ]);
 }
 
+function isMissingPaymentApprovalPostingSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, [
+    "cash_posted_on",
+    "online_posted_on",
+    "cash_approved_by",
+    "online_approved_by",
+  ]);
+}
+
+function isMissingExpenseApprovalPostingSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["posted_on", "approved_at", "approved_by"]);
+}
+
 function isMissingPaymentApprovalJourneySchemaError(error: unknown) {
   return isMissingDbSchemaError(error, ["approved_by", "approved_at"]);
 }
@@ -261,6 +275,10 @@ async function updatePaymentApprovalFields(
     updateResult = await admin.from("payments").update(fallbackUpdates).eq("id", paymentId);
   }
   return updateResult;
+}
+
+function approvalPostingDate(profile: LendenActionProfile, approvedAt: string) {
+  return dateIsoInTimeZone(approvedAt, profile.businessTimezone || undefined);
 }
 
 function isMissingStudentAadharSidesSchemaError(error: unknown) {
@@ -727,11 +745,11 @@ async function ensureApprovedPaymentTransferLedger(
     responded_at?: string | null;
   },
   payment: Record<string, string | number | null>,
-  createdBy: string,
+  profile: LendenActionProfile,
 ) {
   const cashValueApproved = paymentComponentDecision(payment, "cash") === "approved";
   if (!movement.to_profile_id || (!cashValueApproved && !(await recordIsEffectivelyApproved(admin, "payment", payment)))) return;
-  const entryDate = movement.responded_at ? indiaDateIso(movement.responded_at) : todayIso();
+  const entryDate = approvalPostingDate(profile, movement.responded_at ?? new Date().toISOString());
   const amount = Number(movement.amount);
   await ensureLedgerEntry(admin, {
     accountProfileId: movement.from_profile_id,
@@ -740,7 +758,7 @@ async function ensureApprovedPaymentTransferLedger(
     sourceType: "transfer",
     sourceId: movement.id,
     description: "Approved transaction cash transferred out",
-    createdBy,
+    createdBy: profile.id,
   });
   await ensureLedgerEntry(admin, {
     accountProfileId: movement.to_profile_id,
@@ -749,7 +767,7 @@ async function ensureApprovedPaymentTransferLedger(
     sourceType: "transfer",
     sourceId: movement.id,
     description: "Approved transaction cash received",
-    createdBy,
+    createdBy: profile.id,
   });
 }
 
@@ -1484,7 +1502,7 @@ const handlers = {
     const business = asString(formData, "business_type") as BusinessType | null;
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const amount = asNumber(formData, "amount") ?? asNumber(formData, "paid_amount") ?? 0;
-    const paymentDate = asString(formData, "payment_date") ?? todayIso();
+    const paymentDate = asString(formData, "payment_date") ?? dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     const ownerCreated = isBusinessOwner(profile.businessRole);
 
@@ -1685,6 +1703,10 @@ const handlers = {
       online_approval_status: onlineCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
       cash_approved_at: ownerCreated && cashCollection > 0 ? createdAt : null,
       online_approved_at: ownerCreated && onlineCollection > 0 ? createdAt : null,
+      cash_posted_on: ownerCreated && cashCollection > 0 ? paymentDate : null,
+      online_posted_on: ownerCreated && onlineCollection > 0 ? paymentDate : null,
+      cash_approved_by: ownerCreated && cashCollection > 0 ? profile.id : null,
+      online_approved_by: ownerCreated && onlineCollection > 0 ? profile.id : null,
       approved_by: ownerCreated ? profile.id : null,
       approved_at: ownerCreated ? createdAt : null,
       client_request_id: requestKey,
@@ -1720,6 +1742,13 @@ const handlers = {
         delete paymentPayloadForInsert.approved_by;
         delete paymentPayloadForInsert.approved_at;
         continue;
+      }
+
+      if (
+        isMissingPaymentApprovalPostingSchemaError(paymentResult.error) &&
+        ("cash_posted_on" in paymentPayloadForInsert || "online_posted_on" in paymentPayloadForInsert)
+      ) {
+        return fail("Apply the approval-date posting migration before saving payments.");
       }
 
       if (
@@ -1912,7 +1941,7 @@ const handlers = {
       studentId: id,
       eventKey: `library-student-status:${id}:${idempotencyKey ?? crypto.randomUUID()}`,
       eventType: "status_change",
-      eventDate: todayIso(),
+      eventDate: dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
       source: "student_status",
       fields: fieldsFromLibraryStudentRecord(updated),
       active,
@@ -2020,7 +2049,7 @@ const handlers = {
 
     const amount = asNumber(formData, "amount") ?? 0;
     const description = asString(formData, "description");
-    const expenseDate = asString(formData, "expense_date") ?? todayIso();
+    const expenseDate = asString(formData, "expense_date") ?? dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
     const mode = (asString(formData, "mode") ?? "cash") as PaymentMode;
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     const ownerCreated = isBusinessOwner(profile.businessRole);
@@ -2051,11 +2080,17 @@ const handlers = {
         photo_path: photoPath,
         spent_by: profile.id,
         approval_status: ownerCreated ? "approved" : "pending",
+        posted_on: ownerCreated ? expenseDate : null,
+        approved_at: ownerCreated ? new Date().toISOString() : null,
+        approved_by: ownerCreated ? profile.id : null,
         client_request_id: requestKey,
       })
       .select("id")
       .single();
 
+    if (expenseResult.error && isMissingExpenseApprovalPostingSchemaError(expenseResult.error)) {
+      return fail("Apply the approval-date posting migration before saving expenses.");
+    }
     const expense = typedData<{ id: string }>(expenseResult);
     if (expenseResult.error || !expense) {
       if (isDuplicateError(expenseResult.error)) {
@@ -2136,7 +2171,7 @@ const handlers = {
             await ensureLedgerEntry(admin, {
               accountProfileId: String(existing.current_holder_id ?? existing.collected_by),
               amount: componentAmount,
-              entryDate: String(existing.payment_date),
+              entryDate: String(existing.cash_posted_on ?? existing.payment_date),
               sourceType: "payment",
               sourceId: id,
               description: `Cash collected for ${String(existing.business_type ?? "payment").replace("_", " ")}`,
@@ -2173,10 +2208,15 @@ const handlers = {
         (onlineAmount <= 0 || nextOnlineDecision === "approved");
       const componentStatusField = paymentComponent === "cash" ? "cash_approval_status" : "online_approval_status";
       const componentApprovedAtField = paymentComponent === "cash" ? "cash_approved_at" : "online_approved_at";
+      const componentApprovedByField = paymentComponent === "cash" ? "cash_approved_by" : "online_approved_by";
+      const componentPostedOnField = paymentComponent === "cash" ? "cash_posted_on" : "online_posted_on";
       const approvedAt = new Date().toISOString();
+      const postedOn = approvalPostingDate(profile, approvedAt);
       const componentUpdates: Record<string, unknown> = {
         [componentStatusField]: "approved",
         [componentApprovedAtField]: approvedAt,
+        [componentApprovedByField]: profile.id,
+        [componentPostedOnField]: postedOn,
         approval_status: allComponentsApproved ? "approved" : currentDecision,
       };
       if (allComponentsApproved) {
@@ -2185,6 +2225,9 @@ const handlers = {
       }
       const updateResult = await updatePaymentApprovalFields(admin, id, componentUpdates);
       if (updateResult.error) {
+        if (isMissingPaymentApprovalPostingSchemaError(updateResult.error)) {
+          return fail("Apply the approval-date posting migration before approving payment values.");
+        }
         if (isMissingPaymentComponentApprovalSchemaError(updateResult.error)) {
           return fail("Apply the mixed payment approval migration before approving payment values separately.");
         }
@@ -2197,7 +2240,7 @@ const handlers = {
           await ensureLedgerEntry(admin, {
             accountProfileId: String(existing.current_holder_id ?? existing.collected_by),
             amount: cashAmount,
-            entryDate: String(existing.payment_date),
+            entryDate: postedOn,
             sourceType: "payment",
             sourceId: id,
             description: `Cash collected for ${String(existing.business_type ?? "payment").replace("_", " ")}`,
@@ -2240,25 +2283,42 @@ const handlers = {
       }
     }
 
+    let reviewedPostingDate: string | null = null;
     if (!alreadySameDecision || recordType === "payment") {
       const reviewedAt = new Date().toISOString();
       const updates: Record<string, unknown> = { approval_status: decision };
       if (recordType === "payment" && decision === "approved") {
+        reviewedPostingDate = approvalPostingDate(profile, reviewedAt);
         if (paymentCashCollection(existing) > 0) {
           updates.cash_approval_status = "approved";
           updates.cash_approved_at = reviewedAt;
+          updates.cash_approved_by = profile.id;
+          updates.cash_posted_on = reviewedPostingDate;
         }
         if (paymentOnlineCollection(existing) > 0) {
           updates.online_approval_status = "approved";
           updates.online_approved_at = reviewedAt;
+          updates.online_approved_by = profile.id;
+          updates.online_posted_on = reviewedPostingDate;
         }
         updates.approved_by = profile.id;
         updates.approved_at = reviewedAt;
+      } else if (recordType === "expense" && decision === "approved") {
+        reviewedPostingDate = approvalPostingDate(profile, reviewedAt);
+        updates.posted_on = reviewedPostingDate;
+        updates.approved_at = reviewedAt;
+        updates.approved_by = profile.id;
       }
       const { error } = recordType === "payment"
         ? await updatePaymentApprovalFields(admin, id, updates)
         : await admin.from(table).update(updates).eq("id", id);
       if (error) {
+        if (recordType === "payment" && isMissingPaymentApprovalPostingSchemaError(error)) {
+          return fail("Apply the approval-date posting migration before approving payments.");
+        }
+        if (recordType === "expense" && isMissingExpenseApprovalPostingSchemaError(error)) {
+          return fail("Apply the approval-date posting migration before approving expenses.");
+        }
         if (recordType === "payment" && isMissingPaymentComponentApprovalSchemaError(error)) {
           if (String(existing.mode) === "mixed") {
             return fail("Apply the mixed payment approval migration before approving mixed payments.");
@@ -2281,7 +2341,12 @@ const handlers = {
         await ensureLedgerEntry(admin, {
           accountProfileId: String(accountId),
           amount: recordType === "expense" ? -existingCashCollection : existingCashCollection,
-          entryDate: String(recordType === "expense" ? existing.expense_date : existing.payment_date),
+          entryDate: String(
+            reviewedPostingDate ??
+            (recordType === "expense"
+              ? existing.posted_on ?? existing.expense_date
+              : existing.cash_posted_on ?? existing.payment_date),
+          ),
           sourceType: recordType,
           sourceId: id,
           description: recordType === "expense"
@@ -2755,7 +2820,7 @@ const handlers = {
         }
       }
       if (decision === "accepted") {
-        await ensureApprovedPaymentTransferLedger(admin, movement, payment, profile.id);
+        await ensureApprovedPaymentTransferLedger(admin, movement, payment, profile);
       }
       return ok(`Transaction transfer ${decision}.`);
     }
@@ -2796,7 +2861,7 @@ const handlers = {
         admin,
         { ...movement, responded_at: respondedAt },
         payment,
-        profile.id,
+        profile,
       );
     }
 
@@ -2888,6 +2953,7 @@ const handlers = {
       from_profile_id: string;
       to_profile_id: string | null;
       status: string;
+      responded_at: string | null;
     }>(movementResponse);
     if (movementResponse.error || !movement) throw new Error(movementResponse.error?.message ?? "Movement not found.");
     if (movement.to_profile_id !== profile.id) {
@@ -2897,11 +2963,11 @@ const handlers = {
       if (movement.status !== decision) return fail("This transfer has already been reviewed.");
       if (decision === "accepted") {
         const amount = Number(movement.amount);
-        const today = todayIso();
+        const postingDate = approvalPostingDate(profile, movement.responded_at ?? new Date().toISOString());
         await ensureLedgerEntry(admin, {
           accountProfileId: movement.from_profile_id,
           amount: -amount,
-          entryDate: today,
+          entryDate: postingDate,
           sourceType: "transfer",
           sourceId: movement.id,
           description: "Cash transferred out",
@@ -2910,7 +2976,7 @@ const handlers = {
         await ensureLedgerEntry(admin, {
           accountProfileId: movement.to_profile_id,
           amount,
-          entryDate: today,
+          entryDate: postingDate,
           sourceType: "transfer",
           sourceId: movement.id,
           description: "Cash transfer received",
@@ -2920,23 +2986,24 @@ const handlers = {
       return ok("Transfer updated.");
     }
 
+    const respondedAt = new Date().toISOString();
     const { error } = await admin
       .from("money_movements")
       .update({
         status: decision,
         responded_by: profile.id,
-        responded_at: new Date().toISOString(),
+        responded_at: respondedAt,
       })
       .eq("id", movementId);
     if (error) throw new Error(error.message);
 
     if (decision === "accepted") {
       const amount = Number(movement.amount);
-      const today = todayIso();
+      const postingDate = approvalPostingDate(profile, respondedAt);
       await ensureLedgerEntry(admin, {
         accountProfileId: movement.from_profile_id,
         amount: -amount,
-        entryDate: today,
+        entryDate: postingDate,
         sourceType: "transfer",
         sourceId: movement.id,
         description: "Cash transferred out",
@@ -2945,7 +3012,7 @@ const handlers = {
       await ensureLedgerEntry(admin, {
         accountProfileId: movement.to_profile_id,
         amount,
-        entryDate: today,
+        entryDate: postingDate,
         sourceType: "transfer",
         sourceId: movement.id,
         description: "Cash transfer received",
@@ -2974,7 +3041,7 @@ const handlers = {
     const counterpartyProfileId = asString(formData, "profile_id")
       ?? (direction === "sent_to_user" ? asString(formData, "to_profile_id") : asString(formData, "from_profile_id"));
     const amount = asNumber(formData, "amount") ?? 0;
-    const settlementDate = asString(formData, "settlement_date") ?? todayIso();
+    const settlementDate = asString(formData, "settlement_date") ?? dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
     const requestKey = idempotencyKey ?? crypto.randomUUID();
     if (!counterpartyProfileId || amount <= 0) return fail("Choose a user and amount.");
     if (counterpartyProfileId === profile.id) return fail("Choose another user.");
@@ -3147,6 +3214,7 @@ const handlers = {
       return fail("Payout is higher than the agent's available incentive balance.");
     }
 
+    const respondedAt = new Date().toISOString();
     const settlementResult = await admin
       .from("agent_settlements")
       .insert({
@@ -3155,7 +3223,7 @@ const handlers = {
         status: "accepted",
         paid_by: profile.id,
         responded_by: profile.id,
-        responded_at: new Date().toISOString(),
+        responded_at: respondedAt,
         client_request_id: requestKey,
         note: asString(formData, "note"),
       })
@@ -3165,6 +3233,26 @@ const handlers = {
     if (settlementResult.error || !settlement) {
       throw new Error(settlementResult.error?.message ?? "Could not record incentive payout.");
     }
+
+    const postingDate = approvalPostingDate(profile, respondedAt);
+    await ensureLedgerEntry(admin, {
+      accountProfileId: profile.id,
+      amount: -amount,
+      entryDate: postingDate,
+      sourceType: "settlement",
+      sourceId: settlement.id,
+      description: "Agent incentive paid",
+      createdBy: profile.id,
+    });
+    await ensureLedgerEntry(admin, {
+      accountProfileId: agentId,
+      amount,
+      entryDate: postingDate,
+      sourceType: "settlement",
+      sourceId: settlement.id,
+      description: "Agent incentive received",
+      createdBy: profile.id,
+    });
 
     await createNotifications(admin, {
       recipientIds: [agentId],
@@ -3200,6 +3288,7 @@ const handlers = {
       paid_by: string;
       amount: number | string;
       status: string;
+      responded_at: string | null;
     }>(settlementResponse);
     if (settlementResponse.error || !settlement) {
       throw new Error(settlementResponse.error?.message ?? "Incentive payout not found.");
@@ -3210,10 +3299,11 @@ const handlers = {
     if (settlement.status !== "pending") {
       if (settlement.status !== decision) return fail("This agent incentive has already been reviewed.");
       if (decision === "accepted") {
+        const postingDate = approvalPostingDate(profile, settlement.responded_at ?? new Date().toISOString());
         await ensureLedgerEntry(admin, {
           accountProfileId: settlement.paid_by,
           amount: -Number(settlement.amount),
-          entryDate: todayIso(),
+          entryDate: postingDate,
           sourceType: "settlement",
           sourceId: settlement.id,
           description: "Agent incentive paid",
@@ -3222,7 +3312,7 @@ const handlers = {
         await ensureLedgerEntry(admin, {
           accountProfileId: settlement.agent_id,
           amount: Number(settlement.amount),
-          entryDate: todayIso(),
+          entryDate: postingDate,
           sourceType: "settlement",
           sourceId: settlement.id,
           description: "Agent incentive received",
@@ -3232,21 +3322,23 @@ const handlers = {
       return ok("Agent incentive updated.");
     }
 
+    const respondedAt = new Date().toISOString();
     const { error } = await admin
       .from("agent_settlements")
       .update({
         status: decision,
         responded_by: profile.id,
-        responded_at: new Date().toISOString(),
+        responded_at: respondedAt,
       })
       .eq("id", settlementId);
     if (error) throw new Error(error.message);
 
     if (decision === "accepted") {
+      const postingDate = approvalPostingDate(profile, respondedAt);
       await ensureLedgerEntry(admin, {
         accountProfileId: settlement.paid_by,
         amount: -Number(settlement.amount),
-        entryDate: todayIso(),
+        entryDate: postingDate,
         sourceType: "settlement",
         sourceId: settlement.id,
         description: "Agent incentive paid",
@@ -3255,7 +3347,7 @@ const handlers = {
       await ensureLedgerEntry(admin, {
         accountProfileId: settlement.agent_id,
         amount: Number(settlement.amount),
-        entryDate: todayIso(),
+        entryDate: postingDate,
         sourceType: "settlement",
         sourceId: settlement.id,
         description: "Agent incentive received",

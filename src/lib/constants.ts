@@ -35,11 +35,15 @@ function zonedDateParts(value: Date, timeZone: string) {
   return { year: part("year"), month: part("month"), day: part("day") };
 }
 
-export function indiaDateIso(value: Date | string = new Date()) {
+export function dateIsoInTimeZone(value: Date | string = new Date(), timeZone = INDIA_TIME_ZONE) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const { year, month, day } = zonedDateParts(date, INDIA_TIME_ZONE);
+  const { year, month, day } = zonedDateParts(date, timeZone);
   return `${year}-${month}-${day}`;
+}
+
+export function indiaDateIso(value: Date | string = new Date()) {
+  return dateIsoInTimeZone(value, INDIA_TIME_ZONE);
 }
 
 export const todayIso = () => indiaDateIso();

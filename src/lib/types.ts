@@ -2,7 +2,7 @@ export type AppRole = "admin" | "owner" | "staff" | "sales_agent";
 export type PlatformRole = "user" | "platform_admin";
 export type BusinessRole = "primary_owner" | "co_owner" | "staff" | "sales_agent";
 export type BusinessStatus = "active" | "suspended";
-export type MembershipStatus = "invited" | "active" | "suspended";
+export type MembershipStatus = "active" | "suspended";
 export type BusinessType = "guest_house" | "library" | "course" | "general";
 export type PaymentMode = "cash" | "online" | "mixed";
 export type ApprovalStatus =
@@ -144,6 +144,10 @@ export type Payment = {
   online_approval_status: ApprovalStatus | null;
   cash_approved_at: string | null;
   online_approved_at: string | null;
+  cash_posted_on: string | null;
+  online_posted_on: string | null;
+  cash_approved_by: string | null;
+  online_approved_by: string | null;
   approved_by: string | null;
   approved_at: string | null;
   record_status: "active" | "cancelled";
@@ -221,6 +225,9 @@ export type Expense = {
   spent_by: string;
   client_request_id: string | null;
   approval_status: ApprovalStatus;
+  posted_on: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
   created_at: string;
@@ -255,6 +262,23 @@ export type LedgerEntry = {
   description: string | null;
   created_by: string | null;
   created_at: string;
+};
+
+export type DailyPostingEvent = {
+  id: string;
+  source_type: "payment" | "expense" | "transfer" | "settlement" | "agent_settlement";
+  source_id: string;
+  component: "cash" | "online" | null;
+  profile_id: string;
+  counterparty_profile_id: string | null;
+  direction: "in" | "out";
+  amount: number;
+  cash_amount: number;
+  online_amount: number;
+  transaction_date: string;
+  approval_date: string;
+  approved_at: string | null;
+  approved_by: string | null;
 };
 
 export type ChangeRequest = {
