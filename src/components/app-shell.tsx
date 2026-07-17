@@ -1223,6 +1223,7 @@ function submitWith(
   setNotice: (notice: ActionResult | null) => void,
   startTransition: ReturnType<typeof useTransition>[1],
   reset = true,
+  onSuccess?: () => void,
 ) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1252,6 +1253,7 @@ function submitWith(
         window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, { detail: refreshDetail }));
         if (reset) form.reset();
         form.closest("details.history-actions-menu")?.removeAttribute("open");
+        onSuccess?.();
       } else {
         window.dispatchEvent(new CustomEvent(actionEndedEvent));
       }
@@ -1979,8 +1981,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         scope: "none",
         savingMessageKey: "savingChanges",
       };
-      endBusy();
-      void refreshCachedData(detail);
+      void refreshCachedData(detail).then(endBusy, endBusy);
     }
 
     window.addEventListener(actionStartedEvent, startBusy);
@@ -5936,7 +5937,14 @@ function LibraryStudentsView({
                 <form
                   key={selectedStudent.id}
                   className="form-grid two"
-                  onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false)}
+                  onSubmit={(event) => submitWith(
+                    event,
+                    saveLibraryStudentAction,
+                    setNotice,
+                    startTransition,
+                    false,
+                    () => setEditingStudent(false),
+                  )}
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
                   <input type="hidden" name="inactive" value={studentInactiveEdit ? "true" : "false"} />
@@ -6131,7 +6139,14 @@ function LibraryStudentsView({
                 <form
                   key={selectedCourseStudent.paymentId}
                   className="form-grid two"
-                  onSubmit={(event) => submitWith(event, saveCourseStudentAction, setNotice, startTransition, false)}
+                  onSubmit={(event) => submitWith(
+                    event,
+                    saveCourseStudentAction,
+                    setNotice,
+                    startTransition,
+                    false,
+                    () => setEditingStudent(false),
+                  )}
                 >
                   <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId} />
                   <label>
@@ -7189,62 +7204,75 @@ function PaymentForm({
 
       {type === "course" ? (
         <>
-          <label className="full-span">
-            {t("course")}
-            <select
-              name="course_id"
-              required
-              value={selectedCourseId}
-              onChange={(event) => handleCourseChange(event.target.value)}
-            >
-              <option value="">{t("selectCourse")}</option>
-              {mainCourses.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {courseNeedsSkill ? (
-            <label className="full-span">
-              {t("skill")}
-              <select
-                name="skill_course_id"
-                required
-                value={selectedSkillCourseId}
-                onChange={(event) => handleSkillCourseChange(event.target.value)}
-              >
-                <option value="">{t("selectSkill")}</option>
-                {skillCourses.map((course) => (
-                  <option key={course.id} value={course.id}>
-                    {course.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+          {initialCourseStudent && initialCourseSource ? (
+            <>
+              <input type="hidden" name="course_id" value={initialCourseMainCourse?.id ?? ""} />
+              {initialCourseSource.type === "skillCourse" ? (
+                <input type="hidden" name="skill_course_id" value={initialCourseSource.course.id} />
+              ) : null}
+            </>
+          ) : (
+            <>
+              <label className="full-span">
+                {t("course")}
+                <select
+                  name="course_id"
+                  required
+                  value={selectedCourseId}
+                  onChange={(event) => handleCourseChange(event.target.value)}
+                >
+                  <option value="">{t("selectCourse")}</option>
+                  {mainCourses.map((course) => (
+                    <option key={course.id} value={course.id}>
+                      {course.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {courseNeedsSkill ? (
+                <label className="full-span">
+                  {t("skill")}
+                  <select
+                    name="skill_course_id"
+                    required
+                    value={selectedSkillCourseId}
+                    onChange={(event) => handleSkillCourseChange(event.target.value)}
+                  >
+                    <option value="">{t("selectSkill")}</option>
+                    {skillCourses.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </>
+          )}
           {selectedCourseSource ? (
             <>
-              <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
-                <button
-                  type="button"
-                  className={courseMemberMode === "new" ? "selected" : ""}
-                  onClick={() => chooseCourseMemberMode("new")}
-                >
-                  <UserPlus size={18} />
-                  <span>{t("newStudent")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={courseMemberMode === "existing" ? "selected" : ""}
-                  onClick={() => chooseCourseMemberMode("existing")}
-                >
-                  <UserCheck size={18} />
-                  <span>{t("existingMember")}</span>
-                </button>
-              </div>
+              {!initialCourseStudent ? (
+                <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
+                  <button
+                    type="button"
+                    className={courseMemberMode === "new" ? "selected" : ""}
+                    onClick={() => chooseCourseMemberMode("new")}
+                  >
+                    <UserPlus size={18} />
+                    <span>{t("newStudent")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={courseMemberMode === "existing" ? "selected" : ""}
+                    onClick={() => chooseCourseMemberMode("existing")}
+                  >
+                    <UserCheck size={18} />
+                    <span>{t("existingMember")}</span>
+                  </button>
+                </div>
+              ) : null}
 
-              {courseMemberMode === "existing" ? (
+              {courseMemberMode === "existing" && !initialCourseStudent ? (
                 <>
                   <label className="full-span">
                     {t("studentSearch")}
@@ -7293,15 +7321,17 @@ function PaymentForm({
                 <>
                   {courseMemberMode === "existing" && selectedCourseStudent ? (
                     <>
-                      <div className="library-selected-profile with-photo full-span">
-                        <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="selected" />
-                        <span>
-                          <strong>{courseStudentDisplayName(selectedCourseStudent, t)}</strong>
-                          <small>
-                            #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName}
-                          </small>
-                        </span>
-                      </div>
+                      {!initialCourseStudent ? (
+                        <div className="library-selected-profile with-photo full-span">
+                          <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="selected" />
+                          <span>
+                            <strong>{courseStudentDisplayName(selectedCourseStudent, t)}</strong>
+                            <small>
+                              #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName}
+                            </small>
+                          </span>
+                        </div>
+                      ) : null}
                       <input type="hidden" name="customer_name" value={studentName} />
                       <input type="hidden" name="roll_number" value={rollNumber} />
                     </>
