@@ -5771,6 +5771,24 @@ summary::-webkit-details-marker {
   text-transform: none;
 }
 
+.student-status-action-row {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(49, 66, 57, 0.12);
+  border-bottom: 1px solid rgba(49, 66, 57, 0.12);
+  padding: 12px 0;
+}
+
+.student-status-action-row .tone-cancel {
+  border-color: rgba(183, 28, 28, 0.45);
+  color: #a01515;
+}
+
+.student-status-action-row .tone-approve {
+  border-color: rgba(25, 118, 75, 0.45);
+  color: #146b43;
+}
+
 .library-student-hero-card {
   display: flex;
   align-items: center;

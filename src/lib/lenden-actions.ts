@@ -1,6 +1,14 @@
 import { dateIsoInTimeZone } from "@/lib/constants";
+import type {
+  ActionResult,
+  CourseStudent,
+  LedgerEntry,
+  LibraryStudent,
+  MoneyMovement,
+  MutationPatch,
+  Payment,
+} from "@/lib/types";
 
-type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 type AppRole = "admin" | "owner" | "staff" | "sales_agent";
 type BusinessRole = "primary_owner" | "co_owner" | "staff" | "sales_agent";
 type BusinessType = "guest_house" | "library" | "course" | "general";
@@ -59,6 +67,10 @@ type SupabaseAdminClient = {
         options: { contentType: string; upsert: boolean },
       ) => Promise<{ error: { message: string } | null }>;
       getPublicUrl: (path: string) => { data: { publicUrl: string } };
+      createSignedUrl: (path: string, expiresIn: number) => Promise<{
+        data: { signedUrl: string } | null;
+        error: { message: string } | null;
+      }>;
     };
   };
 };
@@ -300,6 +312,10 @@ function isMissingLibraryStudentSchemaError(error: unknown) {
   ]);
 }
 
+function isMissingCourseStudentSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, ["course_students", "course_student_id", "assigned_profile_id"]);
+}
+
 function isMissingActionRequestSchemaError(error: unknown) {
   return isMissingDbSchemaError(error, ["app_action_requests"]);
 }
@@ -339,7 +355,7 @@ function requireBusinessSettingsManager(profile: LendenActionProfile) {
 }
 
 function recordOwnerProfileId(recordType: "payment" | "expense", record: Record<string, string | number | null>) {
-  return String(recordType === "expense" ? record.spent_by : record.collected_by);
+  return String(recordType === "expense" ? record.spent_by : record.assigned_profile_id ?? record.collected_by);
 }
 
 async function profileIsOwnerish(admin: SupabaseAdminClient, businessId: string, profileId: string) {
@@ -418,8 +434,12 @@ function typedDataArray<T>(response: QueryResponse<unknown>) {
   return (response.data ?? []) as T[];
 }
 
-function ok(message?: string): ActionResult {
-  return message ? { ok: true, message } : { ok: true };
+function ok(message?: string, patch?: MutationPatch): ActionResult {
+  return {
+    ok: true,
+    ...(message ? { message } : {}),
+    ...(patch ? { patch } : {}),
+  };
 }
 
 function fail(message: string): ActionResult {
@@ -434,6 +454,30 @@ function isDuplicateError(error: { code?: string; message?: string } | null | un
 function isStorageDuplicateError(error: { message?: string } | null | undefined) {
   const message = error?.message?.toLowerCase() ?? "";
   return message.includes("already exists") || message.includes("duplicate") || message.includes("resource already exists");
+}
+
+async function signedStudentAsset(admin: SupabaseAdminClient, value: string | null) {
+  if (!value || /^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
+  const { data, error } = await admin.storage.from("library-student-photos").createSignedUrl(value, 3600);
+  if (error) return value;
+  return data?.signedUrl ?? value;
+}
+
+async function signedLibraryStudentPatch(admin: SupabaseAdminClient, student: LibraryStudent): Promise<LibraryStudent> {
+  const [photoUrl, aadharFront, aadharBack] = await Promise.all([
+    signedStudentAsset(admin, student.photo_url),
+    signedStudentAsset(admin, student.aadhar_photo_url),
+    signedStudentAsset(admin, student.aadhar_back_photo_url),
+  ]);
+  return { ...student, photo_url: photoUrl, aadhar_photo_url: aadharFront, aadhar_back_photo_url: aadharBack };
+}
+
+async function signedCourseStudentPatch(admin: SupabaseAdminClient, student: CourseStudent): Promise<CourseStudent> {
+  const [aadharFront, aadharBack] = await Promise.all([
+    signedStudentAsset(admin, student.aadhar_photo_url),
+    signedStudentAsset(admin, student.aadhar_back_photo_url),
+  ]);
+  return { ...student, aadhar_photo_url: aadharFront, aadhar_back_photo_url: aadharBack };
 }
 
 function normalizeRequestKey(value: string | null) {
@@ -735,42 +779,6 @@ async function hasRecordLedgerEntry(admin: SupabaseAdminClient, recordType: "pay
   return Boolean(response.data);
 }
 
-async function ensureApprovedPaymentTransferLedger(
-  admin: SupabaseAdminClient,
-  movement: {
-    id: string;
-    amount: number | string;
-    from_profile_id: string;
-    to_profile_id: string | null;
-    responded_at?: string | null;
-  },
-  payment: Record<string, string | number | null>,
-  profile: LendenActionProfile,
-) {
-  const cashValueApproved = paymentComponentDecision(payment, "cash") === "approved";
-  if (!movement.to_profile_id || (!cashValueApproved && !(await recordIsEffectivelyApproved(admin, "payment", payment)))) return;
-  const entryDate = approvalPostingDate(profile, movement.responded_at ?? new Date().toISOString());
-  const amount = Number(movement.amount);
-  await ensureLedgerEntry(admin, {
-    accountProfileId: movement.from_profile_id,
-    amount: -amount,
-    entryDate,
-    sourceType: "transfer",
-    sourceId: movement.id,
-    description: "Approved transaction cash transferred out",
-    createdBy: profile.id,
-  });
-  await ensureLedgerEntry(admin, {
-    accountProfileId: movement.to_profile_id,
-    amount,
-    entryDate,
-    sourceType: "transfer",
-    sourceId: movement.id,
-    description: "Approved transaction cash received",
-    createdBy: profile.id,
-  });
-}
-
 async function profileCashBalanceAt(admin: SupabaseAdminClient, profileId: string, entryDate: string) {
   const rpcResponse = await admin.rpc("lenden_profile_cash_balance_at", {
     p_profile_id: profileId,
@@ -1063,13 +1071,14 @@ async function saveLibraryStudentRecord(
   if (studentId) {
     const currentResponse = await admin
       .from("library_students")
-      .select("subscription_start_date, subscription_end_date, last_payment_date")
+      .select("subscription_start_date, subscription_end_date, last_payment_date, active")
       .eq("id", studentId)
       .single();
     const current = typedData<{
       subscription_start_date: string | null;
       subscription_end_date: string | null;
       last_payment_date: string | null;
+      active: boolean;
     }>(currentResponse);
     if (currentResponse.error || !current) {
       if (isMissingLibraryStudentSchemaError(currentResponse.error)) {
@@ -1089,6 +1098,8 @@ async function saveLibraryStudentRecord(
       params.lastPaymentDate ?? "",
     ].join("|");
     if (currentSubscriptionKey > nextSubscriptionKey) return studentId;
+    // A payment refreshes the subscription snapshot but never changes manual status.
+    payload.active = current.active;
   }
 
   const query = studentId
@@ -1124,6 +1135,8 @@ async function saveLibraryStudentIdentityRecord(
   };
 
   const studentId = normalizeLibraryStudentId(params.id);
+  // Status is changed only through setStudentStatus; identity edits preserve it.
+  if (studentId) delete payload.active;
   const query = studentId
     ? admin.from("library_students").update(payload).eq("id", studentId)
     : admin.from("library_students").insert(payload);
@@ -1139,6 +1152,77 @@ async function saveLibraryStudentIdentityRecord(
     throw new Error(response.error?.message ?? "Could not save library student.");
   }
   return student.id;
+}
+
+function courseStudentIdentityKey(rollNumber: string | null, studentName: string | null, paymentId?: string | null) {
+  if (rollNumber) return `roll:${rollNumber.toLowerCase()}`;
+  if (studentName) return `name:${studentName.trim().replace(/\s+/g, " ").toLowerCase()}`;
+  return paymentId ? `payment:${paymentId}` : null;
+}
+
+async function upsertCourseStudentRecord(
+  admin: SupabaseAdminClient,
+  params: {
+    businessId: string;
+    sourceCourseId: string;
+    rollNumber: string | null;
+    studentName: string | null;
+    paymentId?: string | null;
+    aadharPhotoUrl?: string | null;
+    aadharBackPhotoUrl?: string | null;
+    subscriptionStartDate?: string | null;
+    subscriptionEndDate?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    slotHours?: number | null;
+    feeAmount?: number | null;
+    paidAmount?: number | null;
+    duesAmount?: number | null;
+    advanceAmount?: number | null;
+  },
+) {
+  const identityKey = courseStudentIdentityKey(params.rollNumber, params.studentName, params.paymentId);
+  if (!identityKey) throw new Error("Course student name or roll number is required.");
+  const currentResponse = await admin
+    .from("course_students")
+    .select("*")
+    .eq("business_id", params.businessId)
+    .eq("source_course_id", params.sourceCourseId)
+    .eq("identity_key", identityKey)
+    .maybeSingle();
+  if (isMissingCourseStudentSchemaError(currentResponse.error)) {
+    throw new Error("Apply the transaction assignee and course student migration before saving course students.");
+  }
+  if (currentResponse.error) throw new Error(currentResponse.error.message);
+  const current = typedData<CourseStudent>(currentResponse);
+  const payload: Record<string, unknown> = {
+    business_id: params.businessId,
+    source_course_id: params.sourceCourseId,
+    identity_key: identityKey,
+    roll_number: params.rollNumber,
+    student_name: params.studentName,
+    subscription_start_date: params.subscriptionStartDate ?? null,
+    subscription_end_date: params.subscriptionEndDate ?? null,
+    start_time: params.startTime ?? null,
+    end_time: params.endTime ?? null,
+    slot_hours: params.slotHours ?? null,
+    fee_amount: params.feeAmount ?? null,
+    paid_amount: params.paidAmount ?? null,
+    dues_amount: params.duesAmount ?? null,
+    advance_amount: params.advanceAmount ?? null,
+  };
+  if (params.aadharPhotoUrl) payload.aadhar_photo_url = params.aadharPhotoUrl;
+  if (params.aadharBackPhotoUrl) payload.aadhar_back_photo_url = params.aadharBackPhotoUrl;
+  if (params.paymentId) payload.last_payment_id = params.paymentId;
+  if (!current) payload.active = true;
+
+  const result = current
+    ? await admin.from("course_students").update(payload).eq("id", current.id).select("*").single()
+    : await admin.from("course_students").insert(payload).select("*").single();
+  if (result.error) throw new Error(result.error.message);
+  const student = typedData<CourseStudent>(result);
+  if (!student) throw new Error("Could not save course student.");
+  return student;
 }
 
 function fieldsFromLibraryStudentRecord(record: Record<string, string | number | boolean | null>): LibraryStudentFormFields {
@@ -1550,6 +1634,8 @@ const handlers = {
     let libraryPaymentEventSource = "library_payment";
     let aadharPhotoUrl: string | null = null;
     let aadharBackPhotoUrl: string | null = null;
+    let courseStudent: CourseStudent | null = null;
+    let savedLibraryStudent: LibraryStudent | null = null;
 
     if (business === "library" || business === "course") {
       const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
@@ -1664,6 +1750,28 @@ const handlers = {
       incentiveAmount = calculateConfiguredAmount(referral.incentive_type, referral.incentive_value, paid ?? amount);
     }
 
+    if (business === "course") {
+      const sourceCourseId = skillCourseId ?? courseId;
+      if (!sourceCourseId) return fail("Choose a main or skill course.");
+      courseStudent = await upsertCourseStudentRecord(admin, {
+        businessId: profile.businessId,
+        sourceCourseId,
+        rollNumber: normalizeLibraryRollNumber(asString(formData, "roll_number")),
+        studentName: asString(formData, "customer_name"),
+        aadharPhotoUrl,
+        aadharBackPhotoUrl,
+        subscriptionStartDate: asString(formData, "start_date"),
+        subscriptionEndDate: asString(formData, "end_date"),
+        startTime: normalizeClockTime(asString(formData, "start_time")),
+        endTime: normalizeClockTime(asString(formData, "end_time")),
+        slotHours: asNumber(formData, "slot_hours"),
+        feeAmount: fee,
+        paidAmount: paid,
+        duesAmount: due,
+        advanceAmount: advance,
+      });
+    }
+
     const createdAt = new Date().toISOString();
     const paymentPayload: Record<string, unknown> = {
       business_type: business,
@@ -1688,6 +1796,7 @@ const handlers = {
       slot_hours: libraryStudentFields?.slotHours ?? asNumber(formData, "slot_hours"),
       course_id: courseId,
       skill_course_id: skillCourseId,
+      course_student_id: courseStudent?.id ?? null,
       referral_code_id: referralCodeId,
       referral_code_snapshot: referralCodeText,
       referral_agent_id: referralAgentId,
@@ -1697,6 +1806,7 @@ const handlers = {
       remark: asString(formData, "remark"),
       photo_path: photoPath,
       collected_by: profile.id,
+      assigned_profile_id: profile.id,
       current_holder_id: cashCollection > 0 ? profile.id : null,
       approval_status: ownerCreated ? "approved" : "pending",
       cash_approval_status: cashCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
@@ -1723,7 +1833,7 @@ const handlers = {
       paymentResult = await admin
         .from("payments")
         .insert(paymentPayloadForInsert)
-        .select("id")
+        .select("*")
         .single();
 
       if (!paymentResult.error) break;
@@ -1789,7 +1899,7 @@ const handlers = {
       break;
     }
 
-    const payment = typedData<{ id: string }>(paymentResult);
+    const payment = typedData<Payment>(paymentResult);
     if (paymentResult.error || !payment) {
       if (isDuplicateError(paymentResult.error)) {
         const duplicatePayment = await existingByClientRequest<{ id: string }>(
@@ -1817,6 +1927,12 @@ const handlers = {
           aadharPhotoUrl,
           aadharBackPhotoUrl,
         });
+        const savedStudentResponse = await admin.from("library_students").select("*").eq("id", libraryStudentId).single();
+        savedLibraryStudent = typedData<LibraryStudent>(savedStudentResponse);
+        if (savedStudentResponse.error || !savedLibraryStudent) {
+          throw new Error(savedStudentResponse.error?.message ?? "Could not load updated library student.");
+        }
+        savedLibraryStudent = await signedLibraryStudentPatch(admin, savedLibraryStudent);
         await upsertLibraryStudentEvent(admin, {
           studentId: libraryStudentId,
           paymentId: payment.id,
@@ -1825,7 +1941,7 @@ const handlers = {
           eventDate: paymentDate,
           source: libraryPaymentEventSource,
           fields: libraryStudentFields,
-          active: true,
+          active: savedLibraryStudent.active,
           createdBy: profile.id,
           metadata: { amount, mode, payment_kind: libraryPaymentEventSource },
         });
@@ -1833,6 +1949,28 @@ const handlers = {
         if (!isMissingLibraryStudentSchemaError(error)) throw error;
         libraryStudentSyncSkipped = true;
       }
+    }
+
+    if (courseStudent) {
+      courseStudent = await upsertCourseStudentRecord(admin, {
+        businessId: profile.businessId,
+        sourceCourseId: courseStudent.source_course_id,
+        rollNumber: courseStudent.roll_number,
+        studentName: courseStudent.student_name,
+        paymentId: payment.id,
+        aadharPhotoUrl,
+        aadharBackPhotoUrl,
+        subscriptionStartDate: payment.start_date,
+        subscriptionEndDate: payment.end_date,
+        startTime: payment.start_time,
+        endTime: payment.end_time,
+        slotHours: payment.slot_hours,
+        feeAmount: payment.fee_amount,
+        paidAmount: payment.paid_amount,
+        duesAmount: payment.dues_amount,
+        advanceAmount: payment.advance_amount,
+      });
+      courseStudent = await signedCourseStudentPatch(admin, courseStudent);
     }
 
     if (ownerCreated && cashCollection > 0) {
@@ -1871,11 +2009,26 @@ const handlers = {
       });
     }
 
-    return ok(
-      libraryStudentSyncSkipped
-        ? "Payment saved. Apply the library student migration to update student records automatically."
-        : "Payment saved.",
-    );
+    const message = libraryStudentSyncSkipped
+      ? "Payment saved. Apply the library student migration to update student records automatically."
+      : "Payment saved.";
+    if (savedLibraryStudent) {
+      return ok(message, {
+        type: "student",
+        studentType: "library",
+        student: savedLibraryStudent,
+        payment,
+      });
+    }
+    if (courseStudent) {
+      return ok(message, {
+        type: "student",
+        studentType: "course",
+        student: courseStudent,
+        payment,
+      });
+    }
+    return ok(message);
   }),
 
   saveLibraryStudent: withErrors("Could not save library student.", async (formData, { admin, profile, idempotencyKey }) => {
@@ -1899,27 +2052,98 @@ const handlers = {
       return uploadedAadharBackPhoto;
     }
 
-    const active = !asBool(formData, "inactive");
-    await saveLibraryStudentIdentityRecord(admin, {
+    const studentId = await saveLibraryStudentIdentityRecord(admin, {
       id: asString(formData, "id"),
       fields: parsedStudent.fields,
-      active,
+      active: true,
       photoUrl: typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null,
       aadharPhotoUrl: typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null,
       aadharBackPhotoUrl: typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null,
     });
+    const savedResponse = await admin.from("library_students").select("*").eq("id", studentId).single();
+    const saved = typedData<LibraryStudent>(savedResponse);
+    if (savedResponse.error || !saved) throw new Error(savedResponse.error?.message ?? "Could not load saved student.");
+    const signedSaved = await signedLibraryStudentPatch(admin, saved);
 
-    return ok(active ? "Library student saved." : "Library student moved to inactive.");
+    return ok("Library student saved.", {
+      type: "student",
+      studentType: "library",
+      student: signedSaved,
+    });
   }),
 
-  setLibraryStudentStatus: withErrors("Could not update library student status.", async (formData, { admin, profile, idempotencyKey }) => {
-    await requireLibraryCollectionAccess(admin, profile);
-    const id = asString(formData, "id");
+  setStudentStatus: withErrors("Could not update student status.", async (formData, { admin, profile, idempotencyKey }) => {
+    const studentType = asString(formData, "student_type") === "course" ? "course" : "library";
+    let id = asString(formData, "id");
     const active = asBool(formData, "active");
-    if (!id) return fail("Choose a library student.");
+    const previousId = id;
+    if (!id) return fail("Choose a student.");
+
+    if (studentType === "course") {
+      if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
+        return fail("You do not have access to course students.");
+      }
+      const courseResponse = await admin.from("course_students").select("*").eq("id", id).single();
+      if (isMissingCourseStudentSchemaError(courseResponse.error)) {
+        return fail("Apply the transaction assignee and course student migration before updating course students.");
+      }
+      const existing = typedData<CourseStudent>(courseResponse);
+      if (courseResponse.error || !existing) throw new Error(courseResponse.error?.message ?? "Course student not found.");
+      const updateResponse = await admin
+        .from("course_students")
+        .update({ active })
+        .eq("id", id)
+        .select("*")
+        .single();
+      const updated = typedData<CourseStudent>(updateResponse);
+      if (updateResponse.error || !updated) throw new Error(updateResponse.error?.message ?? "Could not update student status.");
+      const signedUpdated = await signedCourseStudentPatch(admin, updated);
+      return ok(active ? "Course student reactivated." : "Course student moved to inactive.", {
+        type: "student",
+        studentType: "course",
+        student: signedUpdated,
+      });
+    }
+
+    await requireLibraryCollectionAccess(admin, profile);
+    if (!normalizeLibraryStudentId(id)) {
+      const paymentId = asString(formData, "payment_id");
+      if (!paymentId) return fail("This payment-derived student must be opened again before changing status.");
+      const paymentResponse = await admin.from("payments").select("*").eq("id", paymentId).single();
+      const payment = typedData<Payment>(paymentResponse);
+      if (paymentResponse.error || !payment || payment.business_type !== "library") {
+        return fail("Library student payment was not found.");
+      }
+      id = await saveLibraryStudentRecord(admin, {
+        id: null,
+        fields: {
+          rollNumber: normalizeLibraryRollNumber(payment.roll_number) ?? "",
+          studentName: payment.customer_name ?? "",
+          phoneNumber: null,
+          address: null,
+          aadharNumber: null,
+          seatNumber: payment.seat_number,
+          lockerNumber: null,
+          startTime: payment.start_time,
+          endTime: payment.end_time,
+          slotHours: payment.slot_hours,
+          subscriptionStartDate: payment.start_date,
+          subscriptionEndDate: payment.end_date,
+          feeAmount: payment.fee_amount,
+          paidAmount: payment.paid_amount,
+          duesAmount: payment.dues_amount,
+          advanceAmount: payment.advance_amount,
+        },
+        active: true,
+        lastPaymentId: payment.id,
+        lastPaymentDate: payment.payment_date,
+        aadharPhotoUrl: payment.aadhar_photo_url,
+        aadharBackPhotoUrl: payment.aadhar_back_photo_url,
+      });
+    }
 
     const response = await admin.from("library_students").select("*").eq("id", id).single();
-    const student = typedData<Record<string, string | number | boolean | null>>(response);
+    const student = typedData<LibraryStudent>(response);
     if (isMissingLibraryStudentSchemaError(response.error)) {
       return fail("Apply the library student migration before updating student status.");
     }
@@ -1931,7 +2155,7 @@ const handlers = {
       .eq("id", id)
       .select("*")
       .single();
-    const updated = typedData<Record<string, string | number | boolean | null>>(updateResponse);
+    const updated = typedData<LibraryStudent>(updateResponse);
     if (isMissingLibraryStudentSchemaError(updateResponse.error)) {
       return fail("Apply the library student migration before updating student status.");
     }
@@ -1943,12 +2167,18 @@ const handlers = {
       eventType: "status_change",
       eventDate: dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
       source: "student_status",
-      fields: fieldsFromLibraryStudentRecord(updated),
+      fields: fieldsFromLibraryStudentRecord(updated as unknown as Record<string, string | number | boolean | null>),
       active,
       createdBy: profile.id,
     });
 
-    return ok(active ? "Library student reactivated." : "Library student moved to inactive.");
+    const signedUpdated = await signedLibraryStudentPatch(admin, updated);
+    return ok(active ? "Library student reactivated." : "Library student moved to inactive.", {
+      type: "student",
+      studentType: "library",
+      student: signedUpdated,
+      previousId: previousId !== id ? previousId : null,
+    });
   }),
 
   saveCourseStudent: withErrors("Could not save course student.", async (formData, { admin, profile, idempotencyKey }) => {
@@ -2033,7 +2263,63 @@ const handlers = {
       .eq("id", paymentId);
     if (error) throw new Error(error.message);
 
-    return ok("Course student saved.");
+    const sourceCourseId = String(payment.skill_course_id ?? payment.course_id ?? "");
+    if (!sourceCourseId) return fail("Course source was not found.");
+    const identityKey = courseStudentIdentityKey(rollNumber, customerName, paymentId);
+    if (!identityKey) return fail("Student name and roll number are required.");
+    const courseStudentId = typeof payment.course_student_id === "string" ? payment.course_student_id : null;
+    let savedStudent: CourseStudent;
+    if (courseStudentId) {
+      const courseUpdates: Record<string, unknown> = {
+        identity_key: identityKey,
+        roll_number: rollNumber,
+        student_name: customerName,
+        subscription_start_date: startDate,
+        subscription_end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        slot_hours: slotHours,
+      };
+      if (typeof uploadedAadharPhoto === "string") courseUpdates.aadhar_photo_url = uploadedAadharPhoto;
+      if (typeof uploadedAadharBackPhoto === "string") courseUpdates.aadhar_back_photo_url = uploadedAadharBackPhoto;
+      const courseUpdate = await admin
+        .from("course_students")
+        .update(courseUpdates)
+        .eq("id", courseStudentId)
+        .select("*")
+        .single();
+      const updated = typedData<CourseStudent>(courseUpdate);
+      if (courseUpdate.error || !updated) throw new Error(courseUpdate.error?.message ?? "Could not update course student.");
+      savedStudent = updated;
+    } else {
+      savedStudent = await upsertCourseStudentRecord(admin, {
+        businessId: profile.businessId,
+        sourceCourseId,
+        rollNumber,
+        studentName: customerName,
+        paymentId,
+        aadharPhotoUrl: typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null,
+        aadharBackPhotoUrl: typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null,
+        subscriptionStartDate: startDate,
+        subscriptionEndDate: endDate,
+        startTime,
+        endTime,
+        slotHours,
+        feeAmount: typeof payment.fee_amount === "number" ? payment.fee_amount : Number(payment.fee_amount ?? 0),
+        paidAmount: typeof payment.paid_amount === "number" ? payment.paid_amount : Number(payment.paid_amount ?? 0),
+        duesAmount: typeof payment.dues_amount === "number" ? payment.dues_amount : Number(payment.dues_amount ?? 0),
+        advanceAmount: typeof payment.advance_amount === "number" ? payment.advance_amount : Number(payment.advance_amount ?? 0),
+      });
+      const linkResult = await admin.from("payments").update({ course_student_id: savedStudent.id }).eq("id", paymentId);
+      if (linkResult.error) throw new Error(linkResult.error.message);
+    }
+
+    const signedSavedStudent = await signedCourseStudentPatch(admin, savedStudent);
+    return ok("Course student saved.", {
+      type: "student",
+      studentType: "course",
+      student: signedSavedStudent,
+    });
   }),
 
   createExpense: withErrors("Could not save expense.", async (formData, { admin, profile, idempotencyKey }) => {
@@ -2157,6 +2443,20 @@ const handlers = {
     if (existingResponse.error || !existing) throw new Error(existingResponse.error?.message ?? "Record not found.");
     const currentDecision = String(existing.approval_status ?? "pending");
 
+    if (recordType === "payment" && decision === "approved") {
+      const pendingTransferResponse = await admin
+        .from("money_movements")
+        .select("id")
+        .eq("payment_id", id)
+        .eq("type", "transfer")
+        .eq("status", "pending")
+        .maybeSingle();
+      if (pendingTransferResponse.error) throw new Error(pendingTransferResponse.error.message);
+      if (pendingTransferResponse.data) {
+        return fail("Resolve the pending transaction transfer before approval.");
+      }
+    }
+
     if (paymentComponent) {
       const componentAmount = paymentComponent === "cash"
         ? paymentCashCollection(existing)
@@ -2183,20 +2483,6 @@ const handlers = {
       }
       if (currentComponentDecision !== "pending" && currentComponentDecision !== "reapproval_required") {
         return fail("This payment value has already been reviewed.");
-      }
-
-      if (paymentComponent === "cash") {
-        const pendingTransferResponse = await admin
-          .from("money_movements")
-          .select("id")
-          .eq("payment_id", id)
-          .eq("type", "transfer")
-          .eq("status", "pending")
-          .maybeSingle();
-        if (pendingTransferResponse.error) throw new Error(pendingTransferResponse.error.message);
-        if (pendingTransferResponse.data) {
-          return fail("Resolve the pending transaction transfer before approving its cash value.");
-        }
       }
 
       const cashAmount = paymentCashCollection(existing);
@@ -2249,7 +2535,7 @@ const handlers = {
         }
       }
 
-      const recordOwnerId = String(existing.collected_by);
+      const recordOwnerId = String(existing.assigned_profile_id ?? existing.collected_by);
       await createNotifications(admin, {
         recipientIds: recordOwnerId === profile.id ? [] : [recordOwnerId],
         actorId: profile.id,
@@ -2267,20 +2553,6 @@ const handlers = {
     const alreadySameDecision = currentDecision === decision;
     if (!alreadySameDecision && currentDecision !== "pending" && currentDecision !== "reapproval_required") {
       return fail("This record has already been reviewed.");
-    }
-
-    if (!alreadySameDecision && recordType === "payment" && decision === "approved") {
-      const pendingTransferResponse = await admin
-        .from("money_movements")
-        .select("id")
-        .eq("payment_id", id)
-        .eq("type", "transfer")
-        .eq("status", "pending")
-        .maybeSingle();
-      if (pendingTransferResponse.error) throw new Error(pendingTransferResponse.error.message);
-      if (pendingTransferResponse.data) {
-        return fail("Resolve the pending transaction transfer before approval.");
-      }
     }
 
     let reviewedPostingDate: string | null = null;
@@ -2363,7 +2635,7 @@ const handlers = {
 
     if (alreadySameDecision) return ok(`Record ${decision}.`);
 
-    const recordOwnerId = String(recordType === "expense" ? existing.spent_by : existing.collected_by);
+    const recordOwnerId = String(recordType === "expense" ? existing.spent_by : existing.assigned_profile_id ?? existing.collected_by);
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id ? [] : [recordOwnerId],
       actorId: profile.id,
@@ -2689,14 +2961,11 @@ const handlers = {
     if (transactionOrCashApproved && !isBusinessOwner(profile.businessRole)) {
       return fail("Only an owner can transfer an approved transaction.");
     }
-    const currentHolderId = String(payment.current_holder_id ?? payment.collected_by ?? "");
-    if (!currentHolderId) return fail("This transaction does not have a current cash holder.");
-    if (!isBusinessOwner(profile.businessRole) && currentHolderId !== profile.id) {
-      return fail("Only the current cash holder can transfer this transaction.");
+    const currentAssigneeId = String(payment.assigned_profile_id ?? payment.current_holder_id ?? payment.collected_by ?? "");
+    if (!currentAssigneeId) return fail("This transaction does not have an assignee.");
+    if (!isBusinessOwner(profile.businessRole) && currentAssigneeId !== profile.id) {
+      return fail("Only the assigned staff member can transfer this transaction.");
     }
-
-    const cashAmount = paymentCashCollection(payment);
-    if (cashAmount <= 0) return fail("Only cash or mixed transactions with cash can be transferred.");
 
     const recipient = await businessMember(admin, profile.businessId, toProfileId);
     if (!recipient) throw new Error("Receiving staff not found.");
@@ -2711,23 +2980,23 @@ const handlers = {
 
     const pendingResponse = await admin
       .from("money_movements")
-      .select("id, from_profile_id, to_profile_id, requested_by")
+      .select("*")
       .eq("payment_id", paymentId)
       .eq("type", "transfer")
       .eq("status", "pending")
       .maybeSingle();
     if (pendingResponse.error) throw new Error(pendingResponse.error.message);
-    const pendingTransfer = typedData<{
-      id: string;
-      from_profile_id: string;
-      to_profile_id: string | null;
-      requested_by: string;
-    }>(pendingResponse);
+    const pendingTransfer = typedData<MoneyMovement>(pendingResponse);
     if (pendingTransfer) {
-      return pendingTransfer.from_profile_id === currentHolderId &&
+      return pendingTransfer.from_profile_id === currentAssigneeId &&
         pendingTransfer.to_profile_id === toProfileId &&
         pendingTransfer.requested_by === profile.id
-        ? ok("Transaction transfer requested.")
+        ? ok("Transaction transfer requested.", {
+            type: "payment-transfer",
+            payment: payment as unknown as Payment,
+            movement: pendingTransfer,
+            ledgerEntries: [],
+          })
         : fail("This transaction already has a pending transfer.");
     }
 
@@ -2735,23 +3004,23 @@ const handlers = {
       .from("money_movements")
       .insert({
         type: "transfer",
-        mode: "cash",
-        amount: cashAmount,
+        mode: payment.mode,
+        amount: Number(payment.amount ?? 0),
         payment_id: paymentId,
-        from_profile_id: currentHolderId,
+        from_profile_id: currentAssigneeId,
         to_profile_id: toProfileId,
         requested_by: profile.id,
         client_request_id: requestKey,
         note: asString(formData, "note"),
       })
-      .select("id")
+      .select("*")
       .single();
-    const movement = typedData<{ id: string }>(movementResult);
+    const movement = typedData<MoneyMovement>(movementResult);
     if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not request transfer.");
 
     const notificationRecipients = new Set([
       ...(await ownerRecipientIds(admin, profile.businessId, profile.id)),
-      currentHolderId,
+      currentAssigneeId,
       toProfileId,
     ]);
     notificationRecipients.delete(profile.id);
@@ -2759,14 +3028,19 @@ const handlers = {
       recipientIds: [...notificationRecipients],
       actorId: profile.id,
       title: "Transaction transfer requested",
-      body: `${profile.full_name} requested to transfer ${cashAmount} cash to ${recipient.full_name}.`,
+      body: `${profile.full_name} requested to transfer the transaction of ${payment.amount} to ${recipient.full_name}.`,
       category: "transfer",
       tone: "info",
       eventKey: `payment-transfer-request:${movement.id}`,
-      metadata: { payment_id: paymentId, movement_id: movement.id, amount: cashAmount },
+      metadata: { payment_id: paymentId, movement_id: movement.id, amount: Number(payment.amount ?? 0) },
     });
 
-    return ok("Transaction transfer requested.");
+    return ok("Transaction transfer requested.", {
+      type: "payment-transfer",
+      payment: payment as unknown as Payment,
+      movement,
+      ledgerEntries: [],
+    });
   }),
 
   respondPaymentTransfer: withErrors("Could not update transaction transfer.", async (formData, { admin, profile }) => {
@@ -2779,91 +3053,28 @@ const handlers = {
     if (!movementId || !decision) return fail("Missing transfer response.");
     if (decision !== "accepted" && decision !== "rejected") return fail("Choose a valid transfer response.");
 
-    const movementResponse = await admin
-      .from("money_movements")
+    const rpcResponse = await admin.rpc("lenden_respond_payment_transfer", {
+      p_movement_id: movementId,
+      p_decision: decision,
+      p_entry_date: approvalPostingDate(profile, new Date().toISOString()),
+    });
+    if (rpcResponse.error) {
+      if (isMissingDbSchemaError(rpcResponse.error, ["lenden_respond_payment_transfer"])) {
+        return fail("Apply the transaction assignee migration before responding to transfer requests.");
+      }
+      throw new Error(rpcResponse.error.message);
+    }
+    const response = typedData<{ payment: Payment; movement: MoneyMovement }>(rpcResponse);
+    if (!response?.payment || !response.movement) throw new Error("Transfer response did not return updated records.");
+    const { payment, movement } = response;
+
+    const ledgerResponse = await admin
+      .from("ledger_entries")
       .select("*")
-      .eq("id", movementId)
-      .single();
-    const movement = typedData<{
-      id: string;
-      payment_id: string | null;
-      amount: number | string;
-      from_profile_id: string;
-      to_profile_id: string | null;
-      status: string;
-      type: string;
-      responded_at: string | null;
-    }>(movementResponse);
-    if (movementResponse.error || !movement) throw new Error(movementResponse.error?.message ?? "Movement not found.");
-    if (movement.type !== "transfer" || !movement.payment_id) {
-      return fail("This is not a transaction transfer.");
-    }
-    if (movement.to_profile_id !== profile.id) {
-      return fail("Only the receiving staff can respond to this transfer.");
-    }
-
-    const paymentResponse = await admin.from("payments").select("*").eq("id", movement.payment_id).single();
-    const payment = typedData<Record<string, string | number | null>>(paymentResponse);
-    if (paymentResponse.error || !payment) throw new Error(paymentResponse.error?.message ?? "Payment not found.");
-    if (movement.status !== "pending") {
-      if (movement.status !== decision) return fail("This transfer has already been reviewed.");
-      if (decision === "accepted" && payment.current_holder_id !== profile.id) {
-        if (payment.current_holder_id === movement.from_profile_id) {
-          const paymentUpdate = await admin
-            .from("payments")
-            .update({ current_holder_id: profile.id })
-            .eq("id", movement.payment_id)
-            .eq("current_holder_id", movement.from_profile_id);
-          if (paymentUpdate.error) throw new Error(paymentUpdate.error.message);
-        } else {
-          return fail("This transfer has already been reviewed.");
-        }
-      }
-      if (decision === "accepted") {
-        await ensureApprovedPaymentTransferLedger(admin, movement, payment, profile);
-      }
-      return ok(`Transaction transfer ${decision}.`);
-    }
-    if (String(payment.record_status ?? "active") !== "active" || !canTransferPaymentStatus(String(payment.approval_status ?? ""))) {
-      return fail("This transaction can no longer be transferred.");
-    }
-    if (payment.current_holder_id !== movement.from_profile_id) {
-      return fail("The transaction holder changed before this transfer was accepted.");
-    }
-
-    if (decision === "accepted") {
-      const paymentUpdate = await admin
-        .from("payments")
-        .update({ current_holder_id: profile.id })
-        .eq("id", movement.payment_id)
-        .eq("current_holder_id", movement.from_profile_id);
-      if (paymentUpdate.error) throw new Error(paymentUpdate.error.message);
-    }
-
-    const respondedAt = new Date().toISOString();
-    const movementUpdate = await admin
-      .from("money_movements")
-      .update({
-        status: decision,
-        responded_by: profile.id,
-        responded_at: respondedAt,
-      })
-      .eq("id", movementId);
-    if (movementUpdate.error) {
-      if (decision === "accepted") {
-        await admin.from("payments").update({ current_holder_id: movement.from_profile_id }).eq("id", movement.payment_id);
-      }
-      throw new Error(movementUpdate.error.message);
-    }
-
-    if (decision === "accepted") {
-      await ensureApprovedPaymentTransferLedger(
-        admin,
-        { ...movement, responded_at: respondedAt },
-        payment,
-        profile,
-      );
-    }
+      .eq("source_type", "transfer")
+      .eq("source_id", movementId);
+    if (ledgerResponse.error) throw new Error(ledgerResponse.error.message);
+    const ledgerEntries = typedDataArray<LedgerEntry>(ledgerResponse);
 
     await createNotifications(admin, {
       recipientIds: [...(await ownerRecipientIds(admin, profile.businessId, profile.id)), movement.from_profile_id],
@@ -2873,10 +3084,20 @@ const handlers = {
       category: "transfer",
       tone: decision === "accepted" ? "success" : "warning",
       eventKey: `payment-transfer-response:${movementId}:${decision}`,
-      metadata: { payment_id: movement.payment_id, movement_id: movementId, decision },
+      metadata: {
+        payment_id: movement.payment_id,
+        movement_id: movementId,
+        decision,
+        assigned_profile_id: payment.assigned_profile_id,
+      },
     });
 
-    return ok(`Transaction transfer ${decision}.`);
+    return ok(`Transaction transfer ${decision}.`, {
+      type: "payment-transfer",
+      payment,
+      movement,
+      ledgerEntries,
+    });
   }),
 
   requestTransfer: withErrors("Could not request transfer.", async (formData, { admin, profile, idempotencyKey }) => {

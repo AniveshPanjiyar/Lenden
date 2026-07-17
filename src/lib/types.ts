@@ -124,6 +124,7 @@ export type Payment = {
   end_time: string | null;
   slot_hours: number | null;
   library_student_id: string | null;
+  course_student_id: string | null;
   course_id: string | null;
   skill_course_id: string | null;
   referral_code_id: string | null;
@@ -137,6 +138,8 @@ export type Payment = {
   aadhar_photo_url: string | null;
   aadhar_back_photo_url: string | null;
   collected_by: string;
+  /** Operational owner of the whole transaction. Cash custody stays in current_holder_id. */
+  assigned_profile_id: string;
   current_holder_id: string | null;
   client_request_id: string | null;
   approval_status: ApprovalStatus;
@@ -153,6 +156,7 @@ export type Payment = {
   record_status: "active" | "cancelled";
   cancel_reason: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 export type LibraryStudent = {
@@ -210,6 +214,30 @@ export type LibraryStudentSubscriptionEvent = {
   created_by: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+};
+
+export type CourseStudent = {
+  id: string;
+  business_id: string;
+  source_course_id: string;
+  identity_key: string;
+  roll_number: string | null;
+  student_name: string | null;
+  aadhar_photo_url: string | null;
+  aadhar_back_photo_url: string | null;
+  subscription_start_date: string | null;
+  subscription_end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  slot_hours: number | null;
+  fee_amount: number | null;
+  paid_amount: number | null;
+  dues_amount: number | null;
+  advance_amount: number | null;
+  active: boolean;
+  last_payment_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Expense = {
@@ -339,6 +367,28 @@ export type ClosingSummary = {
   closing: number;
 };
 
+export type PaymentTransferMutationPatch = {
+  type: "payment-transfer";
+  payment: Payment;
+  movement: MoneyMovement;
+  ledgerEntries: LedgerEntry[];
+};
+
+export type StudentMutationPatch = {
+  type: "student";
+  studentType: "library" | "course";
+  student: LibraryStudent | CourseStudent;
+  /** Removes a payment-derived virtual row after it is materialized. */
+  previousId?: string | null;
+  payment?: Payment | null;
+};
+
+export type MutationPatch = PaymentTransferMutationPatch | StudentMutationPatch;
+
+export type ActionResult<T extends object = { patch?: MutationPatch }> =
+  | ({ ok: true; message?: string } & T)
+  | { ok: false; message: string };
+
 export type AppData = {
   businessContext: BusinessContext;
   profile: Profile;
@@ -349,6 +399,7 @@ export type AppData = {
   courses: Course[];
   referrals: ReferralCode[];
   libraryStudents: LibraryStudent[];
+  courseStudents: CourseStudent[];
   studentPayments: Payment[];
   payments: Payment[];
   expenses: Expense[];
@@ -368,6 +419,7 @@ export type BootstrapPayload = Pick<
 export type DashboardPayload = Pick<
   AppData,
   | "libraryStudents"
+  | "courseStudents"
   | "studentPayments"
   | "payments"
   | "expenses"

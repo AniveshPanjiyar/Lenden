@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { profileForBusiness, resolveBusinessContextFromRequest } from "@/lib/tenancy";
+import type { ActionResult } from "@/lib/types";
 import {
   executeLendenAction,
   type LendenActionAdminClient,
@@ -11,14 +12,12 @@ import {
   type LendenActionProfile,
 } from "@/lib/lenden-actions";
 
-type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
-
 const appPath = "/";
 const salesAgentAllowedActions = new Set<LendenActionName>(["markNotificationsRead", "updateProfile"]);
 const financialActions = new Set<LendenActionName>([
   "createPayment",
   "saveLibraryStudent",
-  "setLibraryStudentStatus",
+  "setStudentStatus",
   "saveCourseStudent",
   "createExpense",
   "approveRecord",
@@ -239,8 +238,8 @@ export async function saveLibraryStudentAction(formData: FormData): Promise<Acti
   return invokeLendenAction("saveLibraryStudent", formData);
 }
 
-export async function setLibraryStudentStatusAction(formData: FormData): Promise<ActionResult> {
-  return invokeLendenAction("setLibraryStudentStatus", formData);
+export async function setStudentStatusAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setStudentStatus", formData);
 }
 
 export async function saveCourseStudentAction(formData: FormData): Promise<ActionResult> {

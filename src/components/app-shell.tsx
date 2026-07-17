@@ -61,6 +61,7 @@ import {
   saveReferralAction,
   saveRoomAction,
   respondPaymentTransferAction,
+  setStudentStatusAction,
   settleCashAction,
   updateRecordAction,
   updateProfileAction,
@@ -69,12 +70,11 @@ import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/clie
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, MutationPatch, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateFilterKey, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
 type Tab = AppTab;
 type Language = "en" | "hi";
-type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 type ToastNotice = ActionResult & { id: string };
 type ActionModal = "positive" | "negative" | null;
 type PositiveFlow = BusinessType | "receive_money";
@@ -84,6 +84,7 @@ type MutationRefreshScope = "dashboard" | "bootstrap" | "dashboard-library" | "n
 type MutationRefreshDetail = {
   scope: MutationRefreshScope;
   savingMessageKey: string;
+  patch?: MutationPatch;
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
 type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
@@ -103,7 +104,7 @@ type StudentRecordSource =
 type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "mainCourse" | "skillCourse" }>;
 type CourseStudentRecord = {
   id: string;
-  paymentId: string;
+  paymentId: string | null;
   identityKey: string;
   displayName: string;
   rollNumber: string | null;
@@ -1097,6 +1098,7 @@ const bootstrapRefreshActions = new Set<ClientAction>([
 const libraryRefreshActions = new Set<ClientAction>([
   saveCourseStudentAction,
   saveLibraryStudentAction,
+  setStudentStatusAction,
 ]);
 
 function setDocumentAppBusy(busy: boolean) {
@@ -1139,6 +1141,123 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     scope: "none",
     savingMessageKey: "savingChanges",
   };
+}
+
+function replaceRowById<T extends { id: string }>(rows: T[], row: T, previousId?: string | null) {
+  const withoutPrevious = previousId ? rows.filter((item) => item.id !== previousId) : rows;
+  return withoutPrevious.some((item) => item.id === row.id)
+    ? withoutPrevious.map((item) => item.id === row.id ? row : item)
+    : [row, ...withoutPrevious];
+}
+
+function applyMutationPatch(
+  current: DashboardPayload,
+  patch: MutationPatch,
+  viewerId: string,
+  ownerish: boolean,
+  rangeFrom: string,
+  closingDate: string,
+  dateFilterKey: DateFilterKey,
+): DashboardPayload {
+  if (patch.type === "student") {
+    let payments = current.payments;
+    if (patch.payment) {
+      const approvalDates = [patch.payment.cash_posted_on, patch.payment.online_posted_on]
+        .filter((value): value is string => Boolean(value));
+      const displayDates = dateFilterKey === "transaction" || approvalDates.length === 0
+        ? [patch.payment.payment_date]
+        : approvalDates;
+      const inRange = displayDates.some((date) => date >= rangeFrom && date <= closingDate) ||
+        (isPendingReviewStatus(patch.payment.approval_status) && patch.payment.payment_date >= rangeFrom && patch.payment.payment_date <= closingDate);
+      const visible = ownerish || patch.payment.assigned_profile_id === viewerId;
+      payments = inRange && visible
+        ? replaceRowById(payments, patch.payment)
+        : payments.filter((payment) => payment.id !== patch.payment?.id);
+    }
+    if (patch.studentType === "library") {
+      const incoming = patch.student as LibraryStudent;
+      const existing = current.libraryStudents.find((student) => student.id === incoming.id);
+      const student = existing ? {
+        ...existing,
+        ...incoming,
+        photo_url: incoming.photo_url && !/^https?:\/\//i.test(incoming.photo_url) ? existing.photo_url : incoming.photo_url,
+        aadhar_photo_url: incoming.aadhar_photo_url && !/^https?:\/\//i.test(incoming.aadhar_photo_url) ? existing.aadhar_photo_url : incoming.aadhar_photo_url,
+        aadhar_back_photo_url: incoming.aadhar_back_photo_url && !/^https?:\/\//i.test(incoming.aadhar_back_photo_url) ? existing.aadhar_back_photo_url : incoming.aadhar_back_photo_url,
+      } : incoming;
+      return {
+        ...current,
+        payments,
+        libraryStudents: replaceRowById(
+          current.libraryStudents,
+          student,
+          patch.previousId,
+        ),
+      };
+    }
+    const incoming = patch.student as CourseStudent;
+    const existing = current.courseStudents.find((student) => student.id === incoming.id);
+    const student = existing ? {
+      ...existing,
+      ...incoming,
+      aadhar_photo_url: incoming.aadhar_photo_url && !/^https?:\/\//i.test(incoming.aadhar_photo_url) ? existing.aadhar_photo_url : incoming.aadhar_photo_url,
+      aadhar_back_photo_url: incoming.aadhar_back_photo_url && !/^https?:\/\//i.test(incoming.aadhar_back_photo_url) ? existing.aadhar_back_photo_url : incoming.aadhar_back_photo_url,
+    } : incoming;
+    return {
+      ...current,
+      payments,
+      courseStudents: replaceRowById(current.courseStudents, student, patch.previousId),
+    };
+  }
+
+  const paymentVisible = ownerish ||
+    patch.payment.assigned_profile_id === viewerId ||
+    (patch.movement.status === "pending" && patch.movement.to_profile_id === viewerId);
+  const payments = paymentVisible
+    ? replaceRowById(current.payments, patch.payment)
+    : current.payments.filter((payment) => payment.id !== patch.payment.id);
+  const movements = replaceRowById(current.movements, patch.movement);
+  const oldTransferLedger = current.ledger.filter(
+    (entry) => entry.source_type === "transfer" && entry.source_id === patch.movement.id,
+  );
+  const visibleNewLedger = patch.ledgerEntries.filter(
+    (entry) => ownerish || entry.account_profile_id === viewerId,
+  );
+  const ledger = [
+    ...current.ledger.filter((entry) => !(entry.source_type === "transfer" && entry.source_id === patch.movement.id)),
+    ...visibleNewLedger,
+  ];
+  const changedProfileIds = new Set([
+    ...oldTransferLedger.map((entry) => entry.account_profile_id),
+    ...visibleNewLedger.map((entry) => entry.account_profile_id),
+  ]);
+  const closingSummaries = current.closingSummaries.map((summary) => {
+    if (!changedProfileIds.has(summary.profile_id)) return summary;
+    const oldEntries = oldTransferLedger.filter((entry) => entry.account_profile_id === summary.profile_id);
+    const newEntries = visibleNewLedger.filter((entry) => entry.account_profile_id === summary.profile_id);
+    const oldClosing = oldEntries
+      .filter((entry) => entry.entry_date <= closingDate)
+      .reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    const nextClosing = newEntries
+      .filter((entry) => entry.entry_date <= closingDate)
+      .reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    const oldDay = oldEntries.filter((entry) => entry.entry_date === closingDate);
+    const nextDay = newEntries.filter((entry) => entry.entry_date === closingDate);
+    const oldReceived = oldDay.filter((entry) => numberValue(entry.amount) > 0).reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    const nextReceived = nextDay.filter((entry) => numberValue(entry.amount) > 0).reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    const oldSent = oldDay.filter((entry) => numberValue(entry.amount) < 0).reduce((sum, entry) => sum + Math.abs(numberValue(entry.amount)), 0);
+    const nextSent = nextDay.filter((entry) => numberValue(entry.amount) < 0).reduce((sum, entry) => sum + Math.abs(numberValue(entry.amount)), 0);
+    const oldOpening = oldEntries.filter((entry) => entry.entry_date < closingDate).reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    const nextOpening = newEntries.filter((entry) => entry.entry_date < closingDate).reduce((sum, entry) => sum + numberValue(entry.amount), 0);
+    return {
+      ...summary,
+      opening: summary.opening - oldOpening + nextOpening,
+      received: summary.received - oldReceived + nextReceived,
+      sent: summary.sent - oldSent + nextSent,
+      closing: summary.closing - oldClosing + nextClosing,
+    };
+  });
+
+  return { ...current, payments, movements, ledger, closingSummaries };
 }
 
 function formValidationMessage(form: HTMLFormElement) {
@@ -1250,7 +1369,9 @@ function submitWith(
       clearFormIdempotencyKey(form);
       setNotice(result);
       if (result.ok) {
-        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, { detail: refreshDetail }));
+        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
+          detail: { ...refreshDetail, patch: result.patch },
+        }));
         if (reset) form.reset();
         form.closest("details.history-actions-menu")?.removeAttribute("open");
         onSuccess?.();
@@ -1301,7 +1422,9 @@ function submitAndClose(
       clearFormIdempotencyKey(form);
       setNotice(result);
       if (result.ok) {
-        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, { detail: refreshDetail }));
+        window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
+          detail: { ...refreshDetail, patch: result.patch },
+        }));
         form.reset();
         onSuccess();
       } else {
@@ -1357,7 +1480,7 @@ function paymentPendingCashAmount(payment: Payment) {
 }
 
 function paymentReviewProfileId(payment: Payment) {
-  return paymentCashAmount(payment) > 0 ? payment.current_holder_id ?? payment.collected_by : payment.collected_by;
+  return payment.assigned_profile_id ?? payment.current_holder_id ?? payment.collected_by;
 }
 
 function paymentModeLabel(payment: Payment, t: (key: string) => string) {
@@ -1389,11 +1512,12 @@ function paymentJourneySteps(
   t: (key: string) => string,
 ): TransactionJourneyStep[] {
   const collector = profiles.find((item) => item.id === payment.collected_by);
+  const collectorName = collector?.full_name ?? profileName(profiles, payment.collected_by, t);
   const steps: TransactionJourneyStep[] = [{
     id: `${payment.id}-collected`,
-    person: collector?.full_name ?? profileName(profiles, payment.collected_by, t),
-    action: t("journeyCollected"),
-    role: collector ? profileRoleLabel(collector, t) : null,
+    person: `Collected by ${collectorName}`,
+    action: "",
+    role: null,
     state: "complete",
     timestamp: payment.created_at,
   }];
@@ -1401,15 +1525,16 @@ function paymentJourneySteps(
   transfers.forEach((movement) => {
     const recipientId = movement.responded_by ?? movement.to_profile_id;
     const recipient = profiles.find((item) => item.id === recipientId);
+    const recipientName = recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t);
     steps.push({
       id: movement.id,
-      person: recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t),
-      action: movement.status === "accepted"
-        ? t("journeyAccepted")
+      person: movement.status === "accepted"
+        ? `Transfer request accepted by ${recipientName}`
         : movement.status === "rejected"
-          ? t("journeyRejected")
-          : t("journeyAwaitingAcceptance"),
-      role: recipient ? profileRoleLabel(recipient, t) : null,
+          ? `Transfer request rejected by ${recipientName}`
+          : `Transfer request pending with ${recipientName}`,
+      action: "",
+      role: null,
       state: movement.status === "accepted" ? "complete" : movement.status === "rejected" ? "rejected" : "pending",
       timestamp: movement.responded_at ?? movement.created_at,
     });
@@ -1771,6 +1896,7 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
 function dashboardFromAppData(data: AppData): DashboardPayload {
   return {
     libraryStudents: data.libraryStudents,
+    courseStudents: data.courseStudents,
     studentPayments: data.studentPayments,
     payments: data.payments,
     expenses: data.expenses,
@@ -1976,11 +2102,48 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       await Promise.all(refreshes);
     }
 
+    function applyPatchToCachedRanges(patch: MutationPatch) {
+      const cachedDashboards = queryClient.getQueriesData<DashboardPayload>({
+        queryKey: ["dashboard", cacheScope],
+      });
+      let reconciled = false;
+      cachedDashboards.forEach(([queryKey, current]) => {
+        if (!current) return;
+        const params = new URLSearchParams(String(queryKey[2] ?? ""));
+        const preset = params.get("range") as DateRangePreset | null;
+        const presetRange = rangeForPreset(preset ?? "today");
+        const rangeFrom = params.get("from") ?? presetRange.from;
+        const closingDate = params.get("to") ?? presetRange.to;
+        const cachedDateFilterKey = params.get("dateKey") === "transaction" ? "transaction" : "approval";
+        queryClient.setQueryData<DashboardPayload>(queryKey, applyMutationPatch(
+          current,
+          patch,
+          appData.profile.id,
+          owner || supportMode,
+          rangeFrom,
+          closingDate,
+          cachedDateFilterKey,
+        ));
+        reconciled = true;
+      });
+      return reconciled;
+    }
+
     function commitMutation(event: Event) {
       const detail = (event as CustomEvent<MutationRefreshDetail>).detail ?? {
         scope: "none",
         savingMessageKey: "savingChanges",
       };
+      if (detail.patch && applyPatchToCachedRanges(detail.patch)) {
+        if (detail.patch.type === "student") {
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope], refetchType: "none" }),
+            queryClient.invalidateQueries({ queryKey: ["course-student-history", cacheScope], refetchType: "none" }),
+          ]);
+        }
+        endBusy();
+        return;
+      }
       void refreshCachedData(detail).then(endBusy, endBusy);
     }
 
@@ -1993,7 +2156,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       window.removeEventListener(mutationCommittedEvent, commitMutation);
       setDocumentAppBusy(false);
     };
-  }, [cacheScope, dashboardParams, queryClient]);
+  }, [appData.profile.id, cacheScope, dashboardParams, owner, queryClient, supportMode]);
 
   useEffect(() => {
     async function handlePullRefresh(event: Event) {
@@ -2052,6 +2215,35 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
+    const dispatchRemotePatch = (patch: MutationPatch) => {
+      window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
+        detail: { scope: "none", savingMessageKey: "savingChanges", patch },
+      }));
+    };
+    const reconcileTransferNotification = async (notification: AppNotification) => {
+      if (notification.category !== "transfer") return;
+      const paymentId = typeof notification.metadata?.payment_id === "string" ? notification.metadata.payment_id : null;
+      if (!paymentId) return;
+      try {
+        const result = await fetchJson<{ patch: MutationPatch }>(
+          `/api/businesses/${businessId}/payment-transfers/${encodeURIComponent(paymentId)}`,
+        );
+        dispatchRemotePatch(result.patch);
+      } catch {
+        const assignedProfileId = typeof notification.metadata?.assigned_profile_id === "string"
+          ? notification.metadata.assigned_profile_id
+          : null;
+        if (assignedProfileId && assignedProfileId !== appData.profile.id && !owner && !supportMode) {
+          queryClient.setQueriesData<DashboardPayload>(
+            { queryKey: ["dashboard", cacheScope] },
+            (current) => current ? {
+              ...current,
+              payments: current.payments.filter((payment) => payment.id !== paymentId),
+            } : current,
+          );
+        }
+      }
+    };
     const channel = supabase
       .channel(`app-notifications-${appData.profile.id}`)
       .on(
@@ -2069,6 +2261,37 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             return [notification, ...source.filter((item) => item.id !== notification.id)];
           });
           pushNotice({ ok: true, message: `${notification.title}: ${notification.body}` });
+          void reconcileTransferNotification(notification);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "library_students",
+          filter: `business_id=eq.${businessId}`,
+        },
+        (payload) => {
+          const before = payload.old as Partial<LibraryStudent>;
+          const student = payload.new as LibraryStudent;
+          if (before.active === student.active) return;
+          dispatchRemotePatch({ type: "student", studentType: "library", student });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "course_students",
+          filter: `business_id=eq.${businessId}`,
+        },
+        (payload) => {
+          const before = payload.old as Partial<CourseStudent>;
+          const student = payload.new as CourseStudent;
+          if (before.active === student.active) return;
+          dispatchRemotePatch({ type: "student", studentType: "course", student });
         },
       )
       .subscribe();
@@ -2076,7 +2299,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [appData.notifications, appData.profile.id, pushNotice]);
+  }, [appData.notifications, appData.profile.id, businessId, cacheScope, owner, pushNotice, queryClient, supportMode]);
 
   function setLanguage(nextLanguage: Language) {
     setLanguageState(nextLanguage);
@@ -2642,7 +2865,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 businessId={businessId}
                 cacheScope={cacheScope}
                 students={appData.libraryStudents}
-                payments={appData.studentPayments ?? appData.payments}
+                courseStudentRows={appData.courseStudents}
+                payments={appData.payments}
                 courses={appData.courses}
                 includeLibrary={canViewLibraryStudents}
                 setNotice={pushNotice}
@@ -2718,7 +2942,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
-          payments={appData.studentPayments ?? appData.payments}
+          courseStudents={appData.courseStudents}
           libraryStudents={appData.libraryStudents}
           receiveMoneyProfiles={receiveMoneyProfiles}
           sendMoneyProfiles={sendMoneyProfiles}
@@ -3089,7 +3313,7 @@ function HomeView({
     const myPayments = data.payments.filter((payment) =>
       payment.record_status === "active" &&
       (rangedPaymentSourceIds.has(payment.id) || myPendingPayments.some((pendingPayment) => pendingPayment.id === payment.id)) &&
-      (payment.collected_by === profileId || payment.current_holder_id === profileId),
+      paymentReviewProfileId(payment) === profileId,
     );
     const myExpenses = data.expenses.filter((expense) =>
       expense.record_status === "active" &&
@@ -3741,8 +3965,7 @@ function TransactionsView({
 
     const visibleProfileIds = new Set<string>([profile.id]);
     payments.forEach((payment) => {
-      visibleProfileIds.add(payment.collected_by);
-      if (payment.current_holder_id) visibleProfileIds.add(payment.current_holder_id);
+      visibleProfileIds.add(paymentReviewProfileId(payment));
     });
     expenses.forEach((expense) => visibleProfileIds.add(expense.spent_by));
     if (transactionProfileId !== "all") visibleProfileIds.add(transactionProfileId);
@@ -3813,8 +4036,6 @@ function TransactionsView({
     };
     const collectionStatus = (payment: Payment) => {
       if (payment.approval_status !== "approved") return labelForStatus(payment.approval_status, t);
-      const onlineOnly = paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0;
-      if (onlineOnly && !canUseProfileFilter && payment.collected_by === profile.id) return t("neutralized");
       return labelForStatus(payment.approval_status, t);
     };
     const collectionStatusTone = (payment: Payment) =>
@@ -3823,24 +4044,13 @@ function TransactionsView({
         : payment.approval_status;
     const ownerProfileIds = ownerProfileIdSet(profiles);
     const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
-    const selectedOwnerSelf = owner && selectedUserId === profile.id;
-    const paymentMatchesSelectedProfile = (payment: Payment, linkedTransfers: MoneyMovement[]) => {
-      if (selectedOwnerSelf) {
-        return payment.collected_by === profile.id ||
-          payment.current_holder_id === profile.id ||
-          (paymentOnlineAmount(payment) > 0 && isEffectivelyApprovedPayment(payment, ownerProfileIds)) ||
-          linkedTransfers.some((movement) => movement.from_profile_id === profile.id || movement.to_profile_id === profile.id);
-      }
-      return userMatches(payment.collected_by) ||
-        userMatches(payment.current_holder_id) ||
-        linkedTransfers.some((movement) => userMatches(movement.from_profile_id) || userMatches(movement.to_profile_id));
-    };
+    const paymentMatchesSelectedProfile = (payment: Payment) => userMatches(paymentReviewProfileId(payment));
 
     const paymentRows = currentUserIsSalesAgent ? [] : payments
       .filter((payment) => payment.record_status === "active")
       .flatMap((payment): HistoryRecord[] => {
         const linkedTransfers = paymentTransfers(movements, payment.id);
-        const matchesActivityProfile = paymentMatchesSelectedProfile(payment, linkedTransfers);
+        const matchesActivityProfile = paymentMatchesSelectedProfile(payment);
         const cashImpact = paymentCashAmount(payment);
         const onlineImpact = paymentOnlineAmount(payment);
         const ownerAuthoredPayment = isOwnerProfile(payment.collected_by);
@@ -3850,27 +4060,24 @@ function TransactionsView({
         const pendingOnlineAmount = paymentComponentStatus(payment, "online") === "approved" ? 0 : onlineImpact;
         const pendingAmount = pendingCashAmount + pendingOnlineAmount;
         const hasApprovedComponent = paymentHasApprovedComponent(payment);
-        const cashValueApproved = paymentComponentStatus(payment, "cash") === "approved";
         const paymentStatus = ownerAuthoredPayment ? t("receivedStatus") : collectionStatus(payment);
         const paymentStatusTone = ownerAuthoredPayment ? "approved" : collectionStatusTone(payment);
         const reviewProfileId = paymentReviewProfileId(payment);
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
         const requiredPermission = businessPermissions[payment.business_type];
-        const transferRecipients = cashImpact > 0 && requiredPermission
+        const transferRecipients = requiredPermission
           ? profiles.filter((item) =>
               item.active &&
               item.membership_status === "active" &&
-              item.id !== (payment.current_holder_id ?? payment.collected_by) &&
+              item.id !== reviewProfileId &&
               item.role === "staff" &&
               (permissionsByProfile[item.id] ?? []).includes(requiredPermission),
             )
           : [];
         const canRequestTransfer =
-          (owner || payment.current_holder_id === profile.id) &&
+          (owner || reviewProfileId === profile.id) &&
           (effectivePaymentPending || (owner && effectivePaymentApproved)) &&
-          cashImpact > 0 &&
-          (!cashValueApproved || owner) &&
           !pendingTransfer;
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
         const baseRecord = {
@@ -3881,14 +4088,14 @@ function TransactionsView({
           statusTone: paymentStatusTone,
           modeLabel: paymentModeLabel(payment, t),
           recordStatus: payment.record_status,
-          ownerId: payment.collected_by,
+          ownerId: reviewProfileId,
           description: payment.description ?? "",
           remark: payment.remark ?? "",
           reason: payment.cancel_reason,
           recordType: "payment" as const,
           editDate: payment.payment_date,
           editAmount: numberValue(payment.amount),
-          canEdit: (owner || payment.collected_by === profile.id) && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
+          canEdit: (owner || reviewProfileId === profile.id) && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
           canDelete: owner,
           transferLines: transferSummaryLines(linkedTransfers, profiles, t),
           journey: paymentJourneySteps(payment, linkedTransfers, profiles, t),
@@ -3929,7 +4136,7 @@ function TransactionsView({
             amountTone: onlineAmount > 0 && cashAmount === 0 ? "online-approved" : "positive",
             status: labelForStatus("approved", t),
             statusTone: "approved",
-            meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
             pendingApproval: false,
             canApprove: false,
             approvalBlockedByTransfer: false,
@@ -3938,7 +4145,30 @@ function TransactionsView({
           });
         });
 
-        if (matchesActivityProfile && pendingAmount > 0 && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
+        if (incomingTransferId && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
+          rows.push({
+            ...baseRecord,
+            id: `${payment.id}-transfer-pending`,
+            kind: "collection",
+            filter: "cash_in",
+            date: payment.payment_date,
+            sortAt: pendingTransfer?.created_at ?? payment.created_at,
+            amount: numberValue(payment.amount),
+            cashAmount: cashImpact,
+            onlineAmount: onlineImpact,
+            amountTone: "neutral",
+            status: `Transfer request pending with ${profileName(profiles, pendingTransfer?.to_profile_id, t)}`,
+            statusTone: "pending",
+            meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            pendingApproval: true,
+            canApprove: false,
+            approvalBlockedByTransfer: false,
+            transactionDate: payment.payment_date,
+            approvalDate: undefined,
+          });
+        }
+
+        if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-pending`,
@@ -3982,7 +4212,7 @@ function TransactionsView({
           }
         }
 
-        if (!owner && payment.collected_by === selectedUserId) {
+        if (!owner && reviewProfileId === selectedUserId) {
           const collectorActivityEvents = postingEvents.filter((event) =>
             event.source_type === "payment" &&
             event.source_id === payment.id &&
@@ -4111,6 +4341,8 @@ function TransactionsView({
         return rows;
       });
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
+      // Payment transfers are custody/assignment chain steps, never generic IN/OUT rows.
+      if (movement.payment_id) return [];
       if (movement.status !== "accepted" && movement.status !== "pending") return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
       const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
@@ -5475,7 +5707,6 @@ function libraryStudentWithLatestSubscription(student: LibraryStudent, payments:
     paid_amount: latestPayment.paid_amount ?? student.paid_amount,
     dues_amount: latestPayment.dues_amount ?? student.dues_amount,
     advance_amount: latestPayment.advance_amount ?? student.advance_amount,
-    active: true,
     placeholder: false,
     last_payment_id: latestPayment.id,
     last_payment_date: paymentDate,
@@ -5509,79 +5740,34 @@ function studentRecordSources(courses: Course[], t: (key: string) => string, inc
   ];
 }
 
-function paymentMatchesStudentRecordSource(payment: Payment, source: CourseStudentRecordSource) {
-  if (payment.business_type !== "course" || payment.record_status !== "active") return false;
-  return source.type === "skillCourse"
-    ? payment.skill_course_id === source.course.id
-    : payment.course_id === source.course.id && !payment.skill_course_id;
-}
-
-function courseStudentIdentityKey(payment: Payment) {
-  const rollKey = libraryRollKey(payment.roll_number);
-  if (rollKey) return `roll:${rollKey}`;
-
-  const nameKey = payment.customer_name?.trim().toLowerCase();
-  if (nameKey) return `name:${nameKey}`;
-
-  return `payment:${payment.id}`;
-}
-
-function courseStudentRecordFromPayment(payment: Payment, source: CourseStudentRecordSource, today: string): CourseStudentRecord {
-  const endMs = isoDateUtcMs(payment.end_date);
-  const todayMs = isoDateUtcMs(today);
-  const active = endMs === null || todayMs === null || endMs >= todayMs;
-
+function courseStudentRecordFromStudent(student: CourseStudent, source: CourseStudentRecordSource): CourseStudentRecord {
   return {
-    id: `${source.id}:${courseStudentIdentityKey(payment)}`,
-    paymentId: payment.id,
-    identityKey: courseStudentIdentityKey(payment),
-    displayName: payment.customer_name?.trim() || "",
-    rollNumber: normalizeLibraryRollNumberForView(payment.roll_number),
+    id: student.id,
+    paymentId: student.last_payment_id,
+    identityKey: student.identity_key,
+    displayName: student.student_name?.trim() || "",
+    rollNumber: normalizeLibraryRollNumberForView(student.roll_number),
     courseName: source.course.name,
-    seatNumber: payment.seat_number,
-    startTime: payment.start_time,
-    endTime: payment.end_time,
-    subscriptionStartDate: payment.start_date,
-    subscriptionEndDate: payment.end_date,
-    lastPaymentDate: payment.payment_date,
-    feeAmount: payment.fee_amount,
-    paidAmount: payment.paid_amount,
-    duesAmount: payment.dues_amount,
-    advanceAmount: payment.advance_amount,
-    aadharPhotoUrl: payment.aadhar_photo_url,
-    aadharBackPhotoUrl: payment.aadhar_back_photo_url,
-    active,
+    seatNumber: null,
+    startTime: student.start_time,
+    endTime: student.end_time,
+    subscriptionStartDate: student.subscription_start_date,
+    subscriptionEndDate: student.subscription_end_date,
+    lastPaymentDate: student.updated_at.slice(0, 10),
+    feeAmount: student.fee_amount,
+    paidAmount: student.paid_amount,
+    duesAmount: student.dues_amount,
+    advanceAmount: student.advance_amount,
+    aadharPhotoUrl: student.aadhar_photo_url,
+    aadharBackPhotoUrl: student.aadhar_back_photo_url,
+    active: student.active,
   };
 }
 
-function courseStudentRecordsForSource(payments: Payment[], source: CourseStudentRecordSource, today: string) {
-  const latestPayments = new Map<string, Payment>();
-  const latestAadharFrontPayments = new Map<string, Payment>();
-  const latestAadharBackPayments = new Map<string, Payment>();
-
-  payments
-    .filter((payment) => paymentMatchesStudentRecordSource(payment, source))
-    .forEach((payment) => {
-      const key = courseStudentIdentityKey(payment);
-      const current = latestPayments.get(key);
-      if (!current || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(current)) {
-        latestPayments.set(key, payment);
-      }
-      const currentFront = latestAadharFrontPayments.get(key);
-      if (payment.aadhar_photo_url && (!currentFront || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(currentFront))) {
-        latestAadharFrontPayments.set(key, payment);
-      }
-      const currentBack = latestAadharBackPayments.get(key);
-      if (payment.aadhar_back_photo_url && (!currentBack || libraryPaymentSubscriptionSortKey(payment) > libraryPaymentSubscriptionSortKey(currentBack))) {
-        latestAadharBackPayments.set(key, payment);
-      }
-    });
-
-  return [...latestPayments.entries()].map(([key, payment]) => ({
-    ...courseStudentRecordFromPayment(payment, source, today),
-    aadharPhotoUrl: latestAadharFrontPayments.get(key)?.aadhar_photo_url ?? null,
-    aadharBackPhotoUrl: latestAadharBackPayments.get(key)?.aadhar_back_photo_url ?? null,
-  }));
+function courseStudentRecordsForSource(students: CourseStudent[], source: CourseStudentRecordSource) {
+  return students
+    .filter((student) => student.source_course_id === source.course.id)
+    .map((student) => courseStudentRecordFromStudent(student, source));
 }
 
 function courseStudentDisplayName(record: CourseStudentRecord, t: (key: string) => string) {
@@ -5619,6 +5805,7 @@ function LibraryStudentsView({
   businessId,
   cacheScope,
   students,
+  courseStudentRows,
   payments,
   courses,
   includeLibrary,
@@ -5628,6 +5815,7 @@ function LibraryStudentsView({
   businessId: string;
   cacheScope: string;
   students: LibraryStudent[];
+  courseStudentRows: CourseStudent[];
   payments: Payment[];
   courses: Course[];
   includeLibrary: boolean;
@@ -5641,7 +5829,6 @@ function LibraryStudentsView({
   const [selectedSourceId, setSelectedSourceId] = useState<StudentRecordSource["id"]>("library");
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
-  const [studentInactiveEdit, setStudentInactiveEdit] = useState(false);
   const today = todayIso();
   const sources = useMemo(() => studentRecordSources(courses, t, includeLibrary), [courses, includeLibrary, t]);
   const selectedSource = useMemo(
@@ -5654,8 +5841,8 @@ function LibraryStudentsView({
   const liveStudents = activeStudents.filter((student) => isLibraryStudentLiveNow(student, currentMinute));
   const inactiveStudents = students.filter((student) => !student.active && !student.placeholder);
   const courseStudents = useMemo(
-    () => selectedSource.type === "library" ? [] : courseStudentRecordsForSource(payments, selectedSource, today),
-    [payments, selectedSource, today],
+    () => selectedSource.type === "library" ? [] : courseStudentRecordsForSource(courseStudentRows, selectedSource),
+    [courseStudentRows, selectedSource],
   );
   const activeCourseStudents = courseStudents.filter((record) => record.active);
   const liveCourseStudents = activeCourseStudents.filter((record) => isTimeRangeLiveNow(record.startTime, record.endTime, currentMinute));
@@ -5701,18 +5888,14 @@ function LibraryStudentsView({
     setListMode("active");
     setSelectedId("");
     setEditingStudent(false);
-    setStudentInactiveEdit(false);
   };
   const openStudentDetails = (studentId: string) => {
     setSelectedId(studentId);
     setEditingStudent(false);
-    const libraryStudent = students.find((student) => libraryStudentMatchesSelection(student, studentId));
-    setStudentInactiveEdit(Boolean(libraryStudent && !libraryStudent.active));
   };
   const closeStudentDetails = () => {
     setSelectedId("");
     setEditingStudent(false);
-    setStudentInactiveEdit(false);
   };
   const historyQuery = useQuery({
     queryKey: ["library-student-history", cacheScope, baseSelectedStudent?.id ?? ""],
@@ -5732,15 +5915,22 @@ function LibraryStudentsView({
     () => baseSelectedStudent ? libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments) : null,
     [baseSelectedStudent, historyPayments],
   );
-  const courseHistoryPayments = useMemo(() => {
-    if (!selectedCourseStudent || selectedSource.type === "library") return [];
-    return payments
-      .filter((payment) =>
-        paymentMatchesStudentRecordSource(payment, selectedSource) &&
-        courseStudentIdentityKey(payment) === selectedCourseStudent.identityKey,
-      )
-      .sort((a, b) => libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)));
-  }, [payments, selectedCourseStudent, selectedSource]);
+  const courseHistoryQuery = useQuery({
+    queryKey: ["course-student-history", cacheScope, selectedCourseStudent?.id ?? ""],
+    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/businesses/${businessId}/course-students/${encodeURIComponent(selectedCourseStudent?.id ?? "")}/payments`),
+    enabled: Boolean(selectedCourseStudent?.id),
+    placeholderData: (previousHistory) => previousHistory,
+  });
+  const localCourseHistoryPayments = useMemo(
+    () => selectedCourseStudent
+      ? payments.filter((payment) => payment.course_student_id === selectedCourseStudent.id)
+      : [],
+    [payments, selectedCourseStudent],
+  );
+  const courseHistoryPayments = useMemo(
+    () => mergePaymentHistory(courseHistoryQuery.data?.payments ?? [], localCourseHistoryPayments),
+    [courseHistoryQuery.data?.payments, localCourseHistoryPayments],
+  );
   return (
     <section className="library-students-view">
       <div className="library-student-source-bar">
@@ -5858,7 +6048,8 @@ function LibraryStudentsView({
           })}
           {visibleCourseStudents.map((record) => {
             const displayName = courseStudentDisplayName(record, t);
-            const expiryLabel = subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t);
+            const courseExpired = Boolean(record.subscriptionEndDate && record.subscriptionEndDate < today);
+            const expiryLabel = record.active ? subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t) : t("inactiveStudents");
             const timeRange = displayTimeRange(record.startTime, record.endTime);
             const meta = [
               record.courseName,
@@ -5869,9 +6060,9 @@ function LibraryStudentsView({
             return (
               <article
                 key={record.id}
-                className={`library-student-list-card without-call ${selectedCourseStudent?.id === record.id ? "selected" : ""} ${record.active ? "" : "expired"}`}
+                className={`library-student-list-card without-call ${selectedCourseStudent?.id === record.id ? "selected" : ""} ${courseExpired ? "expired" : ""}`}
               >
-                <span className={`library-expiry-chip library-list-expiry ${record.active ? "" : "expired"}`}>{expiryLabel}</span>
+                <span className={`library-expiry-chip library-list-expiry ${courseExpired ? "expired" : ""}`}>{expiryLabel}</span>
                 <button
                   type="button"
                   onClick={() => openStudentDetails(record.id)}
@@ -5910,7 +6101,6 @@ function LibraryStudentsView({
                   onClick={() => {
                     const nextEditing = !editingStudent;
                     setEditingStudent(nextEditing);
-                    if (nextEditing) setStudentInactiveEdit(!selectedStudent.active);
                   }}
                 >
                   {editingStudent ? <X size={16} /> : <Pencil size={16} />}
@@ -5947,7 +6137,6 @@ function LibraryStudentsView({
                   )}
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
-                  <input type="hidden" name="inactive" value={studentInactiveEdit ? "true" : "false"} />
                   <h3 className="full-span section-title">{t("studentProfile")}</h3>
                   <CompressedImageInput
                     inputName="student_photo"
@@ -5999,16 +6188,6 @@ function LibraryStudentsView({
                     {t("lockerNumber")}
                     <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
                   </label>
-                  <div className="full-span flex justify-end">
-                    <button
-                      className={studentInactiveEdit ? "secondary-button tone-approve" : "secondary-button tone-cancel"}
-                      type="button"
-                      onClick={() => setStudentInactiveEdit((value) => !value)}
-                    >
-                      {studentInactiveEdit ? <UserCheck size={16} /> : <UserX size={16} />}
-                      {studentInactiveEdit ? t("reactivate") : t("markInactive")}
-                    </button>
-                  </div>
                   <div className="full-span flex flex-wrap gap-2">
                     <button className="primary-button" type="submit">
                       {t("save")}
@@ -6019,6 +6198,30 @@ function LibraryStudentsView({
                   </div>
                 </form>
               ) : null}
+
+              <form
+                className="student-status-action-row"
+                onSubmit={(event) => submitAndClose(
+                  event,
+                  setStudentStatusAction,
+                  setNotice,
+                  startTransition,
+                  () => {
+                    setQuery("");
+                    setListMode(selectedStudent.active ? "inactive" : "active");
+                    closeStudentDetails();
+                  },
+                )}
+              >
+                <input type="hidden" name="student_type" value="library" />
+                <input type="hidden" name="id" value={selectedStudent.id} />
+                <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} />
+                <input type="hidden" name="active" value={selectedStudent.active ? "false" : "true"} />
+                <button className={selectedStudent.active ? "secondary-button tone-cancel" : "secondary-button tone-approve"} type="submit">
+                  {selectedStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
+                  {selectedStudent.active ? t("markInactive") : t("reactivate")}
+                </button>
+              </form>
 
               <div className="rounded-lg bg-surface-container-low p-4">
                 <div className="mb-3 flex items-center gap-2">
@@ -6034,7 +6237,7 @@ function LibraryStudentsView({
                   mainCourses={[]}
                   skillCourses={[]}
                   referrals={[]}
-                  payments={payments}
+                  courseStudents={courseStudentRows}
                   libraryStudents={students}
                   initialLibraryStudent={selectedStudent}
                   setNotice={setNotice}
@@ -6102,8 +6305,10 @@ function LibraryStudentsView({
                       <h3>{courseStudentDisplayName(selectedCourseStudent, t)}</h3>
                       <p>{selectedCourseStudent.courseName}</p>
                     </div>
-                    <span className={`library-expiry-chip ${selectedCourseStudent.active ? "" : "expired"}`}>
-                      {subscriptionExpiryStatusLabel(selectedCourseStudent.subscriptionEndDate, today, t)}
+                    <span className={`library-expiry-chip ${selectedCourseStudent.subscriptionEndDate && selectedCourseStudent.subscriptionEndDate < today ? "expired" : ""}`}>
+                      {selectedCourseStudent.active
+                        ? subscriptionExpiryStatusLabel(selectedCourseStudent.subscriptionEndDate, today, t)
+                        : t("inactiveStudents")}
                     </span>
                   </div>
                   <div className="library-student-summary-grid">
@@ -6148,7 +6353,7 @@ function LibraryStudentsView({
                     () => setEditingStudent(false),
                   )}
                 >
-                  <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId} />
+                  <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId ?? ""} />
                   <label>
                     {t("name")}
                     <input name="customer_name" defaultValue={courseStudentDisplayName(selectedCourseStudent, t)} required />
@@ -6194,6 +6399,29 @@ function LibraryStudentsView({
                 </form>
               )}
 
+              <form
+                className="student-status-action-row"
+                onSubmit={(event) => submitAndClose(
+                  event,
+                  setStudentStatusAction,
+                  setNotice,
+                  startTransition,
+                  () => {
+                    setQuery("");
+                    setListMode(selectedCourseStudent.active ? "inactive" : "active");
+                    closeStudentDetails();
+                  },
+                )}
+              >
+                <input type="hidden" name="student_type" value="course" />
+                <input type="hidden" name="id" value={selectedCourseStudent.id} />
+                <input type="hidden" name="active" value={selectedCourseStudent.active ? "false" : "true"} />
+                <button className={selectedCourseStudent.active ? "secondary-button tone-cancel" : "secondary-button tone-approve"} type="submit">
+                  {selectedCourseStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
+                  {selectedCourseStudent.active ? t("markInactive") : t("reactivate")}
+                </button>
+              </form>
+
               <div className="rounded-lg bg-surface-container-low p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <Plus size={16} />
@@ -6206,7 +6434,7 @@ function LibraryStudentsView({
                   mainCourses={courses.filter((course) => course.kind === "main")}
                   skillCourses={courses.filter((course) => course.kind === "skill")}
                   referrals={[]}
-                  payments={payments}
+                  courseStudents={courseStudentRows}
                   libraryStudents={students}
                   initialCourseStudent={selectedCourseStudent}
                   initialCourseSource={selectedSource.type === "library" ? null : selectedSource}
@@ -6257,7 +6485,7 @@ function ActionSheet({
   mainCourses,
   skillCourses,
   referrals,
-  payments,
+  courseStudents,
   libraryStudents,
   receiveMoneyProfiles,
   sendMoneyProfiles,
@@ -6278,7 +6506,7 @@ function ActionSheet({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
-  payments: Payment[];
+  courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
   receiveMoneyProfiles: Profile[];
   sendMoneyProfiles: Profile[];
@@ -6354,7 +6582,7 @@ function ActionSheet({
               mainCourses={mainCourses}
               skillCourses={skillCourses}
               referrals={referrals}
-              payments={payments}
+              courseStudents={courseStudents}
               libraryStudents={libraryStudents}
               setNotice={setNotice}
               startTransition={startTransition}
@@ -6428,7 +6656,7 @@ function PaymentForm({
   mainCourses,
   skillCourses,
   referrals,
-  payments,
+  courseStudents,
   libraryStudents,
   initialLibraryStudent,
   initialCourseStudent,
@@ -6442,7 +6670,7 @@ function PaymentForm({
   mainCourses: Course[];
   skillCourses: Course[];
   referrals: Pick<ReferralCode, "code">[];
-  payments: Payment[];
+  courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
   initialLibraryStudent?: LibraryStudent | null;
   initialCourseStudent?: CourseStudentRecord | null;
@@ -6521,8 +6749,8 @@ function PaymentForm({
     };
   }, [courseNeedsSkill, selectedMainCourse, selectedSkillCourse, t]);
   const courseStudentRecords = useMemo(
-    () => selectedCourseSource ? courseStudentRecordsForSource(payments, selectedCourseSource, today) : [],
-    [payments, selectedCourseSource, today],
+    () => selectedCourseSource ? courseStudentRecordsForSource(courseStudents, selectedCourseSource) : [],
+    [courseStudents, selectedCourseSource],
   );
   const sortedCourseStudentRecords = useMemo(
     () => [...courseStudentRecords].sort((a, b) => compareCourseStudentRecordsByExpiry(a, b, t)),
@@ -6749,7 +6977,7 @@ function PaymentForm({
 
   function nextCourseRollNumberForSource(source: CourseStudentRecordSource | null) {
     if (!source) return "";
-    return nextCourseRollNumber(courseStudentRecordsForSource(payments, source, today));
+    return nextCourseRollNumber(courseStudentRecordsForSource(courseStudents, source));
   }
 
   function resetCourseFieldsForNewStudent(source: CourseStudentRecordSource | null) {

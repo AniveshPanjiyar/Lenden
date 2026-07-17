@@ -63,7 +63,6 @@ export function buildDailyPostingEvents({
 }) {
   const ownerProfiles = profiles.filter((profile) => profile.membership_role === "primary_owner" || profile.membership_role === "co_owner");
   const ownerProfileIds = new Set(ownerProfiles.map((profile) => profile.id));
-  const primaryOwnerId = ownerProfiles.find((profile) => profile.membership_role === "primary_owner")?.id ?? ownerProfiles[0]?.id ?? null;
   const events: DailyPostingEvent[] = [];
 
   payments.forEach((payment) => {
@@ -73,7 +72,7 @@ export function buildDailyPostingEvents({
 
     if (cashAmount > 0 && paymentValueApproved(payment, "cash", ownerProfileIds)) {
       const ledgerEntry = recordLedgerEntry(ledger, "payment", payment.id, "in");
-      const profileId = ledgerEntry?.account_profile_id ?? payment.current_holder_id ?? payment.collected_by;
+      const profileId = payment.assigned_profile_id ?? payment.current_holder_id ?? payment.collected_by;
       events.push({
         id: `payment:${payment.id}:cash`,
         source_type: "payment",
@@ -93,14 +92,13 @@ export function buildDailyPostingEvents({
     }
 
     if (onlineAmount > 0 && paymentValueApproved(payment, "online", ownerProfileIds)) {
-      const collectorIsOwner = ownerProfileIds.has(payment.collected_by);
       events.push({
         id: `payment:${payment.id}:online`,
         source_type: "payment",
         source_id: payment.id,
         component: "online",
-        profile_id: collectorIsOwner ? payment.collected_by : primaryOwnerId ?? payment.collected_by,
-        counterparty_profile_id: collectorIsOwner ? null : payment.collected_by,
+        profile_id: payment.assigned_profile_id ?? payment.collected_by,
+        counterparty_profile_id: null,
         direction: "in",
         amount: onlineAmount,
         cash_amount: 0,
@@ -137,6 +135,7 @@ export function buildDailyPostingEvents({
   });
 
   movements.forEach((movement) => {
+    if (movement.payment_id) return;
     if (movement.status !== "accepted" || !movement.to_profile_id) return;
     const amount = numberValue(movement.amount);
     const transactionDate = dateIsoInTimeZone(movement.created_at, timezone);
