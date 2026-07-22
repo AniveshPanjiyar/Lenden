@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import OwnerPasswordResetForm from "../../owner-password-reset-form";
 import { loadAdminBusiness } from "../../admin-data";
 import OwnershipTransferForm from "./ownership-transfer-form";
 
@@ -31,8 +30,8 @@ export default async function BusinessOwnershipPage({ params }: { params: Promis
       </section>
 
       <section className="admin-content-card">
-        <div className="admin-section-heading"><p className="eyebrow">Login recovery</p><h2>Owner password</h2><p>Use only when the Owner cannot access their global Lenden login.</p></div>
-        {currentOwner ? <OwnerPasswordResetForm businessId={business.id} ownerName={currentOwner.profile.fullName} profileId={currentOwner.profileId} /> : <div className="admin-empty-state compact"><p>Assign an active Owner before generating a password.</p></div>}
+        <div className="admin-section-heading"><p className="eyebrow">Login security</p><h2>User-owned credentials</h2><p>Owners control their own Google identity or password. Platform administrators cannot generate or reset credentials.</p></div>
+        <div className="admin-info-callout"><strong>Recovery path</strong><p>The Owner should use “Forgot password” on the Lenden sign-in page. Business access and login recovery remain separate.</p></div>
       </section>
 
       <section className="admin-content-card span-2">

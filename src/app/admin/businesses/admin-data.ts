@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { createAdminClient } from "@/lib/supabase/server";
+import { invitationState } from "@/lib/invitations";
 import { requireIdentity } from "@/lib/tenancy";
 import type {
   BusinessRole,
@@ -48,6 +49,19 @@ export type AdminBusinessDetail = AdminBusinessSummary & {
   updatedAt: string;
   suspendedAt: string | null;
   members: AdminBusinessMember[];
+  invitations: AdminBusinessInvitation[];
+};
+
+export type AdminBusinessInvitation = {
+  id: string;
+  businessId: string;
+  email: string;
+  role: Exclude<BusinessRole, "primary_owner">;
+  permissions: string[];
+  expiresAt: string;
+  deliveryStatus: "pending" | "sent" | "failed";
+  deliveryError: string | null;
+  expired: boolean;
 };
 
 export type AdminAuditEvent = {
@@ -68,6 +82,15 @@ export type AdminSupportSession = {
   expiresAt: string;
   endedAt: string | null;
   admin: Pick<AdminProfile, "id" | "fullName" | "email"> | null;
+};
+
+export type AdminBusinessRequest = {
+  id: string;
+  requestedName: string;
+  requestedModules: BusinessType[];
+  note: string | null;
+  createdAt: string;
+  requester: Pick<AdminProfile, "id" | "fullName" | "email">;
 };
 
 type BusinessRow = {
@@ -195,7 +218,7 @@ export const loadAdminBusinessDirectory = cache(async (): Promise<AdminBusinessS
 export const loadAdminBusiness = cache(async (businessId: string): Promise<AdminBusinessDetail | null> => {
   await requirePlatformAdmin();
   const admin = createAdminClient();
-  const [businessResult, membershipResult, moduleResult] = await Promise.all([
+  const [businessResult, membershipResult, moduleResult, invitationResult] = await Promise.all([
     admin
       .from("businesses")
       .select("id,name,slug,status,timezone,currency,created_at,updated_at,suspended_at")
@@ -210,11 +233,18 @@ export const loadAdminBusiness = cache(async (businessId: string): Promise<Admin
       .from("business_modules")
       .select("business_id,module,enabled")
       .eq("business_id", businessId),
+    admin
+      .from("business_invitations")
+      .select("id,business_id,email,intended_role,permissions,expires_at,delivery_status,delivery_error")
+      .eq("business_id", businessId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
   ]);
   if (businessResult.error) throw new Error(businessResult.error.message);
   if (!businessResult.data) return null;
   if (membershipResult.error) throw new Error(membershipResult.error.message);
   if (moduleResult.error) throw new Error(moduleResult.error.message);
+  if (invitationResult.error) throw new Error(invitationResult.error.message);
 
   const business = businessResult.data as BusinessRow;
   const memberships = (membershipResult.data ?? []) as MembershipRow[];
@@ -241,6 +271,17 @@ export const loadAdminBusiness = cache(async (businessId: string): Promise<Admin
     ...summary,
     updatedAt: business.updated_at,
     suspendedAt: business.suspended_at,
+    invitations: (invitationResult.data ?? []).map((invitation) => ({
+      id: invitation.id,
+      businessId: invitation.business_id,
+      email: invitation.email,
+      role: invitation.intended_role as Exclude<BusinessRole, "primary_owner">,
+      permissions: invitation.permissions ?? [],
+      expiresAt: invitation.expires_at,
+      deliveryStatus: invitation.delivery_status as "pending" | "sent" | "failed",
+      deliveryError: invitation.delivery_error,
+      expired: invitationState({ status: "pending", expires_at: invitation.expires_at }) === "expired",
+    })),
     members: memberships.flatMap((membership) => {
       const profile = profiles.get(membership.profile_id);
       return profile
@@ -322,4 +363,28 @@ export const loadAdminSupportSessions = cache(async (businessId: string): Promis
     endedAt: row.ended_at,
     admin: profiles.get(row.admin_profile_id) ?? null,
   }));
+});
+
+export const loadPendingBusinessRequests = cache(async (): Promise<AdminBusinessRequest[]> => {
+  await requirePlatformAdmin();
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("business_creation_requests")
+    .select("id,requested_by,requested_name,requested_modules,note,created_at")
+    .eq("status", "pending")
+    .order("created_at");
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id: string; requested_by: string; requested_name: string; requested_modules: BusinessType[]; note: string | null; created_at: string }>;
+  const profiles = await loadProfiles(rows.map((row) => row.requested_by));
+  return rows.flatMap((row) => {
+    const requester = profiles.get(row.requested_by);
+    return requester ? [{
+      id: row.id,
+      requestedName: row.requested_name,
+      requestedModules: row.requested_modules,
+      note: row.note,
+      createdAt: row.created_at,
+      requester: { id: requester.id, fullName: requester.fullName, email: requester.email },
+    }] : [];
+  });
 });

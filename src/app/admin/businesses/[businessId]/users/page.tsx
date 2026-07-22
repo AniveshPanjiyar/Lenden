@@ -11,5 +11,5 @@ export default async function BusinessUsersPage({ params }: { params: Promise<{ 
     const roleOrder = { primary_owner: 0, co_owner: 1, staff: 2, sales_agent: 3 };
     return roleOrder[left.role] - roleOrder[right.role] || left.profile.fullName.localeCompare(right.profile.fullName);
   });
-  return <BusinessUsersClient businessId={business.id} members={members} />;
+  return <BusinessUsersClient businessId={business.id} members={members} invitations={business.invitations} />;
 }

@@ -3,6 +3,8 @@ export type PlatformRole = "user" | "platform_admin";
 export type BusinessRole = "primary_owner" | "co_owner" | "staff" | "sales_agent";
 export type BusinessStatus = "active" | "suspended";
 export type MembershipStatus = "active" | "suspended";
+export type BusinessInvitationState = "pending" | "accepted" | "declined" | "revoked" | "expired";
+export type BusinessCreationRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 export type BusinessType = "guest_house" | "library" | "course" | "general";
 export type PaymentMode = "cash" | "online" | "mixed";
 export type ApprovalStatus =
@@ -46,7 +48,40 @@ export type BusinessMembership = {
   profile_id: string;
   role: BusinessRole;
   status: MembershipStatus;
+  invited_at?: string | null;
   joined_at: string | null;
+  suspended_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type BusinessInvitation = {
+  id: string;
+  business_id: string;
+  email: string;
+  intended_role: Exclude<BusinessRole, "primary_owner">;
+  permissions: string[];
+  state: BusinessInvitationState;
+  expires_at: string;
+  delivery_status: "pending" | "sent" | "failed";
+  delivery_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BusinessCreationRequest = {
+  id: string;
+  requested_by: string;
+  requested_name: string;
+  requested_modules: BusinessType[];
+  note: string | null;
+  status: BusinessCreationRequestStatus;
+  reviewed_by: string | null;
+  review_reason: string | null;
+  reviewed_at: string | null;
+  created_business_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type BusinessContext = {

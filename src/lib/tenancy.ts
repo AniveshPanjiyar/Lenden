@@ -66,6 +66,9 @@ export async function requireIdentity(options: { allowPasswordChange?: boolean }
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) redirect("/login");
+  if (!user.email || !user.email_confirmed_at) {
+    redirect("/login?error=Verify%20your%20email%20before%20opening%20Lenden.");
+  }
 
   const { data, error } = await supabase
     .from("profiles")

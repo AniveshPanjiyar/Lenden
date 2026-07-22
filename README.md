@@ -14,12 +14,12 @@ Payment collection, transfer, settlement, and daily closing app for Guest House,
 
 Lenden runs as a Next.js backend-for-frontend over Supabase. There is no active Supabase Edge Function in the request path.
 
-- Entry routing: `src/app/page.tsx` sends every business member, including a platform administrator who owns a business, to their last active `/b/[businessSlug]`; administrators without a membership go to `/admin/businesses`.
+- Entry routing: `src/app/page.tsx` sends members to their last active `/b/[businessSlug]`; users without active access go to the global `/account` hub, and platform administrators without a membership go to `/admin/businesses`.
 - Business reads: `/api/businesses/[businessId]/bootstrap` and `/api/businesses/[businessId]/dashboard` validate membership/support access and include the business in every React Query cache key.
 - Mutations: forms call Server Actions in `src/app/actions.ts`; those actions resolve the business from the authenticated request URL, verify membership/support access, and use an authenticated tenant client so RLS remains active.
 - Auth/session refresh: `src/proxy.ts` runs the Supabase cookie refresh helper before application routes.
 - Database/storage: every operational row has `business_id`; tenant files use `<business_id>/<entity>/<record_id>/...`; storage and table policies enforce the same boundary.
-- Elevated client: the service role is limited to direct account provisioning/recovery, initial setup, and audited platform operations.
+- Elevated client: the service role is limited to exact-email identity resolution, invitation delivery metadata, initial setup, and audited platform operations. Business Owners never create or reset another user&apos;s credentials.
 
 ## Local Setup
 
@@ -29,9 +29,12 @@ Create `.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=https://zxewmhlgrjdiumoiaina.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_j7srvJgYdT9dEyqDwOW9mQ_-GSZDCfl
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+APP_BASE_URL=http://localhost:4000
+RESEND_API_KEY=your_resend_api_key
+RESEND_FROM_EMAIL=Lenden <access@your-verified-domain.example>
 ```
 
-The service role key is required only on the Next.js server for first-owner setup, direct account provisioning/recovery, and platform operations. Financial mutations use the signed-in user's authenticated Supabase client and remain subject to RLS.
+The service role key and Resend key are server-only. Configure Google in Supabase Auth and allow `/auth/callback` for local and production URLs. Financial mutations use the signed-in user&apos;s authenticated Supabase client and remain subject to RLS.
 
 Run locally:
 
@@ -55,14 +58,16 @@ This app no longer ships a Supabase Edge Function. Keep mutation logic in Next.j
 
 ## First Owner
 
-With the service role key set, open `/setup` and create the first platform administrator and business Owner. Platform administrators create tenants and generate Owner credentials at `/admin/businesses`; Owners manage modules, credentials, and ownership, while Managers can manage staff and sales-agent access.
+With the service role key set, `/setup` remains a deployment-only bootstrap for the first platform administrator. After bootstrap, every user signs up with email/password or Google. Platform administrators approve business requests or assign a registered account as the initial Owner; Owners and Managers grant business-scoped access by email without managing credentials.
 
 ## Implemented Workflows
 
-- Email/password login, no public signup screen
+- Email/password and Google signup/login, email confirmation, and self-service password recovery
+- Global Account hub for personal security, cross-business access, invitations, and business requests
 - Global platform-admin access plus per-business Owner, Manager, Staff, and Sales Agent roles
 - Audited 30-minute configuration-only support sessions that reject financial mutations
-- Direct temporary-password provisioning, owner-managed member password resets, and forced password replacement
+- Exact-email access grants for registered users and 30-day Resend invitations for unregistered emails
+- User-owned passwords; legacy forced-password replacement remains only for already provisioned accounts
 - Atomic ownership transfer and audited platform recovery
 - Business payment forms for room booking, library subscription, course payment, and general payment
 - Optional payment/expense photo upload to Supabase Storage

@@ -2674,6 +2674,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               </button>
             ))}
           </nav>
+          <div className="px-4">
+            <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/account">
+              <UserCheck size={20} />
+              <span>Account & businesses</span>
+            </Link>
+          </div>
           {(owner || supportMode) ? (
             <div className="px-4">
               <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={`/b/${appData.businessContext.business.slug}/manage`}>

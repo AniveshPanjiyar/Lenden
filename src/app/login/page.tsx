@@ -1,4 +1,5 @@
 import { Landmark } from "lucide-react";
+import { signInWithGoogleAction } from "@/app/auth/actions";
 import { LoginForm } from "@/app/login/login-form";
 
 export default async function LoginPage({
@@ -17,10 +18,15 @@ export default async function LoginPage({
           </span>
           <div>
             <p className="eyebrow">Lenden</p>
-            <h1>Payment custody login</h1>
+            <h1>Sign in to Lenden</h1>
           </div>
         </div>
         {params.error ? <p className="form-error">{decodeURIComponent(params.error)}</p> : null}
+        <form action={signInWithGoogleAction}>
+          {params.next ? <input type="hidden" name="next" value={params.next} /> : null}
+          <button className="google-auth-button" type="submit"><span aria-hidden="true">G</span> Continue with Google</button>
+        </form>
+        <div className="auth-divider"><span>or use email</span></div>
         <LoginForm nextPath={params.next} />
       </section>
     </main>

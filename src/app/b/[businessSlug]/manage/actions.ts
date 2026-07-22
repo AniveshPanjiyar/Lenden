@@ -2,18 +2,32 @@
 
 import { revalidatePath } from "next/cache";
 import {
-  changeUserPasswordAction as changeUserPasswordAppAction,
-  createStaffAction as createStaffAppAction,
   saveStaffPermissionsAction as saveStaffPermissionsAppAction,
 } from "@/app/actions";
+import { appBaseUrl } from "@/lib/auth-helpers";
+import {
+  createOrRegenerateBusinessInvitation,
+  regenerateBusinessInvitation,
+  resolveExactBusinessEmail,
+  revokeBusinessInvitation,
+} from "@/lib/business-access-service";
+import { sendBusinessAccessGrantedEmail } from "@/lib/email";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
-import { canManageBusinessMemberRole, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
-import type { BusinessType, MembershipStatus } from "@/lib/types";
+import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
+import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
 
 export type BusinessUserActionState = {
   ok: boolean | null;
   message: string;
+  lookup?: "registered" | "invite" | "suspended" | "already_active";
+  email?: string;
+  fullName?: string;
+  existingRole?: BusinessRole;
+  inviteUrl?: string;
 };
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const staffPermissions = new Set(["collect_guest_house", "collect_library", "collect_course", "collect_general", "add_expense"]);
 
 function read(formData: FormData, key: string) {
   const entry = formData.get(key);
@@ -132,7 +146,103 @@ export async function createBusinessUserAction(
   formData: FormData,
 ): Promise<BusinessUserActionState> {
   void previousState;
-  return runBusinessUserAction(createStaffAppAction, formData);
+  try {
+    const { identity, context } = await resolveBusinessContextFromRequest();
+    const email = read(formData, "email").toLowerCase();
+    const requestedRole = read(formData, "role");
+    const role: Exclude<BusinessRole, "primary_owner"> = requestedRole === "owner" || requestedRole === "co_owner"
+      ? "co_owner"
+      : requestedRole === "sales_agent" ? "sales_agent" : "staff";
+    const permissions = role === "staff" ? [...new Set(formData.getAll("permissions").filter(
+      (permission): permission is string => typeof permission === "string" && staffPermissions.has(permission),
+    ))] : [];
+    if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
+    if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
+      return { ok: false, message: "You cannot assign this business role." };
+    }
+    const resolution = await resolveExactBusinessEmail(context.business.id, email);
+    if (resolution.profile) {
+      if (!resolution.profile.active || resolution.profile.accountStatus !== "active") {
+        return { ok: false, message: "This Lenden account is globally inactive. Contact a platform administrator." };
+      }
+      if (resolution.membership?.role === "primary_owner") return { ok: false, message: "This user is already the business Owner." };
+      if (context.accessMode === "member" && context.membership?.role === "co_owner" && resolution.membership?.role === "co_owner") {
+        return { ok: false, message: "Managers cannot change another Manager." };
+      }
+      const client = await createClient({ businessId: context.business.id });
+      const { error } = await client.rpc("grant_business_access", {
+        target_business_id: context.business.id,
+        target_profile_id: resolution.profile.id,
+        target_role: role,
+        target_permissions: permissions,
+      });
+      if (error) throw new Error(error.message);
+      const baseUrl = await appBaseUrl();
+      const delivery = await sendBusinessAccessGrantedEmail({
+        recipientEmail: email,
+        businessId: context.business.id,
+        businessName: context.business.name,
+        roleLabel: role === "co_owner" ? "Manager" : role === "sales_agent" ? "Sales Agent" : "Staff",
+        businessUrl: `${baseUrl}/b/${context.business.slug}`,
+        generation: new Date().toISOString().slice(0, 16),
+      });
+      revalidatePath(`/b/${context.business.slug}`);
+      revalidatePath(`/b/${context.business.slug}/manage`);
+      revalidatePath("/account");
+      const accessVerb = resolution.membership?.status === "active" ? "has updated business access" : "now has access";
+      return {
+        ok: true,
+        message: delivery.ok
+          ? `${resolution.profile.fullName} ${accessVerb}. Their password was not changed.`
+          : `${resolution.profile.fullName} ${accessVerb}. Email delivery failed, but their Account page will show the business.`,
+      };
+    }
+
+    const invitation = await createOrRegenerateBusinessInvitation({
+      businessId: context.business.id,
+      businessName: context.business.name,
+      email,
+      role,
+      permissions,
+      actorId: identity.id,
+      actorName: identity.full_name,
+    });
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return {
+      ok: true,
+      message: invitation.delivery.ok
+        ? `Invitation sent to ${email}. It expires in 30 days.`
+        : `Invitation saved, but email could not be sent: ${invitation.delivery.error}`,
+      inviteUrl: invitation.invitationUrl,
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not grant business access." };
+  }
+}
+
+export async function resolveBusinessUserEmailAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  try {
+    const { context } = await resolveBusinessContextFromRequest();
+    if (context.accessMode !== "support" && !isBusinessOwner(context.membership?.role)) {
+      return { ok: false, message: "Only the Owner or a Manager can add business users." };
+    }
+    const email = read(formData, "email").toLowerCase();
+    if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
+    const resolution = await resolveExactBusinessEmail(context.business.id, email);
+    if (!resolution.profile) return { ok: true, message: "No Lenden account exists yet. An invitation will be sent.", lookup: "invite", email };
+    if (context.accessMode === "member" && context.membership?.role === "co_owner" && resolution.membership?.role === "co_owner") {
+      return { ok: false, message: "Managers can manage Staff and Sales Agents only." };
+    }
+    if (resolution.membership?.status === "active") return { ok: true, message: resolution.membership.role === "primary_owner" ? `${resolution.profile.fullName} is the protected business Owner.` : `${resolution.profile.fullName} already has active access. Confirm below to change their role or starting permissions.`, lookup: "already_active", email, fullName: resolution.profile.fullName, existingRole: resolution.membership.role };
+    if (resolution.membership?.status === "suspended") return { ok: true, message: `${resolution.profile.fullName} previously had access. Confirming will reactivate it.`, lookup: "suspended", email, fullName: resolution.profile.fullName, existingRole: resolution.membership.role };
+    return { ok: true, message: `Registered account found for ${resolution.profile.fullName}.`, lookup: "registered", email, fullName: resolution.profile.fullName };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not check this email." };
+  }
 }
 
 export async function saveBusinessUserPermissionsAction(
@@ -143,12 +253,42 @@ export async function saveBusinessUserPermissionsAction(
   return runBusinessUserAction(saveStaffPermissionsAppAction, formData);
 }
 
-export async function resetBusinessUserPasswordAction(
+export async function resendBusinessInvitationAction(
   previousState: BusinessUserActionState,
   formData: FormData,
 ): Promise<BusinessUserActionState> {
   void previousState;
-  return runBusinessUserAction(changeUserPasswordAppAction, formData);
+  try {
+    const { identity, context } = await resolveBusinessContextFromRequest();
+    const invitationId = read(formData, "invitation_id");
+    const admin = createAdminClient();
+    const { data: invitation } = await admin.from("business_invitations").select("intended_role").eq("id", invitationId).eq("business_id", context.business.id).maybeSingle();
+    if (!invitation || !canManageBusinessMemberRole(context.membership?.role, invitation.intended_role, context.accessMode)) throw new Error("You cannot resend this invitation.");
+    const sent = await regenerateBusinessInvitation({ invitationId, businessId: context.business.id, businessName: context.business.name, actorId: identity.id, actorName: identity.full_name });
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return { ok: true, message: sent.delivery.ok ? "Invitation regenerated and sent." : `New link created, but email failed: ${sent.delivery.error}`, inviteUrl: sent.invitationUrl };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not resend invitation." };
+  }
+}
+
+export async function revokeBusinessInvitationAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  try {
+    const { identity, context } = await resolveBusinessContextFromRequest();
+    const invitationId = read(formData, "invitation_id");
+    const admin = createAdminClient();
+    const { data: invitation } = await admin.from("business_invitations").select("intended_role").eq("id", invitationId).eq("business_id", context.business.id).maybeSingle();
+    if (!invitation || !canManageBusinessMemberRole(context.membership?.role, invitation.intended_role, context.accessMode)) throw new Error("You cannot revoke this invitation.");
+    await revokeBusinessInvitation({ invitationId, businessId: context.business.id, actorId: identity.id });
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return { ok: true, message: "Invitation revoked." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not revoke invitation." };
+  }
 }
 
 export async function setBusinessMemberStatusAction(

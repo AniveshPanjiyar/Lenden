@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { invitationState } from "@/lib/invitations";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContext } from "@/lib/tenancy";
 import type { BusinessMembership, Profile } from "@/lib/types";
 import {
@@ -11,18 +12,20 @@ import { OwnershipTransferForm } from "./ownership-transfer-form";
 
 export default async function BusinessManagePage({ params }: { params: Promise<{ businessSlug: string }> }) {
   const { businessSlug } = await params;
-  const { identity, context } = await resolveBusinessContext({ slug: businessSlug });
+  const { context } = await resolveBusinessContext({ slug: businessSlug });
   if (context.accessMode !== "support" && !isBusinessOwner(context.membership?.role)) {
     redirect(`/b/${businessSlug}`);
   }
 
   const client = await createClient({ businessId: context.business.id });
-  const [{ data: memberships }, { data: profiles }, { data: modules }, { data: memberPermissions }] = await Promise.all([
+  const [{ data: memberships }, { data: profiles }, { data: modules }, { data: memberPermissions }, { data: invitations, error: invitationError }] = await Promise.all([
     client.from("business_memberships").select("id,business_id,profile_id,role,status,joined_at").eq("business_id", context.business.id).order("created_at"),
     client.from("profiles").select("id,email,full_name,avatar_url,platform_role,account_status,must_change_password,last_business_id,active").order("full_name"),
     client.from("business_modules").select("module,enabled").eq("business_id", context.business.id),
     client.from("business_member_permissions").select("membership_id,permission"),
+    createAdminClient().from("business_invitations").select("id,email,intended_role,permissions,status,expires_at,delivery_status,delivery_error,updated_at").eq("business_id", context.business.id).eq("status", "pending").order("created_at", { ascending: false }),
   ]);
+  if (invitationError) throw new Error(invitationError.message);
   const profileMap = new Map(((profiles ?? []) as Array<Pick<Profile, "id" | "full_name" | "email" | "active">>).map((profile) => [profile.id, profile]));
   const memberRows = (memberships ?? []) as BusinessMembership[];
   const managers = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
@@ -44,13 +47,6 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
       status: membership.status,
       profileActive: member?.active ?? false,
       canChangeStatus: canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode),
-      canResetPassword:
-        context.accessMode === "member" &&
-        isPrimaryOwner(context.membership?.role) &&
-        membership.profile_id !== identity.id &&
-        membership.role !== "primary_owner" &&
-        membership.status === "active" &&
-        Boolean(member?.active),
       permissions: permissionsByMembership[membership.id] ?? [],
     };
   });
@@ -68,6 +64,16 @@ export default async function BusinessManagePage({ params }: { params: Promise<{
 
       <BusinessUsersSettings
         members={businessUsers}
+        invitations={(invitations ?? []).map((invitation) => ({
+          id: invitation.id,
+          email: invitation.email,
+          role: invitation.intended_role,
+          permissions: invitation.permissions ?? [],
+          state: invitationState(invitation) === "expired" ? "expired" as const : "pending" as const,
+          expiresAt: invitation.expires_at,
+          deliveryStatus: invitation.delivery_status,
+          deliveryError: invitation.delivery_error,
+        }))}
         canCreateManager={context.accessMode === "member" && isPrimaryOwner(context.membership?.role)}
       />
 

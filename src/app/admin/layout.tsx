@@ -16,9 +16,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </Link>
         <nav aria-label="Platform admin">
           <Link href="/admin/businesses">Businesses</Link>
+          <Link href="/admin/businesses/requests">Requests</Link>
         </nav>
         <div className="platform-admin-account">
-          <span>{profile.full_name}</span>
+          <Link href="/account">{profile.full_name}</Link>
           <form action={logoutAction}><button className="admin-link-button" type="submit">Sign out</button></form>
         </div>
       </header>

@@ -1,6 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { appBaseUrl } from "@/lib/auth-helpers";
+import { createOrRegenerateBusinessInvitation, regenerateBusinessInvitation, resolveExactBusinessEmail, revokeBusinessInvitation } from "@/lib/business-access-service";
+import { sendBusinessAccessGrantedEmail } from "@/lib/email";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import type { BusinessRole, BusinessStatus, BusinessType, MembershipStatus } from "@/lib/types";
 import { requirePlatformAdmin } from "./admin-data";
@@ -10,8 +13,8 @@ export type AdminActionState = {
   message: string;
   fieldErrors?: Record<string, string>;
   entityId?: string;
-  temporaryPassword?: string;
   href?: string;
+  inviteUrl?: string;
 };
 
 const BUSINESS_MODULES: BusinessType[] = ["library", "guest_house", "course", "general"];
@@ -34,12 +37,6 @@ function value(formData: FormData, key: string) {
 
 function slugify(input: string) {
   return input.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-function generatedTemporaryPassword() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
-  const bytes = crypto.getRandomValues(new Uint8Array(18));
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
 function actionError(error: unknown, fallback: string): AdminActionState {
@@ -88,18 +85,11 @@ async function lookupBusiness(businessId: string) {
   return data as { id: string; name: string; slug: string; status: BusinessStatus };
 }
 
-async function deleteNewAuthAccount(profileId: string | null) {
-  if (!profileId) return;
-  const admin = createAdminClient();
-  await admin.auth.admin.deleteUser(profileId);
-}
-
 export async function createBusinessAction(
   _previousState: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
   let createdBusinessId: string | null = null;
-  let createdAuthProfileId: string | null = null;
 
   try {
     const { user } = await requirePlatformAdmin();
@@ -107,7 +97,6 @@ export async function createBusinessAction(
     const slug = slugify(value(formData, "slug") || name);
     const timezone = value(formData, "timezone") || "Asia/Kolkata";
     const currency = (value(formData, "currency") || "INR").toUpperCase();
-    const ownerName = value(formData, "owner_name");
     const ownerEmail = value(formData, "owner_email").toLowerCase();
     const modules = selectedModules(formData);
     const fieldErrors: Record<string, string> = {};
@@ -116,7 +105,6 @@ export async function createBusinessAction(
     if (!SLUG_PATTERN.test(slug)) fieldErrors.slug = "Use lowercase letters, numbers, and single hyphens only.";
     if (!timezone) fieldErrors.timezone = "Enter a timezone.";
     if (!/^[A-Z]{3}$/.test(currency)) fieldErrors.currency = "Enter a 3-letter currency code.";
-    if (ownerName.length < 2) fieldErrors.owner_name = "Enter the Owner's full name.";
     if (!EMAIL_PATTERN.test(ownerEmail)) fieldErrors.owner_email = "Enter a valid Owner email address.";
     if (modules.length === 0) fieldErrors.modules = "Enable at least one module.";
     if (Object.keys(fieldErrors).length > 0) return fieldFailure("Review the highlighted details.", fieldErrors);
@@ -133,7 +121,12 @@ export async function createBusinessAction(
     if (duplicateError) throw new Error(duplicateError.message);
     if (duplicate) return fieldFailure("That business URL is already in use.", { slug: "Choose a different URL slug." });
     if (profileError) throw new Error(profileError.message);
-    if (existingProfile && (!existingProfile.active || existingProfile.account_status !== "active")) {
+    if (!existingProfile) {
+      return fieldFailure("The Owner must create their own Lenden account first.", {
+        owner_email: "No registered account was found. Ask this person to sign up, then retry.",
+      });
+    }
+    if (!existingProfile.active || existingProfile.account_status !== "active") {
       return fieldFailure("This existing Lenden account is inactive.", {
         owner_email: "Reactivate the global account before assigning it as an Owner.",
       });
@@ -152,34 +145,7 @@ export async function createBusinessAction(
     );
     if (modulesError) throw new Error(modulesError.message);
 
-    let ownerId = existingProfile?.id ?? null;
-    let temporaryPassword: string | undefined;
-    if (!ownerId) {
-      temporaryPassword = generatedTemporaryPassword();
-      const { data: created, error: authError } = await admin.auth.admin.createUser({
-        email: ownerEmail,
-        password: temporaryPassword,
-        email_confirm: true,
-        user_metadata: { full_name: ownerName },
-      });
-      if (authError || !created.user) throw new Error(authError?.message ?? "Could not create the Owner login.");
-      ownerId = created.user.id;
-      createdAuthProfileId = ownerId;
-
-      const { error: ownerProfileError } = await admin.from("profiles").upsert({
-        id: ownerId,
-        email: ownerEmail,
-        full_name: ownerName,
-        role: "owner",
-        platform_role: "user",
-        account_status: "active",
-        must_change_password: true,
-        active: true,
-        last_business_id: business.id,
-      });
-      if (ownerProfileError) throw new Error(ownerProfileError.message);
-    }
-    if (!ownerId) throw new Error("Could not resolve the Owner account.");
+    const ownerId = existingProfile.id;
 
     const { data: membership, error: membershipError } = await admin
       .from("business_memberships")
@@ -206,28 +172,83 @@ export async function createBusinessAction(
         slug,
         modules,
         initial_owner_profile_id: ownerId,
-        owner_account: existingProfile ? "existing" : "new",
+        owner_account: "existing",
       },
     });
     if (auditError) throw new Error(auditError.message);
 
     createdBusinessId = null;
-    createdAuthProfileId = null;
     revalidateBusinessAdmin(business.id, slug);
     return {
       ok: true,
-      message: temporaryPassword
-        ? "Business and Owner login created. Copy the one-time password now."
-        : "Business created. The existing Lenden account is now the Owner; its password was not changed.",
+      message: "Business created. The registered Lenden account is now the Owner; its password was not changed.",
       entityId: business.id,
       href: `/admin/businesses/${business.id}`,
-      temporaryPassword,
     };
   } catch (error) {
     const admin = createAdminClient();
     if (createdBusinessId) await admin.from("businesses").delete().eq("id", createdBusinessId);
-    await deleteNewAuthAccount(createdAuthProfileId);
     return actionError(error, "Could not create business.");
+  }
+}
+
+export async function approveBusinessRequestAdminAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  try {
+    await requirePlatformAdmin();
+    const requestId = value(formData, "request_id");
+    const name = value(formData, "name");
+    const slug = slugify(value(formData, "slug") || name);
+    const timezone = value(formData, "timezone") || "Asia/Kolkata";
+    const currency = (value(formData, "currency") || "INR").toUpperCase();
+    const modules = selectedModules(formData);
+    const fieldErrors: Record<string, string> = {};
+    if (!UUID_PATTERN.test(requestId)) fieldErrors.request_id = "Request is invalid.";
+    if (name.length < 2) fieldErrors.name = "Enter a business name.";
+    if (!SLUG_PATTERN.test(slug)) fieldErrors.slug = "Use lowercase letters, numbers, and single hyphens.";
+    if (!/^[A-Z]{3}$/.test(currency)) fieldErrors.currency = "Enter a 3-letter currency code.";
+    if (!timezone) fieldErrors.timezone = "Enter a timezone.";
+    if (modules.length === 0) fieldErrors.modules = "Enable at least one module.";
+    if (Object.keys(fieldErrors).length) return fieldFailure("Review the business settings.", fieldErrors);
+    const client = await createClient();
+    const { data: businessId, error } = await client.rpc("approve_business_creation_request", {
+      target_request_id: requestId,
+      final_name: name,
+      final_slug: slug,
+      final_timezone: timezone,
+      final_currency: currency,
+      final_modules: modules,
+    });
+    if (error || !businessId) throw new Error(error?.message ?? "Could not approve request.");
+    revalidatePath("/admin/businesses/requests");
+    revalidateBusinessAdmin(businessId, slug);
+    revalidatePath("/account");
+    return { ok: true, message: "Request approved. The requester is now the protected Owner.", entityId: businessId, href: `/admin/businesses/${businessId}` };
+  } catch (error) {
+    return actionError(error, "Could not approve request.");
+  }
+}
+
+export async function rejectBusinessRequestAdminAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  try {
+    await requirePlatformAdmin();
+    const requestId = value(formData, "request_id");
+    const reason = value(formData, "reason");
+    if (!UUID_PATTERN.test(requestId)) return fieldFailure("Request is invalid.", { request_id: "Invalid request." });
+    if (reason.length < 3) return fieldFailure("A rejection reason is required.", { reason: "Enter at least 3 characters." });
+    const client = await createClient();
+    const { error } = await client.rpc("reject_business_creation_request", { target_request_id: requestId, rejection_reason: reason });
+    if (error) throw new Error(error.message);
+    revalidatePath("/admin/businesses/requests");
+    revalidatePath("/account");
+    return { ok: true, message: "Request rejected. The reason is visible to the requester.", entityId: requestId };
+  } catch (error) {
+    return actionError(error, "Could not reject request.");
   }
 }
 
@@ -327,131 +348,80 @@ export async function createBusinessMemberAdminAction(
   _previousState: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  let createdAuthProfileId: string | null = null;
-  let createdMembershipId: string | null = null;
-
   try {
-    const { user } = await requirePlatformAdmin();
+    const { user, profile: actor } = await requirePlatformAdmin();
     const businessId = value(formData, "business_id");
-    const fullName = value(formData, "full_name");
     const email = value(formData, "email").toLowerCase();
-    const password = value(formData, "password");
     const role = value(formData, "role") as BusinessRole;
     const permissions = role === "staff" ? selectedPermissions(formData) : [];
     const fieldErrors: Record<string, string> = {};
 
-    if (fullName.length < 2) fieldErrors.full_name = "Enter the user's full name.";
     if (!EMAIL_PATTERN.test(email)) fieldErrors.email = "Enter a valid email address.";
     if (!MEMBER_ROLES.includes(role)) fieldErrors.role = "Choose Manager, Staff, or Sales Agent.";
-    if (password && password.length < 8) fieldErrors.password = "Temporary passwords need at least 8 characters.";
     if (Object.keys(fieldErrors).length > 0) return fieldFailure("Review the user details.", fieldErrors);
 
     const business = await lookupBusiness(businessId);
-    const admin = createAdminClient();
-    const { data: existingProfile, error: profileError } = await admin
-      .from("profiles")
-      .select("id,active,account_status")
-      .ilike("email", email)
-      .maybeSingle();
-    if (profileError) throw new Error(profileError.message);
-    if (existingProfile && (!existingProfile.active || existingProfile.account_status !== "active")) {
+    const resolution = await resolveExactBusinessEmail(business.id, email);
+    if (resolution.profile && (!resolution.profile.active || resolution.profile.accountStatus !== "active")) {
       return fieldFailure("This existing Lenden account is inactive.", {
         email: "Reactivate the global account before adding business access.",
       });
     }
-    if (!existingProfile && password.length < 8) {
-      return fieldFailure("A temporary password is required for a new account.", {
-        password: "Enter at least 8 characters. The user must replace it after login.",
+    if (resolution.profile) {
+      if (resolution.membership?.role === "primary_owner") return fieldFailure("This user is already the Owner.", { email: "Use the ownership workflow." });
+      const client = await createClient({ businessId: business.id });
+      const { data: membershipId, error } = await client.rpc("grant_business_access", {
+        target_business_id: business.id,
+        target_profile_id: resolution.profile.id,
+        target_role: role,
+        target_permissions: permissions,
       });
+      if (error) throw new Error(error.message);
+      const baseUrl = await appBaseUrl();
+      const delivery = await sendBusinessAccessGrantedEmail({ recipientEmail: email, businessId: business.id, businessName: business.name, roleLabel: role === "co_owner" ? "Manager" : role === "sales_agent" ? "Sales Agent" : "Staff", businessUrl: `${baseUrl}/b/${business.slug}`, generation: new Date().toISOString().slice(0, 16) });
+      revalidateBusinessAdmin(business.id, business.slug);
+      return { ok: true, message: delivery.ok ? "Registered user access granted. Their password was not changed." : "Access granted. Email delivery failed, but the business will appear in their Account page.", entityId: membershipId };
     }
 
-    let profileId = existingProfile?.id ?? null;
-    if (profileId) {
-      const { data: existingMembership, error: membershipLookupError } = await admin
-        .from("business_memberships")
-        .select("id")
-        .eq("business_id", business.id)
-        .eq("profile_id", profileId)
-        .maybeSingle();
-      if (membershipLookupError) throw new Error(membershipLookupError.message);
-      if (existingMembership) return fieldFailure("This user already belongs to the business.", { email: "Use the existing membership below." });
-    } else {
-      const { data: authData, error: authError } = await admin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: { full_name: fullName },
-      });
-      if (authError || !authData.user) throw new Error(authError?.message ?? "Could not create the user login.");
-      profileId = authData.user.id;
-      createdAuthProfileId = profileId;
-      const legacyRole = role === "co_owner" ? "owner" : role;
-      const { error: newProfileError } = await admin.from("profiles").upsert({
-        id: profileId,
-        email,
-        full_name: fullName,
-        role: legacyRole,
-        platform_role: "user",
-        account_status: "active",
-        must_change_password: true,
-        active: true,
-        last_business_id: business.id,
-      });
-      if (newProfileError) throw new Error(newProfileError.message);
-    }
-    if (!profileId) throw new Error("Could not resolve the user account.");
-
-    const { data: membership, error: membershipError } = await admin
-      .from("business_memberships")
-      .insert({
-        business_id: business.id,
-        profile_id: profileId,
-        role,
-        status: "active",
-        invited_by: user.id,
-        joined_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-    if (membershipError || !membership) throw new Error(membershipError?.message ?? "Could not add the business user.");
-    createdMembershipId = membership.id;
-
-    if (permissions.length > 0) {
-      const { error: permissionError } = await admin.from("business_member_permissions").insert(
-        permissions.map((permission) => ({ membership_id: membership.id, permission, granted_by: user.id })),
-      );
-      if (permissionError) throw new Error(permissionError.message);
-    }
-    const { error: auditError } = await admin.from("audit_events").insert({
-      business_id: business.id,
-      actor_profile_id: user.id,
-      event_type: "membership_created",
-      entity_type: "business_membership",
-      entity_id: membership.id,
-      after_data: {
-        profile_id: profileId,
-        role,
-        permissions,
-        account: existingProfile ? "existing" : "new",
-      },
-    });
-    if (auditError) throw new Error(auditError.message);
-
-    createdMembershipId = null;
-    createdAuthProfileId = null;
+    const invitation = await createOrRegenerateBusinessInvitation({ businessId: business.id, businessName: business.name, email, role: role as Exclude<BusinessRole, "primary_owner">, permissions, actorId: user.id, actorName: actor.full_name });
     revalidateBusinessAdmin(business.id, business.slug);
-    return {
-      ok: true,
-      message: existingProfile
-        ? "Existing Lenden account added. Its current password was not changed."
-        : "New account added. The user must change the temporary password after login.",
-      entityId: membership.id,
-    };
+    return { ok: true, message: invitation.delivery.ok ? "Invitation sent. The user will create their own account and accept access." : `Invitation saved, but email failed: ${invitation.delivery.error}`, entityId: invitation.invitationId, inviteUrl: invitation.invitationUrl };
   } catch (error) {
-    const admin = createAdminClient();
-    if (createdMembershipId) await admin.from("business_memberships").delete().eq("id", createdMembershipId);
-    await deleteNewAuthAccount(createdAuthProfileId);
     return actionError(error, "Could not add the business user.");
+  }
+}
+
+export async function resendBusinessInvitationAdminAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  try {
+    const { user, profile } = await requirePlatformAdmin();
+    const business = await lookupBusiness(value(formData, "business_id"));
+    const invitationId = value(formData, "invitation_id");
+    assertUuid(invitationId, "Invitation");
+    const sent = await regenerateBusinessInvitation({ invitationId, businessId: business.id, businessName: business.name, actorId: user.id, actorName: profile.full_name });
+    revalidateBusinessAdmin(business.id, business.slug);
+    return { ok: true, message: sent.delivery.ok ? "Invitation regenerated and sent." : `New link created, but email failed: ${sent.delivery.error}`, entityId: invitationId, inviteUrl: sent.invitationUrl };
+  } catch (error) {
+    return actionError(error, "Could not resend invitation.");
+  }
+}
+
+export async function revokeBusinessInvitationAdminAction(
+  _previousState: AdminActionState,
+  formData: FormData,
+): Promise<AdminActionState> {
+  try {
+    const { user } = await requirePlatformAdmin();
+    const business = await lookupBusiness(value(formData, "business_id"));
+    const invitationId = value(formData, "invitation_id");
+    assertUuid(invitationId, "Invitation");
+    await revokeBusinessInvitation({ invitationId, businessId: business.id, actorId: user.id });
+    revalidateBusinessAdmin(business.id, business.slug);
+    return { ok: true, message: "Invitation revoked.", entityId: invitationId };
+  } catch (error) {
+    return actionError(error, "Could not revoke invitation.");
   }
 }
 
@@ -572,72 +542,6 @@ export async function setBusinessMemberStatusAdminAction(
     };
   } catch (error) {
     return actionError(error, "Could not update business access.");
-  }
-}
-
-export async function resetPrimaryOwnerPasswordAction(
-  _previousState: AdminActionState,
-  formData: FormData,
-): Promise<AdminActionState> {
-  try {
-    const { user } = await requirePlatformAdmin();
-    const businessId = value(formData, "business_id");
-    const profileId = value(formData, "profile_id");
-    const business = await lookupBusiness(businessId);
-    assertUuid(profileId, "Owner profile");
-    const admin = createAdminClient();
-    const [{ data: membership, error: membershipError }, { data: ownerProfile, error: profileError }] = await Promise.all([
-      admin
-        .from("business_memberships")
-        .select("id,role,status")
-        .eq("business_id", business.id)
-        .eq("profile_id", profileId)
-        .maybeSingle(),
-      admin
-        .from("profiles")
-        .select("id,full_name,email,active,account_status")
-        .eq("id", profileId)
-        .maybeSingle(),
-    ]);
-    if (membershipError) throw new Error(membershipError.message);
-    if (profileError) throw new Error(profileError.message);
-    if (!membership || !ownerProfile) throw new Error("Active Owner was not found.");
-    if (
-      membership.role !== "primary_owner" ||
-      membership.status !== "active" ||
-      !ownerProfile.active ||
-      ownerProfile.account_status !== "active"
-    ) {
-      throw new Error("Only the active Owner's password can be reset here.");
-    }
-
-    const temporaryPassword = generatedTemporaryPassword();
-    const { error: authError } = await admin.auth.admin.updateUserById(profileId, { password: temporaryPassword });
-    if (authError) throw new Error(authError.message);
-    const { error: profileUpdateError } = await admin
-      .from("profiles")
-      .update({ must_change_password: true })
-      .eq("id", profileId);
-    if (profileUpdateError) throw new Error(profileUpdateError.message);
-    const { error: auditError } = await admin.from("audit_events").insert({
-      business_id: business.id,
-      actor_profile_id: user.id,
-      event_type: "primary_owner_password_reset",
-      entity_type: "business_membership",
-      entity_id: membership.id,
-      after_data: { profile_id: profileId, must_change_password: true },
-    });
-    if (auditError) throw new Error(auditError.message);
-
-    revalidateBusinessAdmin(business.id, business.slug);
-    return {
-      ok: true,
-      message: `Temporary password generated for ${ownerProfile.full_name}. Copy it now.`,
-      entityId: membership.id,
-      temporaryPassword,
-    };
-  } catch (error) {
-    return actionError(error, "Could not reset the Owner password.");
   }
 }
 

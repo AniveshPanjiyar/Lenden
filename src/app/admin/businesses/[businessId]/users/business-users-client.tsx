@@ -2,9 +2,11 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { permissionOptions } from "@/lib/constants";
-import type { AdminBusinessMember } from "../../admin-data";
+import type { AdminBusinessInvitation, AdminBusinessMember } from "../../admin-data";
 import {
   createBusinessMemberAdminAction,
+  resendBusinessInvitationAdminAction,
+  revokeBusinessInvitationAdminAction,
   saveBusinessMemberPermissionsAdminAction,
   setBusinessMemberStatusAdminAction,
   type AdminActionState,
@@ -14,7 +16,19 @@ const initialState: AdminActionState = { ok: null, message: "" };
 const roleLabels = { primary_owner: "Owner", co_owner: "Manager", staff: "Staff", sales_agent: "Sales Agent" } as const;
 
 function ActionMessage({ state }: { state: AdminActionState }) {
-  return state.message ? <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">{state.message}</p> : null;
+  return state.message ? <div className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status"><p>{state.message}</p>{state.inviteUrl ? <a href={state.inviteUrl}>Open or copy invitation link</a> : null}</div> : null;
+}
+
+function PendingInvitationCard({ invitation }: { invitation: AdminBusinessInvitation }) {
+  const [resendState, resendAction, resendPending] = useActionState(resendBusinessInvitationAdminAction, initialState);
+  const [revokeState, revokeAction, revokePending] = useActionState(revokeBusinessInvitationAdminAction, initialState);
+  const expired = invitation.expired;
+  return <article className="admin-user-card invited">
+    <header><div><strong>{invitation.email}</strong><span>Waiting for account signup and acceptance</span></div><div className="admin-user-badges"><span>{roleLabels[invitation.role]}</span><span className={`status-pill ${expired ? "expired" : "pending"}`}>{expired ? "expired" : "pending"}</span></div></header>
+    <p className="admin-warning-text">Email: {invitation.deliveryStatus}{invitation.deliveryError ? ` · ${invitation.deliveryError}` : ""} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}</p>
+    <div className="admin-form-actions"><form action={resendAction}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="secondary-button" type="submit" disabled={resendPending}>{resendPending ? "Regenerating…" : "Regenerate & send"}</button></form><form action={revokeAction} onSubmit={(event) => { if (!window.confirm(`Revoke the invitation for ${invitation.email}?`)) event.preventDefault(); }}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="business-user-suspend-button" type="submit" disabled={revokePending}>{revokePending ? "Revoking…" : "Revoke"}</button></form></div>
+    <ActionMessage state={resendState} /><ActionMessage state={revokeState} />
+  </article>;
 }
 
 function MemberAccessAction({ member }: { member: AdminBusinessMember }) {
@@ -69,7 +83,7 @@ function StaffPermissionsForm({ member }: { member: AdminBusinessMember }) {
   );
 }
 
-export default function BusinessUsersClient({ businessId, members }: { businessId: string; members: AdminBusinessMember[] }) {
+export default function BusinessUsersClient({ businessId, members, invitations }: { businessId: string; members: AdminBusinessMember[]; invitations: AdminBusinessInvitation[] }) {
   const [role, setRole] = useState("staff");
   const [state, action, pending] = useActionState(createBusinessMemberAdminAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
@@ -83,12 +97,11 @@ export default function BusinessUsersClient({ businessId, members }: { businessI
         <div className="admin-section-heading">
           <p className="eyebrow">Business membership</p>
           <h2>Add user</h2>
-          <p>Add a Manager, Staff member, or Sales Agent directly to this business.</p>
+          <p>Registered users receive access immediately. Other emails receive a 30-day invitation.</p>
         </div>
         <form ref={formRef} action={action} className="admin-settings-form">
           <input type="hidden" name="business_id" value={businessId} />
           <div className="admin-form-grid">
-            <label>Full name<input name="full_name" required minLength={2} /></label>
             <label>Email<input name="email" type="email" required /></label>
             <label>Business role
               <select name="role" value={role} onChange={(event) => setRole(event.target.value)}>
@@ -97,10 +110,6 @@ export default function BusinessUsersClient({ businessId, members }: { businessI
                 <option value="sales_agent">Sales Agent</option>
               </select>
             </label>
-            <label>Temporary password
-              <input name="password" type="password" minLength={8} autoComplete="new-password" placeholder="Required only for a new account" />
-              <span>For a new account, enter at least 8 characters. Existing accounts keep their current password.</span>
-            </label>
           </div>
           {role === "staff" ? (
             <fieldset className="admin-permission-grid">
@@ -108,8 +117,8 @@ export default function BusinessUsersClient({ businessId, members }: { businessI
               {permissionOptions.map((permission) => <label key={permission.value}><input type="checkbox" name="permissions" value={permission.value} />{permission.label}</label>)}
             </fieldset>
           ) : null}
-          <div className="admin-info-callout"><strong>Business-scoped access</strong><p>Adding or changing this membership does not alter the user&apos;s access to any other business.</p></div>
-          <button className="primary-button" type="submit" disabled={pending}>{pending ? "Adding user…" : "Add user"}</button>
+          <div className="admin-info-callout"><strong>User-owned login</strong><p>No password is created or changed. Business access remains separate from every other membership.</p></div>
+          <button className="primary-button" type="submit" disabled={pending}>{pending ? "Processing…" : "Grant or invite"}</button>
           <ActionMessage state={state} />
           {state.fieldErrors ? <ul className="admin-field-error-list">{Object.values(state.fieldErrors).map((error) => <li key={error}>{error}</li>)}</ul> : null}
         </form>
@@ -136,6 +145,11 @@ export default function BusinessUsersClient({ businessId, members }: { businessI
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="admin-content-card">
+        <div className="admin-section-heading"><p className="eyebrow">Pending</p><h2>Invitations</h2><p>Pending invitations do not grant business access.</p></div>
+        {invitations.length ? <div className="admin-user-list">{invitations.map((invitation) => <PendingInvitationCard key={invitation.id} invitation={invitation} />)}</div> : <div className="admin-empty-state compact"><p>No pending invitations.</p></div>}
       </section>
     </div>
   );

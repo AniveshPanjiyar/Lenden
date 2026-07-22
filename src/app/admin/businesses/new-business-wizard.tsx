@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useActionState, useRef, useState } from "react";
 import { businessLabels } from "@/lib/constants";
 import { createBusinessAction, type AdminActionState } from "./actions";
-import OneTimeSecret from "./one-time-secret";
 
 const initialState: AdminActionState = { ok: null, message: "" };
 const steps = ["Business details", "Modules", "First Owner", "Review"];
@@ -13,7 +12,7 @@ export default function NewBusinessWizard() {
   const [step, setStep] = useState(0);
   const [state, action, pending] = useActionState(createBusinessAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
-  const [draft, setDraft] = useState({ name: "", slug: "", timezone: "Asia/Kolkata", currency: "INR", ownerName: "", ownerEmail: "" });
+  const [draft, setDraft] = useState({ name: "", slug: "", timezone: "Asia/Kolkata", currency: "INR", ownerEmail: "" });
   const [modules, setModules] = useState<string[]>(["library", "general"]);
   const [stepError, setStepError] = useState("");
 
@@ -23,9 +22,7 @@ export default function NewBusinessWizard() {
         <div className="admin-success-mark" aria-hidden="true">✓</div>
         <h2>Business created</h2>
         <p>{state.message}</p>
-        {state.temporaryPassword ? <OneTimeSecret password={state.temporaryPassword} /> : (
-          <div className="admin-info-callout"><strong>Existing Owner account</strong><p>The current Lenden password was preserved.</p></div>
-        )}
+        <div className="admin-info-callout"><strong>Registered Owner assigned</strong><p>The Owner&apos;s login and password were not changed.</p></div>
         <div className="admin-form-actions">
           <Link className="primary-button" href={state.href ?? `/admin/businesses/${state.entityId}`}>Open business</Link>
           <Link className="secondary-button" href="/admin/businesses">Back to businesses</Link>
@@ -92,12 +89,11 @@ export default function NewBusinessWizard() {
         <section data-step="2" hidden={step !== 2}>
           <div className="admin-section-heading"><h2>First Owner</h2><p>The Owner controls this business and cannot have access suspended until ownership is transferred.</p></div>
           <div className="admin-form-grid">
-            <label>Owner full name<input name="owner_name" required minLength={2} value={draft.ownerName} onChange={(event) => setDraft({ ...draft, ownerName: event.target.value })} /></label>
             <label>Owner email<input name="owner_email" type="email" required value={draft.ownerEmail} onChange={(event) => setDraft({ ...draft, ownerEmail: event.target.value })} /></label>
           </div>
           <div className="admin-info-callout">
             <strong>Password handling</strong>
-            <p>A brand-new account receives a system-generated one-time password shown once after creation. If this email already belongs to Lenden, its password stays unchanged.</p>
+            <p>The Owner must already have an active Lenden account. Ask them to sign up first; this wizard never creates or resets passwords.</p>
           </div>
         </section>
 
@@ -108,9 +104,9 @@ export default function NewBusinessWizard() {
             <div><dt>URL</dt><dd>/{draft.slug || draft.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}</dd></div>
             <div><dt>Defaults</dt><dd>{draft.timezone} · {draft.currency}</dd></div>
             <div><dt>Modules</dt><dd>{modules.map((module) => businessLabels[module as keyof typeof businessLabels]).join(", ")}</dd></div>
-            <div><dt>First Owner</dt><dd>{draft.ownerName} · {draft.ownerEmail}</dd></div>
+            <div><dt>First Owner</dt><dd>{draft.ownerEmail}</dd></div>
           </dl>
-          <div className="admin-warning-callout"><strong>This creates live access</strong><p>The business starts Active. A new Owner must change the one-time password at first login.</p></div>
+          <div className="admin-warning-callout"><strong>This creates live access</strong><p>The business starts Active and the registered account becomes its protected Owner.</p></div>
         </section>
 
         {stepError ? <p className="admin-action-message error" role="alert">{stepError}</p> : null}

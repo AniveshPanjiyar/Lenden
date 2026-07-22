@@ -172,14 +172,18 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
     });
     if (error || !data.user) throw new Error(error?.message ?? "Could not create owner.");
 
-    const { error: profileError } = await admin.from("profiles").insert({
+    // The auth trigger normally creates this row. Upsert keeps the deployment-only
+    // first-admin bootstrap compatible with databases both before and after that trigger.
+    const { error: profileError } = await admin.from("profiles").upsert({
       id: data.user.id,
       email,
       full_name: fullName,
       role: "admin",
       platform_role: "platform_admin",
+      account_status: "active",
+      must_change_password: false,
       active: true,
-    });
+    }, { onConflict: "id" });
     if (profileError) throw new Error(profileError.message);
 
     const { data: legacyBusiness, error: businessError } = await admin
@@ -214,16 +218,8 @@ export async function updateProfileAction(formData: FormData): Promise<ActionRes
   return invokeLendenAction("updateProfile", formData);
 }
 
-export async function createStaffAction(formData: FormData): Promise<ActionResult> {
-  return invokeLendenAction("createStaff", formData);
-}
-
 export async function saveStaffPermissionsAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("saveStaffPermissions", formData);
-}
-
-export async function changeUserPasswordAction(formData: FormData): Promise<ActionResult> {
-  return invokeLendenAction("changeUserPassword", formData);
 }
 
 export async function deleteUserAction(formData: FormData): Promise<ActionResult> {

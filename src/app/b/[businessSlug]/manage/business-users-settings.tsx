@@ -1,11 +1,13 @@
 "use client";
 
-import { useActionState, useState, type FormEvent } from "react";
+import { useActionState, type FormEvent } from "react";
 import { permissionOptions } from "@/lib/constants";
 import type { BusinessRole, MembershipStatus } from "@/lib/types";
 import {
   createBusinessUserAction,
-  resetBusinessUserPasswordAction,
+  resendBusinessInvitationAction,
+  resolveBusinessUserEmailAction,
+  revokeBusinessInvitationAction,
   saveBusinessUserPermissionsAction,
   setBusinessMemberStatusAction,
   type BusinessUserActionState,
@@ -20,8 +22,18 @@ type BusinessSettingsMember = {
   status: MembershipStatus;
   profileActive: boolean;
   canChangeStatus: boolean;
-  canResetPassword: boolean;
   permissions: string[];
+};
+
+type PendingInvitation = {
+  id: string;
+  email: string;
+  role: Exclude<BusinessRole, "primary_owner">;
+  permissions: string[];
+  state: "pending" | "expired";
+  expiresAt: string;
+  deliveryStatus: "pending" | "sent" | "failed";
+  deliveryError: string | null;
 };
 
 const initialActionState: BusinessUserActionState = { ok: null, message: "" };
@@ -44,43 +56,46 @@ function roleLabel(role: BusinessRole) {
 function ActionMessage({ state }: { state: BusinessUserActionState }) {
   if (!state.message) return null;
   return (
-    <p className={`business-user-action-message ${state.ok ? "success" : "error"}`} role={state.ok ? "status" : "alert"} aria-live="polite">
-      {state.message}
-    </p>
+    <div className={`business-user-action-message ${state.ok ? "success" : "error"}`} role={state.ok ? "status" : "alert"} aria-live="polite">
+      <p>{state.message}</p>
+      {state.inviteUrl ? <a href={state.inviteUrl}>Open or copy the new invitation link</a> : null}
+    </div>
   );
 }
 
 function AddBusinessUserForm({ canCreateManager }: { canCreateManager: boolean }) {
+  const [lookupState, lookupAction, lookupPending] = useActionState(resolveBusinessUserEmailAction, initialActionState);
   const [state, formAction, pending] = useActionState(createBusinessUserAction, initialActionState);
-  const [role, setRole] = useState<"owner" | "staff" | "sales_agent">("staff");
+  const canConfigure = Boolean(lookupState.lookup)
+    && !(lookupState.lookup === "already_active" && lookupState.existingRole === "primary_owner")
+    && !(!canCreateManager && lookupState.existingRole === "co_owner");
+  const defaultRole = lookupState.existingRole === "co_owner" ? "owner" : lookupState.existingRole === "sales_agent" ? "sales_agent" : "staff";
 
   return (
-    <form action={formAction} className="business-user-create-form">
+    <div className="business-user-create-form">
+      <form action={lookupAction} className="business-user-email-lookup">
+        <label>
+          User email
+          <input name="email" type="email" required autoComplete="email" defaultValue={lookupState.email} />
+        </label>
+        <button className="secondary-button" type="submit" disabled={lookupPending}>{lookupPending ? "Checking…" : "Continue"}</button>
+      </form>
+      <ActionMessage state={lookupState} />
+      {canConfigure ? <form key={`${lookupState.email}-${lookupState.lookup}-${lookupState.existingRole ?? "new"}`} action={formAction} className="business-user-create-form">
+      <input name="email" type="hidden" value={lookupState.email} />
       <div className="business-user-form-grid">
-        <label>
-          Full name
-          <input name="full_name" required autoComplete="name" />
-        </label>
-        <label>
-          Login email
-          <input name="email" type="email" required autoComplete="email" />
-        </label>
-        <label>
-          Temporary password (new users)
-          <input name="password" type="password" minLength={8} autoComplete="new-password" />
-        </label>
+        <div className="business-user-resolution"><span>{lookupState.lookup === "invite" ? "New invitation" : lookupState.lookup === "suspended" ? "Reactivate access" : lookupState.lookup === "already_active" ? "Update active access" : "Registered user"}</span><strong>{lookupState.fullName ?? lookupState.email}</strong></div>
         <label>
           Business role
-          <select name="role" value={role} onChange={(event) => setRole(event.target.value as typeof role)}>
+          <select name="role" defaultValue={defaultRole}>
             <option value="staff">Staff</option>
             <option value="sales_agent">Sales Agent</option>
             {canCreateManager ? <option value="owner">Manager</option> : null}
           </select>
         </label>
       </div>
-      {role === "staff" ? (
         <fieldset className="business-user-permission-grid">
-          <legend>Starting permissions</legend>
+          <legend>Staff permissions</legend>
           {permissionOptions.map((permission) => (
             <label key={permission.value}>
               <input name="permissions" type="checkbox" value={permission.value} />
@@ -88,13 +103,14 @@ function AddBusinessUserForm({ canCreateManager }: { canCreateManager: boolean }
             </label>
           ))}
         </fieldset>
-      ) : null}
-      <p className="business-user-help">If this email already has a Lenden account, its current password is preserved and only this business membership is added.</p>
+      <p className="business-user-help">Permissions apply only when the selected role is Staff.</p>
+      <p className="business-user-help">{lookupState.lookup === "invite" ? "The person will set their own password or use Google, then accept the invitation." : lookupState.lookup === "suspended" ? "Confirm to reactivate the preserved membership. Their password and other businesses are unchanged." : lookupState.lookup === "already_active" ? "Confirm the role and permissions change. Their login and other businesses are unchanged." : "Access is added immediately without changing the user's password or other businesses."}</p>
       <ActionMessage state={state} />
       <button className="primary-button" type="submit" disabled={pending}>
-        {pending ? "Creating user…" : "Create user"}
+        {pending ? "Saving access…" : lookupState.lookup === "invite" ? "Send invitation" : lookupState.lookup === "suspended" ? "Reactivate access" : lookupState.lookup === "already_active" ? "Update access" : "Grant access"}
       </button>
-    </form>
+      </form> : null}
+    </div>
   );
 }
 
@@ -103,7 +119,7 @@ function MemberStatusForm({ member }: { member: BusinessSettingsMember }) {
   const nextStatus = member.status === "active" ? "suspended" : "active";
 
   function confirmStatusChange(event: FormEvent<HTMLFormElement>) {
-    const action = nextStatus === "active" ? "activate" : "suspend";
+    const action = nextStatus === "active" ? "restore" : "remove";
     if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} ${member.fullName}'s access to this business?`)) {
       event.preventDefault();
     }
@@ -114,24 +130,7 @@ function MemberStatusForm({ member }: { member: BusinessSettingsMember }) {
       <input type="hidden" name="membership_id" value={member.membershipId} />
       <input type="hidden" name="status" value={nextStatus} />
       <button className={member.status === "active" ? "business-user-suspend-button" : "business-user-activate-button"} type="submit" disabled={pending}>
-        {pending ? "Updating…" : member.status === "active" ? "Suspend user" : "Activate user"}
-      </button>
-      <ActionMessage state={state} />
-    </form>
-  );
-}
-
-function ResetPasswordForm({ member }: { member: BusinessSettingsMember }) {
-  const [state, formAction, pending] = useActionState(resetBusinessUserPasswordAction, initialActionState);
-  return (
-    <form action={formAction} className="business-user-inline-form">
-      <input type="hidden" name="profile_id" value={member.profileId} />
-      <label>
-        New temporary password
-        <input name="new_password" type="password" minLength={8} required autoComplete="new-password" />
-      </label>
-      <button className="secondary-button" type="submit" disabled={pending}>
-        {pending ? "Resetting…" : "Reset password"}
+        {pending ? "Updating…" : member.status === "active" ? "Remove access" : "Restore access"}
       </button>
       <ActionMessage state={state} />
     </form>
@@ -191,17 +190,29 @@ function BusinessMemberCard({ member }: { member: BusinessSettingsMember }) {
       </div>
 
       {member.role === "staff" ? <StaffPermissionsForm member={member} /> : null}
-      {member.canResetPassword ? <ResetPasswordForm member={member} /> : null}
       {!member.profileActive ? <p className="business-user-action-message error">This login profile is globally inactive. A platform administrator must reactivate it.</p> : null}
     </article>
   );
 }
 
+function PendingInvitationCard({ invitation }: { invitation: PendingInvitation }) {
+  const [resendState, resendAction, resendPending] = useActionState(resendBusinessInvitationAction, initialActionState);
+  const [revokeState, revokeAction, revokePending] = useActionState(revokeBusinessInvitationAction, initialActionState);
+  return <article className="business-user-card invited">
+    <header className="business-user-card-header"><div><strong>{invitation.email}</strong><span>Waiting for signup and acceptance</span></div><div className="business-user-badges"><span className="status-pill">{roleLabel(invitation.role)}</span><span className={`status-pill ${invitation.state}`}>{invitation.state}</span></div></header>
+    <p className="business-user-help">{invitation.state === "expired" ? "This invitation has expired. Regenerate it to create a new 30-day link." : `Expires ${new Date(invitation.expiresAt).toLocaleDateString()}.`} Email: {invitation.deliveryStatus}{invitation.deliveryError ? ` · ${invitation.deliveryError}` : ""}</p>
+    <div className="business-invitation-actions"><form action={resendAction}><input type="hidden" name="invitation_id" value={invitation.id} /><button className="secondary-button" type="submit" disabled={resendPending}>{resendPending ? "Regenerating…" : "Regenerate & send"}</button></form><form action={revokeAction} onSubmit={(event) => { if (!window.confirm(`Revoke the invitation for ${invitation.email}?`)) event.preventDefault(); }}><input type="hidden" name="invitation_id" value={invitation.id} /><button className="business-user-suspend-button" type="submit" disabled={revokePending}>{revokePending ? "Revoking…" : "Revoke"}</button></form></div>
+    <ActionMessage state={resendState} /><ActionMessage state={revokeState} />
+  </article>;
+}
+
 export default function BusinessUsersSettings({
   members,
+  invitations,
   canCreateManager,
 }: {
   members: BusinessSettingsMember[];
+  invitations: PendingInvitation[];
   canCreateManager: boolean;
 }) {
   const activeCount = members.filter((member) => member.status === "active").length;
@@ -213,7 +224,7 @@ export default function BusinessUsersSettings({
         <div>
           <p className="eyebrow">Business users</p>
           <h2>User accounts and access</h2>
-          <p>Create users, manage permissions and passwords, and set each membership to ACTIVE or SUSPENDED.</p>
+          <p>Grant business access, manage permissions, and remove or restore each membership. Users own their login and password.</p>
         </div>
         <div className="business-user-counts">
           <span className="status-pill active">{activeCount} active</span>
@@ -229,6 +240,7 @@ export default function BusinessUsersSettings({
       <div className="business-user-list">
         {members.map((member) => <BusinessMemberCard key={member.membershipId} member={member} />)}
       </div>
+      {invitations.length ? <div className="business-pending-invitations"><div className="business-users-heading"><div><p className="eyebrow">Pending</p><h3>Invitations</h3></div><span className="status-pill">{invitations.length} pending</span></div><div className="business-user-list">{invitations.map((invitation) => <PendingInvitationCard key={invitation.id} invitation={invitation} />)}</div></div> : null}
     </section>
   );
 }

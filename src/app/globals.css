@@ -1034,6 +1034,73 @@ form[aria-busy="true"] textarea {
   box-shadow: var(--shadow-floating), var(--glass-inner-shadow);
 }
 
+.google-auth-button { width: 100%; display: flex; align-items: center; justify-content: center; gap: .65rem; border: 1px solid var(--line); border-radius: 10px; background: #fffdf8; color: var(--on-surface); padding: .75rem 1rem; font: inherit; font-weight: 800; cursor: pointer; }
+.google-auth-button:hover { background: var(--surface-container-low); }
+.google-auth-button > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 999px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.15); color: #3569d4; font-weight: 950; }
+.auth-divider { display: flex; align-items: center; gap: .75rem; margin: .9rem 0; color: var(--muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+.auth-inline-links { display: flex; justify-content: flex-end; margin-top: -.35rem; font-size: .76rem; font-weight: 750; }
+.auth-secondary-copy { margin: .2rem 0 0; color: var(--muted); font-size: .78rem; text-align: center; }
+.auth-secondary-copy a, .auth-inline-links a { color: var(--brand-strong); }
+.auth-field-errors { margin: 0; padding-left: 1.1rem; color: var(--bad); font-size: .74rem; }
+.invitation-panel { display: grid; gap: 1rem; }
+.invitation-summary { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .45rem .8rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-container-low); padding: .85rem; }
+.invitation-summary span { color: var(--muted); font-size: .72rem; }
+.invitation-summary strong { overflow-wrap: anywhere; font-size: .78rem; }
+
+.account-page { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+.account-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.account-header h1, .account-header p { margin: 0; }
+.account-header > div:first-child > p:last-child { margin-top: .35rem; color: var(--muted); }
+.account-header-actions, .account-row-actions, .business-invitation-actions { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
+.account-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
+.account-card { min-width: 0; border: 1px solid var(--line); border-radius: 18px; background: #fffdf8; padding: 1rem; box-shadow: 0 10px 30px rgba(32,54,43,.06); }
+.account-card-span { grid-column: 1 / -1; }
+.account-section-heading { margin-bottom: .85rem; }
+.account-section-heading h2, .account-section-heading p { margin: 0; }
+.account-section-heading > p:last-child { margin-top: .25rem; color: var(--muted); font-size: .78rem; }
+.account-access-list, .account-invitation-list, .account-request-list { display: grid; gap: .65rem; }
+.account-access-list article, .account-invitation-list article, .account-request-list article { display: flex; align-items: center; justify-content: space-between; gap: .8rem; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-container-low); padding: .75rem; }
+.account-access-list article > div:first-child, .account-invitation-list article > div:first-child, .account-request-list article > div:first-child { min-width: 0; display: grid; gap: .15rem; }
+.account-access-list span, .account-invitation-list span, .account-request-list span, .account-request-list small { color: var(--muted); font-size: .72rem; }
+.account-empty { border: 1px dashed var(--line); border-radius: 13px; padding: 1rem; text-align: center; }
+.account-empty p { margin: .25rem 0 0; color: var(--muted); font-size: .76rem; }
+.account-details { margin-top: .75rem; }
+.account-details summary { color: var(--brand-strong); font-size: .76rem; font-weight: 800; cursor: pointer; }
+.account-details .account-access-list { margin-top: .6rem; }
+.account-module-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .55rem; border: 1px solid var(--line); border-radius: 12px; padding: .8rem; }
+.account-module-grid legend { padding: 0 .35rem; font-size: .76rem; font-weight: 850; }
+.account-module-grid label { display: flex; align-items: center; gap: .45rem; font-size: .76rem; }
+.account-request-status { display: grid; justify-items: end; gap: .3rem; text-align: right; }
+.account-request-status p { margin: 0; max-width: 360px; color: var(--bad); font-size: .72rem; }
+
+.business-user-email-lookup { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: .65rem; }
+.business-user-resolution { display: grid; align-content: center; gap: .2rem; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-container-low); padding: .75rem; }
+.business-user-resolution span { color: var(--muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; }
+.business-user-action-message p { margin: 0; }
+.business-user-action-message a { display: inline-block; margin-top: .25rem; color: inherit; font-weight: 850; text-decoration: underline; }
+.business-pending-invitations { display: grid; gap: .75rem; margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.business-invitation-actions { justify-content: flex-start; }
+.business-user-card.invited, .admin-user-card.invited { border-style: dashed; }
+.status-pill.expired { background: var(--surface-container-high); color: var(--muted); }
+
+.business-request-list { display: grid; gap: 1rem; }
+.business-request-card { display: grid; gap: 1rem; }
+.business-request-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.business-request-header h2, .business-request-header p { margin: 0; }
+.business-request-header > div > p:last-child { margin-top: .25rem; color: var(--muted); font-size: .76rem; }
+.admin-request-reject-form { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: .7rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+
+@media (max-width: 720px) {
+  .account-page { width: min(100% - 1rem, 100%); padding-top: 1rem; }
+  .account-header, .account-access-list article, .account-invitation-list article, .account-request-list article { align-items: stretch; flex-direction: column; }
+  .account-header-actions > *, .account-header-actions form, .account-header-actions button, .account-row-actions > *, .account-row-actions button { width: 100%; }
+  .account-grid { grid-template-columns: 1fr; }
+  .account-card-span { grid-column: auto; }
+  .account-module-grid, .business-user-email-lookup, .admin-request-reject-form { grid-template-columns: 1fr; }
+  .account-request-status { justify-items: start; text-align: left; }
+}
+
 .setup-panel {
   width: min(560px, 100%);
 }
