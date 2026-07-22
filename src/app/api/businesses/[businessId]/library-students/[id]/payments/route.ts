@@ -42,11 +42,14 @@ function storagePath(value: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ businessId: string; id: string }> },
 ) {
   try {
     const { businessId, id } = await params;
+    const requestedPage = Number(new URL(request.url).searchParams.get("page") ?? "0");
+    const page = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;
+    const pageSize = 25;
     const { context } = await resolveBusinessContext({ id: businessId });
     const supabase = await createClient({ businessId: context.business.id });
     const virtualRollNumber = rollNumberFromRouteId(id);
@@ -70,10 +73,10 @@ export async function GET(
     const rollNumber = virtualRollNumber ?? normalizeLibraryRollNumber(studentResult.data?.roll_number);
     const [linkedPayments, rollPayments, events] = await Promise.all([
       uuidPattern.test(id)
-        ? supabase.from("payments").select("*").eq("business_id", context.business.id).eq("library_student_id", id).order("payment_date", { ascending: false }).limit(100)
+        ? supabase.from("payments").select("*").eq("business_id", context.business.id).eq("library_student_id", id).order("payment_date", { ascending: false }).limit(1000)
         : Promise.resolve({ data: [], error: null }),
       rollNumber
-        ? supabase.from("payments").select("*").eq("business_id", context.business.id).eq("business_type", "library").order("payment_date", { ascending: false }).limit(500)
+        ? supabase.from("payments").select("*").eq("business_id", context.business.id).eq("business_type", "library").order("payment_date", { ascending: false }).limit(5000)
         : Promise.resolve({ data: [], error: null }),
       uuidPattern.test(id)
         ? supabase.from("library_student_subscription_events").select("*").eq("business_id", context.business.id).eq("library_student_id", id).order("event_date", { ascending: false }).limit(150)
@@ -87,7 +90,10 @@ export async function GET(
         (linkedPayments.data ?? []) as Payment[],
         ((rollPayments.data ?? []) as Payment[]).filter((payment) => normalizeLibraryRollNumber(payment.roll_number) === rollNumber),
       );
-    const signedPayments = await Promise.all(payments.map(async (payment) => {
+    const total = payments.length;
+    const start = page * pageSize;
+    const pagePayments = payments.slice(start, start + pageSize);
+    const signedPayments = await Promise.all(pagePayments.map(async (payment) => {
       const sign = async (value: string | null) => {
         if (!value) return null;
         const path = storagePath(value);
@@ -105,6 +111,8 @@ export async function GET(
     return NextResponse.json({
       payments: signedPayments,
       events: events.data ?? [],
+      nextPage: start + pageSize < total ? page + 1 : null,
+      total,
     });
   } catch (error) {
     if (error instanceof BusinessAccessError) {

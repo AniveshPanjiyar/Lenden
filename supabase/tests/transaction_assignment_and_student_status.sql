@@ -208,16 +208,27 @@ insert into public.courses (id, business_id, name, kind) values
   ('75000000-0000-4000-8000-000000000001', '72000000-0000-4000-8000-000000000001', 'Test Course', 'main');
 insert into public.course_students (
   id, business_id, source_course_id, identity_key, roll_number, student_name,
-  subscription_end_date, active
+  photo_url, phone_number, address, aadhar_number, subscription_end_date, active
 ) values (
   '76000000-0000-4000-8000-000000000001', '72000000-0000-4000-8000-000000000001',
-  '75000000-0000-4000-8000-000000000001', 'roll:1', '1', 'Expired but active', current_date - 30, true
+  '75000000-0000-4000-8000-000000000001', 'roll:1', '1', 'Expired but active',
+  'course/profile.jpg', '9999999999', 'Course student address', '123412341234', current_date - 30, true
 );
 
 do $$
 begin
   if not (select active from public.course_students where id = '76000000-0000-4000-8000-000000000001') then
     raise exception 'Expiry silently deactivated a course student';
+  end if;
+  if not exists (
+    select 1 from public.course_students
+    where id = '76000000-0000-4000-8000-000000000001'
+      and photo_url = 'course/profile.jpg'
+      and phone_number = '9999999999'
+      and address = 'Course student address'
+      and aadhar_number = '123412341234'
+  ) then
+    raise exception 'Course student profile fields were not persisted';
   end if;
   update public.course_students set active = false where id = '76000000-0000-4000-8000-000000000001';
   if (select active from public.course_students where id = '76000000-0000-4000-8000-000000000001') then

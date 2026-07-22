@@ -310,6 +310,7 @@ async function loadDashboard(
     : (courseStudentsResult.data ?? []) as CourseStudent[];
   const signedCourseStudents = await Promise.all(courseStudentRows.map(async (student) => ({
     ...student,
+    photo_url: await signedStorageUrl(supabase, "library-student-photos", student.photo_url),
     aadhar_photo_url: await signedStorageUrl(supabase, "library-student-photos", student.aadhar_photo_url),
     aadhar_back_photo_url: await signedStorageUrl(supabase, "library-student-photos", student.aadhar_back_photo_url),
   })));

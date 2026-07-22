@@ -473,11 +473,12 @@ async function signedLibraryStudentPatch(admin: SupabaseAdminClient, student: Li
 }
 
 async function signedCourseStudentPatch(admin: SupabaseAdminClient, student: CourseStudent): Promise<CourseStudent> {
-  const [aadharFront, aadharBack] = await Promise.all([
+  const [photoUrl, aadharFront, aadharBack] = await Promise.all([
+    signedStudentAsset(admin, student.photo_url),
     signedStudentAsset(admin, student.aadhar_photo_url),
     signedStudentAsset(admin, student.aadhar_back_photo_url),
   ]);
-  return { ...student, aadhar_photo_url: aadharFront, aadhar_back_photo_url: aadharBack };
+  return { ...student, photo_url: photoUrl, aadhar_photo_url: aadharFront, aadhar_back_photo_url: aadharBack };
 }
 
 function normalizeRequestKey(value: string | null) {
@@ -1168,6 +1169,10 @@ async function upsertCourseStudentRecord(
     rollNumber: string | null;
     studentName: string | null;
     paymentId?: string | null;
+    photoUrl?: string | null;
+    phoneNumber?: string | null;
+    address?: string | null;
+    aadharNumber?: string | null;
     aadharPhotoUrl?: string | null;
     aadharBackPhotoUrl?: string | null;
     subscriptionStartDate?: string | null;
@@ -1211,6 +1216,10 @@ async function upsertCourseStudentRecord(
     dues_amount: params.duesAmount ?? null,
     advance_amount: params.advanceAmount ?? null,
   };
+  if (params.phoneNumber !== undefined) payload.phone_number = params.phoneNumber;
+  if (params.address !== undefined) payload.address = params.address;
+  if (params.aadharNumber !== undefined) payload.aadhar_number = params.aadharNumber;
+  if (params.photoUrl) payload.photo_url = params.photoUrl;
   if (params.aadharPhotoUrl) payload.aadhar_photo_url = params.aadharPhotoUrl;
   if (params.aadharBackPhotoUrl) payload.aadhar_back_photo_url = params.aadharBackPhotoUrl;
   if (params.paymentId) payload.last_payment_id = params.paymentId;
@@ -1451,6 +1460,7 @@ const handlers = {
     let libraryPaymentEventSource = "library_payment";
     let aadharPhotoUrl: string | null = null;
     let aadharBackPhotoUrl: string | null = null;
+    let courseStudentPhotoUrl: string | null = null;
     let courseStudent: CourseStudent | null = null;
     let savedLibraryStudent: LibraryStudent | null = null;
 
@@ -1467,6 +1477,20 @@ const handlers = {
       }
       aadharPhotoUrl = typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null;
       aadharBackPhotoUrl = typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null;
+    }
+
+    if (business === "course") {
+      const uploadedStudentPhoto = await uploadLibraryStudentPhoto(
+        admin,
+        profile.businessId,
+        profile.id,
+        formData.get("student_photo"),
+        requestKey,
+      );
+      if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
+        return uploadedStudentPhoto;
+      }
+      courseStudentPhotoUrl = typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null;
     }
 
     if (business === "library") {
@@ -1575,6 +1599,10 @@ const handlers = {
         sourceCourseId,
         rollNumber: normalizeLibraryRollNumber(asString(formData, "roll_number")),
         studentName: asString(formData, "customer_name"),
+        photoUrl: courseStudentPhotoUrl,
+        phoneNumber: asString(formData, "phone_number"),
+        address: asString(formData, "address"),
+        aadharNumber: asString(formData, "aadhar_number"),
         aadharPhotoUrl,
         aadharBackPhotoUrl,
         subscriptionStartDate: asString(formData, "start_date"),
@@ -2006,6 +2034,9 @@ const handlers = {
     const paymentId = asString(formData, "payment_id");
     const customerName = asString(formData, "customer_name");
     const rollNumber = normalizeLibraryRollNumber(asString(formData, "roll_number"));
+    const phoneNumber = asString(formData, "phone_number");
+    const address = asString(formData, "address");
+    const aadharNumber = asString(formData, "aadhar_number");
     const startDate = asString(formData, "start_date");
     const endDate = asString(formData, "end_date");
     const startTime = normalizeClockTime(asString(formData, "start_time"));
@@ -2029,10 +2060,14 @@ const handlers = {
     }
 
     const requestKey = idempotencyKey ?? crypto.randomUUID();
-    const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
+    const [uploadedStudentPhoto, uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
+      uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey),
       uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_photo"), requestKey, "front"),
       uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, formData.get("aadhar_back_photo"), requestKey, "back"),
     ]);
+    if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
+      return uploadedStudentPhoto;
+    }
     if (uploadedAadharPhoto && typeof uploadedAadharPhoto === "object" && "ok" in uploadedAadharPhoto && !uploadedAadharPhoto.ok) {
       return uploadedAadharPhoto;
     }
@@ -2091,12 +2126,16 @@ const handlers = {
         identity_key: identityKey,
         roll_number: rollNumber,
         student_name: customerName,
+        phone_number: phoneNumber,
+        address,
+        aadhar_number: aadharNumber,
         subscription_start_date: startDate,
         subscription_end_date: endDate,
         start_time: startTime,
         end_time: endTime,
         slot_hours: slotHours,
       };
+      if (typeof uploadedStudentPhoto === "string") courseUpdates.photo_url = uploadedStudentPhoto;
       if (typeof uploadedAadharPhoto === "string") courseUpdates.aadhar_photo_url = uploadedAadharPhoto;
       if (typeof uploadedAadharBackPhoto === "string") courseUpdates.aadhar_back_photo_url = uploadedAadharBackPhoto;
       const courseUpdate = await admin
@@ -2115,6 +2154,10 @@ const handlers = {
         rollNumber,
         studentName: customerName,
         paymentId,
+        photoUrl: typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null,
+        phoneNumber,
+        address,
+        aadharNumber,
         aadharPhotoUrl: typeof uploadedAadharPhoto === "string" ? uploadedAadharPhoto : null,
         aadharBackPhotoUrl: typeof uploadedAadharBackPhoto === "string" ? uploadedAadharBackPhoto : null,
         subscriptionStartDate: startDate,

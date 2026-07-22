@@ -11,6 +11,7 @@ import {
   resolveExactBusinessEmail,
   revokeBusinessInvitation,
 } from "@/lib/business-access-service";
+import { businessPermissions } from "@/lib/constants";
 import { sendBusinessAccessGrantedEmail } from "@/lib/email";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
@@ -28,10 +29,78 @@ export type BusinessUserActionState = {
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const staffPermissions = new Set(["collect_guest_house", "collect_library", "collect_course", "collect_general", "add_expense"]);
+const modulePermissions = new Set(Object.values(businessPermissions));
 
 function read(formData: FormData, key: string) {
   const entry = formData.get(key);
   return typeof entry === "string" ? entry.trim() : "";
+}
+
+function roleFromForm(formData: FormData): Exclude<BusinessRole, "primary_owner"> {
+  const value = read(formData, "role");
+  if (value === "owner" || value === "co_owner") return "co_owner";
+  return value === "sales_agent" ? "sales_agent" : "staff";
+}
+
+function submittedPermissions(formData: FormData) {
+  return [...new Set(formData.getAll("permissions").filter(
+    (permission): permission is string => typeof permission === "string" && staffPermissions.has(permission),
+  ))];
+}
+
+async function constrainedStaffPermissions(input: {
+  businessId: string;
+  role: Exclude<BusinessRole, "primary_owner">;
+  submitted: string[];
+  preserved?: string[];
+}) {
+  if (input.role !== "staff") return [];
+  const admin = createAdminClient();
+  const { data: modules, error } = await admin
+    .from("business_modules")
+    .select("module,enabled")
+    .eq("business_id", input.businessId);
+  if (error) throw new Error(error.message);
+
+  const enabledPermissions = new Set(
+    (modules ?? [])
+      .filter((module) => module.enabled)
+      .map((module) => businessPermissions[module.module as BusinessType]),
+  );
+  const permissions = new Set(
+    input.submitted.filter((permission) => permission === "add_expense" || enabledPermissions.has(permission)),
+  );
+
+  for (const permission of input.preserved ?? []) {
+    if (modulePermissions.has(permission) && !enabledPermissions.has(permission)) permissions.add(permission);
+  }
+  return [...permissions];
+}
+
+async function currentAccessPermissions(input: {
+  businessId: string;
+  email: string;
+  membershipId?: string | null;
+}) {
+  const admin = createAdminClient();
+  if (input.membershipId) {
+    const { data, error } = await admin
+      .from("business_member_permissions")
+      .select("permission")
+      .eq("membership_id", input.membershipId);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((row) => String(row.permission));
+  }
+
+  const { data, error } = await admin
+    .from("business_invitations")
+    .select("permissions")
+    .eq("business_id", input.businessId)
+    .eq("email", input.email)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.permissions ?? []) as string[];
 }
 
 export async function saveBusinessModulesAction(formData: FormData) {
@@ -69,6 +138,9 @@ export async function transferPrimaryOwnershipAction(formData: FormData) {
   const { context } = await resolveBusinessContextFromRequest();
   if (context.accessMode !== "member" || !isPrimaryOwner(context.membership?.role)) {
     throw new Error("Only the current Owner can transfer primary ownership.");
+  }
+  if (read(formData, "business_name_confirmation") !== context.business.name) {
+    throw new Error("Type the business name exactly to confirm the ownership transfer.");
   }
   const targetProfileId = read(formData, "profile_id");
   if (!targetProfileId) throw new Error("Choose an active Manager.");
@@ -149,18 +221,23 @@ export async function createBusinessUserAction(
   try {
     const { identity, context } = await resolveBusinessContextFromRequest();
     const email = read(formData, "email").toLowerCase();
-    const requestedRole = read(formData, "role");
-    const role: Exclude<BusinessRole, "primary_owner"> = requestedRole === "owner" || requestedRole === "co_owner"
-      ? "co_owner"
-      : requestedRole === "sales_agent" ? "sales_agent" : "staff";
-    const permissions = role === "staff" ? [...new Set(formData.getAll("permissions").filter(
-      (permission): permission is string => typeof permission === "string" && staffPermissions.has(permission),
-    ))] : [];
+    const role = roleFromForm(formData);
     if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
     if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
       return { ok: false, message: "You cannot assign this business role." };
     }
     const resolution = await resolveExactBusinessEmail(context.business.id, email);
+    const preservedPermissions = await currentAccessPermissions({
+      businessId: context.business.id,
+      email,
+      membershipId: resolution.membership?.id,
+    });
+    const permissions = await constrainedStaffPermissions({
+      businessId: context.business.id,
+      role,
+      submitted: submittedPermissions(formData),
+      preserved: preservedPermissions,
+    });
     if (resolution.profile) {
       if (!resolution.profile.active || resolution.profile.accountStatus !== "active") {
         return { ok: false, message: "This Lenden account is globally inactive. Contact a platform administrator." };
@@ -234,6 +311,9 @@ export async function resolveBusinessUserEmailAction(
     if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
     const resolution = await resolveExactBusinessEmail(context.business.id, email);
     if (!resolution.profile) return { ok: true, message: "No Lenden account exists yet. An invitation will be sent.", lookup: "invite", email };
+    if (!resolution.profile.active || resolution.profile.accountStatus !== "active") {
+      return { ok: false, message: "This Lenden account is globally inactive. A platform administrator must reactivate it." };
+    }
     if (context.accessMode === "member" && context.membership?.role === "co_owner" && resolution.membership?.role === "co_owner") {
       return { ok: false, message: "Managers can manage Staff and Sales Agents only." };
     }
@@ -242,6 +322,90 @@ export async function resolveBusinessUserEmailAction(
     return { ok: true, message: `Registered account found for ${resolution.profile.fullName}.`, lookup: "registered", email, fullName: resolution.profile.fullName };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Could not check this email." };
+  }
+}
+
+export async function updateBusinessMemberAccessAction(
+  previousState: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  void previousState;
+  try {
+    const { context } = await resolveBusinessContextFromRequest();
+    const membershipId = read(formData, "membership_id");
+    const role = roleFromForm(formData);
+    if (!membershipId) return { ok: false, message: "Choose a business member." };
+
+    const client = await createClient({ businessId: context.business.id });
+    const { data: membership, error: membershipError } = await client
+      .from("business_memberships")
+      .select("id,profile_id,role,status")
+      .eq("id", membershipId)
+      .eq("business_id", context.business.id)
+      .single();
+    if (membershipError || !membership) {
+      return { ok: false, message: membershipError?.message ?? "Business membership was not found." };
+    }
+    if (!canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode)) {
+      return { ok: false, message: membership.role === "primary_owner"
+        ? "Ownership must be changed through the ownership transfer workflow."
+        : "You cannot manage this business member." };
+    }
+    if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
+      return { ok: false, message: "You cannot assign this business role." };
+    }
+
+    const admin = createAdminClient();
+    const { data: targetProfile, error: profileError } = await admin
+      .from("profiles")
+      .select("id,email,full_name,active,account_status")
+      .eq("id", membership.profile_id)
+      .single();
+    if (profileError || !targetProfile) throw new Error(profileError?.message ?? "Member profile was not found.");
+    if (!targetProfile.active || targetProfile.account_status !== "active") {
+      return { ok: false, message: "This Lenden account is globally inactive. A platform administrator must reactivate it first." };
+    }
+
+    const preservedPermissions = await currentAccessPermissions({
+      businessId: context.business.id,
+      email: targetProfile.email,
+      membershipId,
+    });
+    const permissions = await constrainedStaffPermissions({
+      businessId: context.business.id,
+      role,
+      submitted: submittedPermissions(formData),
+      preserved: preservedPermissions,
+    });
+    const { error } = await client.rpc("grant_business_access", {
+      target_business_id: context.business.id,
+      target_profile_id: membership.profile_id,
+      target_role: role,
+      target_permissions: permissions,
+    });
+    if (error) throw new Error(error.message);
+
+    const baseUrl = await appBaseUrl();
+    const delivery = await sendBusinessAccessGrantedEmail({
+      recipientEmail: targetProfile.email,
+      businessId: context.business.id,
+      businessName: context.business.name,
+      roleLabel: role === "co_owner" ? "Manager" : role === "sales_agent" ? "Sales Agent" : "Staff",
+      businessUrl: `${baseUrl}/b/${context.business.slug}`,
+      generation: new Date().toISOString().slice(0, 16),
+    });
+    revalidatePath(`/b/${context.business.slug}`);
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    revalidatePath("/account");
+    const verb = membership.status === "suspended" ? "restored" : "updated";
+    return {
+      ok: true,
+      message: delivery.ok
+        ? `${targetProfile.full_name}'s access was ${verb}.`
+        : `${targetProfile.full_name}'s access was ${verb}. Email delivery failed, but the access change is active.`,
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not update business access." };
   }
 }
 

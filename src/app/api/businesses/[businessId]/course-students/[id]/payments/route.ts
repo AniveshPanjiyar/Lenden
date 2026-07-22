@@ -19,11 +19,14 @@ function storagePath(value: string) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ businessId: string; id: string }> },
 ) {
   try {
     const { businessId, id } = await params;
+    const requestedPage = Number(new URL(request.url).searchParams.get("page") ?? "0");
+    const page = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;
+    const pageSize = 25;
     const { context } = await resolveBusinessContext({ id: businessId });
     const supabase = await createClient({ businessId: context.business.id });
     const studentResult = await supabase
@@ -37,12 +40,12 @@ export async function GET(
 
     const paymentsResult = await supabase
       .from("payments")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("business_id", context.business.id)
       .eq("course_student_id", id)
       .order("payment_date", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(100);
+      .range(page * pageSize, page * pageSize + pageSize - 1);
     if (paymentsResult.error) return NextResponse.json({ message: paymentsResult.error.message }, { status: 500 });
 
     const payments = await Promise.all(((paymentsResult.data ?? []) as Payment[]).map(async (payment) => {
@@ -60,7 +63,13 @@ export async function GET(
       };
     }));
 
-    return NextResponse.json({ payments, events: [] });
+    const total = paymentsResult.count ?? payments.length;
+    return NextResponse.json({
+      payments,
+      events: [],
+      nextPage: (page + 1) * pageSize < total ? page + 1 : null,
+      total,
+    });
   } catch (error) {
     if (error instanceof BusinessAccessError) {
       return NextResponse.json({ message: error.message }, { status: error.status });

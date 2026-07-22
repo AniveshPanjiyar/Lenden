@@ -258,6 +258,10 @@ export type CourseStudent = {
   identity_key: string;
   roll_number: string | null;
   student_name: string | null;
+  photo_url: string | null;
+  phone_number: string | null;
+  address: string | null;
+  aadhar_number: string | null;
   aadhar_photo_url: string | null;
   aadhar_back_photo_url: string | null;
   subscription_start_date: string | null;
@@ -273,6 +277,13 @@ export type CourseStudent = {
   last_payment_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type StudentHistoryPage = {
+  payments: Payment[];
+  events: LibraryStudentSubscriptionEvent[];
+  nextPage: number | null;
+  total: number;
 };
 
 export type Expense = {

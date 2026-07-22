@@ -3,7 +3,7 @@
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition, WheelEvent } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   ArrowDown,
@@ -70,7 +70,7 @@ import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/clie
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, LibraryStudentSubscriptionEvent, MoneyMovement, MutationPatch, Payment, PaymentMode, Profile, ReferralCode } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, Payment, PaymentMode, Profile, ReferralCode, StudentHistoryPage } from "@/lib/types";
 import { rangeForPreset, type AppTab, type AppViewState, type DateFilterKey, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
 
 type Tab = AppTab;
@@ -98,6 +98,7 @@ type TransactionJourneyStep = {
 };
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive";
+type StudentDrawerView = "details" | "history" | "subscription";
 type StudentRecordSource =
   | { id: "library"; type: "library"; label: string }
   | { id: string; type: "mainCourse" | "skillCourse"; label: string; course: Course };
@@ -109,6 +110,10 @@ type CourseStudentRecord = {
   displayName: string;
   rollNumber: string | null;
   courseName: string;
+  photoUrl: string | null;
+  phoneNumber: string | null;
+  address: string | null;
+  aadharNumber: string | null;
   seatNumber: string | null;
   startTime: string | null;
   endTime: string | null;
@@ -391,6 +396,10 @@ const messages: Record<Language, Record<string, string>> = {
     existingMember: "Existing member",
     renewSubscription: "Renew subscription",
     studentDetails: "Student details",
+    details: "Details",
+    backToDetails: "Back to details",
+    loadOlder: "Load older",
+    notAdded: "Not added",
     studentRecords: "Student records",
     studentSearch: "Search student",
     activeStudents: "Active students",
@@ -764,6 +773,10 @@ const messages: Record<Language, Record<string, string>> = {
     existingMember: "पुराना सदस्य",
     renewSubscription: "सब्सक्रिप्शन रिन्यू करें",
     studentDetails: "छात्र जानकारी",
+    details: "जानकारी",
+    backToDetails: "जानकारी पर वापस जाएं",
+    loadOlder: "पुराना हिसाब दिखाएं",
+    notAdded: "नहीं जोड़ा गया",
     studentRecords: "छात्र रिकॉर्ड",
     studentSearch: "छात्र खोजें",
     activeStudents: "चालू छात्र",
@@ -1060,6 +1073,12 @@ function labelForStatus(status: string, t: (key: string) => string) {
   return t("language") === messages.hi.language ? hiStatusLabels[key] ?? status.replaceAll("_", " ") : statusLabels[key] ?? status.replaceAll("_", " ");
 }
 
+function approvalStatusClass(status: string) {
+  if (status === "approved" || status === "accepted") return "status-approved";
+  if (status === "rejected" || status === "cancelled") return "status-rejected";
+  return "status-pending";
+}
+
 const actionStartedEvent = "lenden:action-started";
 const actionEndedEvent = "lenden:action-ended";
 const mutationCommittedEvent = "lenden:mutation-committed";
@@ -1199,6 +1218,7 @@ function applyMutationPatch(
     const student = existing ? {
       ...existing,
       ...incoming,
+      photo_url: incoming.photo_url && !/^https?:\/\//i.test(incoming.photo_url) ? existing.photo_url : incoming.photo_url,
       aadhar_photo_url: incoming.aadhar_photo_url && !/^https?:\/\//i.test(incoming.aadhar_photo_url) ? existing.aadhar_photo_url : incoming.aadhar_photo_url,
       aadhar_back_photo_url: incoming.aadhar_back_photo_url && !/^https?:\/\//i.test(incoming.aadhar_back_photo_url) ? existing.aadhar_back_photo_url : incoming.aadhar_back_photo_url,
     } : incoming;
@@ -5058,11 +5078,6 @@ function BottomActions({
 }
 
 
-type LibraryStudentHistory = {
-  payments: Payment[];
-  events: LibraryStudentSubscriptionEvent[];
-};
-
 function displayTime(value: string | null) {
   return value ? value.slice(0, 5) : "";
 }
@@ -5690,6 +5705,99 @@ function LibraryStudentSummaryCard({
   );
 }
 
+function StudentDetailItem({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`student-drawer-detail-item ${className}`}>
+      <span>{label}</span>
+      <div className="student-drawer-detail-value">{value}</div>
+    </div>
+  );
+}
+
+function SubscriptionHistoryTimeline({
+  payments,
+  total,
+  error,
+  hasMore,
+  loadingMore,
+  onLoadOlder,
+}: {
+  payments: Payment[];
+  total: number;
+  error: string | null;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadOlder: () => void;
+}) {
+  const { t } = useLanguage();
+  const groupedPayments = useMemo(() => {
+    const groups = new Map<string, Payment[]>();
+    payments.forEach((payment) => {
+      const key = payment.payment_date;
+      groups.set(key, [...(groups.get(key) ?? []), payment]);
+    });
+    return [...groups.entries()];
+  }, [payments]);
+
+  return (
+    <section className="student-history-panel" aria-label={t("subscriptionHistory")}>
+      <div className="student-history-heading">
+        <div>
+          <p className="eyebrow">{t("subscriptionHistory")}</p>
+          <h3>{total}</h3>
+        </div>
+      </div>
+      {error ? <p className="student-history-error">{error}</p> : null}
+      <div className="student-history-timeline">
+        {groupedPayments.map(([date, datePayments]) => (
+          <section key={date} className="student-history-date-group">
+            <h4>{displayDate(date)}</h4>
+            <div>
+              {datePayments.map((payment) => (
+                <article key={payment.id} className="student-history-entry">
+                  <span className="student-history-marker" aria-hidden="true" />
+                  <div className="student-history-entry-card">
+                    <div className="student-history-entry-title">
+                      <div>
+                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
+                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)}</p>
+                      </div>
+                      <span className={`status-chip ${approvalStatusClass(payment.approval_status)}`}>
+                        {labelForStatus(payment.approval_status, t)}
+                      </span>
+                    </div>
+                    <p>{paymentModeLabel(payment, t)} · {t("paymentDate")} {displayDate(payment.payment_date)}</p>
+                    <div className="student-history-money-grid">
+                      <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
+                      <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
+                      <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
+                      <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+      {payments.length === 0 && !error ? <p className="student-history-empty">{t("noRecords")}</p> : null}
+      {hasMore ? (
+        <button className="secondary-button student-history-load-more" type="button" onClick={onLoadOlder} disabled={loadingMore}>
+          {loadingMore ? t("saving") : t("loadOlder")}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function libraryStudentWithLatestSubscription(student: LibraryStudent, payments: Payment[]) {
   const latestPayment = latestLibrarySubscriptionPayment(payments);
   if (!latestPayment) return student;
@@ -5754,6 +5862,10 @@ function courseStudentRecordFromStudent(student: CourseStudent, source: CourseSt
     displayName: student.student_name?.trim() || "",
     rollNumber: normalizeLibraryRollNumberForView(student.roll_number),
     courseName: source.course.name,
+    photoUrl: student.photo_url,
+    phoneNumber: student.phone_number,
+    address: student.address,
+    aadharNumber: student.aadhar_number,
     seatNumber: null,
     startTime: student.start_time,
     endTime: student.end_time,
@@ -5786,6 +5898,9 @@ function courseStudentPrefill(record: CourseStudentRecord, t: (key: string) => s
     id: record.id,
     name: displayName,
     rollNumber: record.rollNumber ?? "",
+    phoneNumber: record.phoneNumber ?? "",
+    address: record.address ?? "",
+    aadharNumber: record.aadharNumber ?? "",
     seatNumber: record.seatNumber ?? "",
     startTime: (record.startTime ?? "06:00").slice(0, 5),
     endTime: (record.endTime ?? "07:00").slice(0, 5),
@@ -5835,6 +5950,10 @@ function LibraryStudentsView({
   const [selectedSourceId, setSelectedSourceId] = useState<StudentRecordSource["id"]>("library");
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
+  const [drawerView, setDrawerView] = useState<StudentDrawerView>("details");
+  const [confirmingStatus, setConfirmingStatus] = useState(false);
+  const drawerPanelRef = useRef<HTMLElement>(null);
+  const drawerOriginRef = useRef<HTMLElement | null>(null);
   const today = todayIso();
   const sources = useMemo(() => studentRecordSources(courses, t, includeLibrary), [courses, includeLibrary, t]);
   const selectedSource = useMemo(
@@ -5873,7 +5992,7 @@ function LibraryStudentsView({
   const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
     .filter((record) => {
       if (!normalizedQuery) return true;
-      return [record.rollNumber, courseStudentDisplayName(record, t), record.courseName, record.seatNumber, displayTimeRange(record.startTime, record.endTime)]
+      return [record.rollNumber, courseStudentDisplayName(record, t), record.phoneNumber, record.courseName, record.seatNumber, displayTimeRange(record.startTime, record.endTime)]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(normalizedQuery));
     })
@@ -5894,38 +6013,87 @@ function LibraryStudentsView({
     setListMode("active");
     setSelectedId("");
     setEditingStudent(false);
+    setDrawerView("details");
+    setConfirmingStatus(false);
   };
   const openStudentDetails = (studentId: string) => {
+    drawerOriginRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSelectedId(studentId);
     setEditingStudent(false);
+    setDrawerView("details");
+    setConfirmingStatus(false);
   };
-  const closeStudentDetails = () => {
+  const closeStudentDetails = useCallback(() => {
     setSelectedId("");
     setEditingStudent(false);
-  };
-  const historyQuery = useQuery({
+    setDrawerView("details");
+    setConfirmingStatus(false);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => drawerPanelRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeStudentDetails();
+        return;
+      }
+      if (event.key !== "Tab" || !drawerPanelRef.current) return;
+      const focusable = [...drawerPanelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        drawerPanelRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => drawerOriginRef.current?.focus());
+    };
+  }, [closeStudentDetails, selectedId]);
+
+  const historyQuery = useInfiniteQuery({
     queryKey: ["library-student-history", cacheScope, baseSelectedStudent?.id ?? ""],
-    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/businesses/${businessId}/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments`),
+    queryFn: ({ pageParam }) => fetchJson<StudentHistoryPage>(`/api/businesses/${businessId}/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments?page=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextPage ?? undefined,
     enabled: Boolean(baseSelectedStudent?.id),
-    placeholderData: (previousHistory) => previousHistory,
   });
   const localHistoryPayments = useMemo(
     () => baseSelectedStudent ? payments.filter((payment) => paymentMatchesLibraryStudent(payment, baseSelectedStudent)) : [],
     [baseSelectedStudent, payments],
   );
   const historyPayments = useMemo(
-    () => mergePaymentHistory(historyQuery.data?.payments ?? [], localHistoryPayments),
-    [historyQuery.data?.payments, localHistoryPayments],
+    () => mergePaymentHistory(historyQuery.data?.pages.flatMap((page) => page.payments) ?? [], localHistoryPayments),
+    [historyQuery.data?.pages, localHistoryPayments],
   );
   const selectedStudent = useMemo(
     () => baseSelectedStudent ? libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments) : null,
     [baseSelectedStudent, historyPayments],
   );
-  const courseHistoryQuery = useQuery({
+  const courseHistoryQuery = useInfiniteQuery({
     queryKey: ["course-student-history", cacheScope, selectedCourseStudent?.id ?? ""],
-    queryFn: () => fetchJson<LibraryStudentHistory>(`/api/businesses/${businessId}/course-students/${encodeURIComponent(selectedCourseStudent?.id ?? "")}/payments`),
+    queryFn: ({ pageParam }) => fetchJson<StudentHistoryPage>(`/api/businesses/${businessId}/course-students/${encodeURIComponent(selectedCourseStudent?.id ?? "")}/payments?page=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextPage ?? undefined,
     enabled: Boolean(selectedCourseStudent?.id),
-    placeholderData: (previousHistory) => previousHistory,
   });
   const localCourseHistoryPayments = useMemo(
     () => selectedCourseStudent
@@ -5934,9 +6102,58 @@ function LibraryStudentsView({
     [payments, selectedCourseStudent],
   );
   const courseHistoryPayments = useMemo(
-    () => mergePaymentHistory(courseHistoryQuery.data?.payments ?? [], localCourseHistoryPayments),
-    [courseHistoryQuery.data?.payments, localCourseHistoryPayments],
+    () => mergePaymentHistory(courseHistoryQuery.data?.pages.flatMap((page) => page.payments) ?? [], localCourseHistoryPayments),
+    [courseHistoryQuery.data?.pages, localCourseHistoryPayments],
   );
+  const drawerKind = selectedStudent ? "library" : selectedCourseStudent ? "course" : null;
+  const drawerName = selectedStudent
+    ? studentDisplayName(selectedStudent, t)
+    : selectedCourseStudent
+      ? courseStudentDisplayName(selectedCourseStudent, t)
+      : "";
+  const drawerRollNumber = selectedStudent
+    ? studentDisplayRollNumber(selectedStudent)
+    : selectedCourseStudent?.rollNumber ?? "-";
+  const drawerPhoneNumber = selectedStudent?.phone_number ?? selectedCourseStudent?.phoneNumber ?? null;
+  const drawerPhoneHref = studentPhoneHref(drawerPhoneNumber);
+  const drawerPhotoUrl = selectedStudent?.photo_url ?? selectedCourseStudent?.photoUrl ?? null;
+  const drawerActive = selectedStudent?.active ?? selectedCourseStudent?.active ?? false;
+  const drawerExpired = selectedStudent
+    ? expired(selectedStudent)
+    : Boolean(selectedCourseStudent?.subscriptionEndDate && selectedCourseStudent.subscriptionEndDate < today);
+  const drawerHistoryPayments = selectedStudent ? historyPayments : courseHistoryPayments;
+  const drawerHistoryQuery = selectedStudent ? historyQuery : courseHistoryQuery;
+  const drawerHistoryTotal = Math.max(
+    drawerHistoryPayments.length,
+    drawerHistoryQuery.data?.pages[0]?.total ?? 0,
+  );
+  const drawerHistoryError = drawerHistoryQuery.error instanceof Error
+    ? drawerHistoryQuery.error.message
+    : drawerHistoryQuery.error
+      ? "Could not load history."
+      : null;
+  const drawerHasMoreHistory = Boolean(drawerHistoryQuery.hasNextPage);
+  const drawerLoadingMoreHistory = drawerHistoryQuery.isFetchingNextPage;
+  const drawerSourceLabel = selectedStudent ? t("libraryStudent") : selectedCourseStudent?.courseName ?? t("studentDetails");
+  const drawerSubscriptionEnd = selectedStudent?.subscription_end_date ?? selectedCourseStudent?.subscriptionEndDate ?? null;
+  const drawerSubscriptionStart = selectedStudent?.subscription_start_date ?? selectedCourseStudent?.subscriptionStartDate ?? null;
+  const drawerStartTime = selectedStudent?.start_time ?? selectedCourseStudent?.startTime ?? null;
+  const drawerEndTime = selectedStudent?.end_time ?? selectedCourseStudent?.endTime ?? null;
+  const drawerAddress = selectedStudent?.address ?? selectedCourseStudent?.address ?? null;
+  const drawerAadharNumber = selectedStudent?.aadhar_number ?? selectedCourseStudent?.aadharNumber ?? null;
+  const drawerAadharFront = selectedStudent?.aadhar_photo_url ?? selectedCourseStudent?.aadharPhotoUrl ?? null;
+  const drawerAadharBack = selectedStudent?.aadhar_back_photo_url ?? selectedCourseStudent?.aadharBackPhotoUrl ?? null;
+  const drawerFee = selectedStudent?.fee_amount ?? selectedCourseStudent?.feeAmount ?? null;
+  const drawerPaid = selectedStudent?.paid_amount ?? selectedCourseStudent?.paidAmount ?? null;
+  const drawerDues = selectedStudent?.dues_amount ?? selectedCourseStudent?.duesAmount ?? null;
+  const drawerAdvance = selectedStudent?.advance_amount ?? selectedCourseStudent?.advanceAmount ?? null;
+  const drawerLastPayment = selectedStudent?.last_payment_date ?? selectedCourseStudent?.lastPaymentDate ?? null;
+  const drawerStatusLabel = drawerExpired
+    ? t("expiredSubscription")
+    : drawerActive
+      ? t("active")
+      : t("inactiveStudents");
+  const drawerStatusClass = drawerExpired ? "status-pending" : drawerActive ? "status-approved" : "status-rejected";
   return (
     <section className="library-students-view">
       <div className="library-student-source-bar">
@@ -6076,7 +6293,7 @@ function LibraryStudentsView({
                   aria-label={`${displayName}, ${record.courseName}, ${expiryLabel}`}
                 >
                   <div className="library-list-avatar-wrap">
-                    <StudentAvatar displayName={displayName} className="list" />
+                    <StudentAvatar displayName={displayName} imageUrl={record.photoUrl} className="list" />
                     <span className="library-list-roll-badge">#{record.rollNumber ?? "-"}</span>
                   </div>
                   <div className="library-list-info">
@@ -6091,391 +6308,302 @@ function LibraryStudentsView({
         </div>
       </section>
 
-      {selectedStudent ? (
-        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={studentDisplayName(selectedStudent, t)}>
-          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
-          <section className="action-sheet library-student-sheet">
-            <header className="sheet-header">
-              <div>
-                <p className="eyebrow">{t("libraryStudent")}</p>
-                <h2>{t("studentDetails")}</h2>
+      {drawerKind ? (
+        <div className="student-drawer-layer">
+          <button className="student-drawer-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
+          <aside
+            ref={drawerPanelRef}
+            className="student-profile-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${t("studentDetails")}: ${drawerName}`}
+            tabIndex={-1}
+          >
+            <header className="student-drawer-header">
+              <div className="student-drawer-topline">
+                {drawerView === "subscription" || editingStudent ? (
+                  <button
+                    className="student-drawer-back-button"
+                    type="button"
+                    onClick={() => {
+                      setEditingStudent(false);
+                      setDrawerView("details");
+                    }}
+                  >
+                    <ArrowLeft size={18} />
+                    {t("backToDetails")}
+                  </button>
+                ) : <p className="eyebrow">{drawerSourceLabel}</p>}
+                <div className="student-drawer-header-actions">
+                  {drawerView === "details" && !editingStudent ? (
+                    <button className="student-drawer-edit-button" type="button" onClick={() => setEditingStudent(true)}>
+                      <Pencil size={16} />
+                      {t("editTransaction")}
+                    </button>
+                  ) : null}
+                  {drawerView !== "subscription" && !editingStudent ? (
+                    <details className="student-drawer-menu">
+                      <summary aria-label={t("moreOptions")}><MoreHorizontal size={20} /></summary>
+                      <div>
+                        <button
+                          type="button"
+                          className={drawerActive ? "danger" : "positive"}
+                          onClick={() => setConfirmingStatus(true)}
+                        >
+                          {drawerActive ? <UserX size={16} /> : <UserCheck size={16} />}
+                          {drawerActive ? t("markInactive") : t("reactivate")}
+                        </button>
+                      </div>
+                    </details>
+                  ) : null}
+                  <button className="student-drawer-close" type="button" aria-label={t("closeModal")} onClick={closeStudentDetails}>
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="student-drawer-profile">
+                <StudentAvatar displayName={drawerName} imageUrl={drawerPhotoUrl} className="drawer" />
+                <div className="student-drawer-identity">
+                  <span className={`status-chip ${drawerStatusClass}`}>{drawerStatusLabel}</span>
+                  <h2>{drawerName}</h2>
+                  <p>#{drawerRollNumber} · {drawerSourceLabel}</p>
+                </div>
+                <div className="student-drawer-quick-facts">
+                  <div>
+                    <span>{t("phone")}</span>
+                    {drawerPhoneHref ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a> : <strong>{t("notAdded")}</strong>}
+                  </div>
+                  <div>
+                    <span>{t("expiresOn")}</span>
+                    <strong>{displayDate(drawerSubscriptionEnd)}</strong>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {drawerView !== "subscription" && !editingStudent ? (
+              <nav className="student-drawer-tabs" aria-label={t("studentDetails")}>
                 <button
-                  className="secondary-button"
                   type="button"
+                  aria-current={drawerView === "details" ? "page" : undefined}
                   onClick={() => {
-                    const nextEditing = !editingStudent;
-                    setEditingStudent(nextEditing);
+                    setDrawerView("details");
+                    setConfirmingStatus(false);
                   }}
                 >
-                  {editingStudent ? <X size={16} /> : <Pencil size={16} />}
-                  {editingStudent ? t("cancel") : t("editTransaction")}
+                  {t("details")}
                 </button>
-                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeStudentDetails}>
-                  <X size={18} />
-                </button>
-              </div>
-            </header>
-
-            <div className="space-y-5">
-              {!editingStudent ? (
-                <div className="library-student-detail-view">
-                  <LibraryStudentSummaryCard
-                    student={selectedStudent}
-                    expired={expired(selectedStudent)}
-                    onEditPhoto={() => setEditingStudent(true)}
-                  />
-                </div>
-              ) : null}
-
-              {editingStudent ? (
-                <form
-                  key={selectedStudent.id}
-                  className="form-grid two"
-                  onSubmit={(event) => submitWith(
-                    event,
-                    saveLibraryStudentAction,
-                    setNotice,
-                    startTransition,
-                    false,
-                    () => setEditingStudent(false),
-                  )}
+                <button
+                  type="button"
+                  aria-current={drawerView === "history" ? "page" : undefined}
+                  onClick={() => {
+                    setDrawerView("history");
+                    setConfirmingStatus(false);
+                  }}
                 >
-                  <input type="hidden" name="id" value={selectedStudent.id} />
-                  <h3 className="full-span section-title">{t("studentProfile")}</h3>
-                  <CompressedImageInput
-                    inputName="student_photo"
-                    label={t("studentPhoto")}
-                    previewLabel={t("photoPreview")}
-                    displayName={studentNameInputValue(selectedStudent)}
-                    initialImageUrl={selectedStudent.photo_url}
-                    variant="student"
-                  />
-                  <label>
-                    {t("name")}
-                    <input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required />
-                  </label>
-                  <label>
-                    {t("rollNumber")}
-                    <input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required />
-                  </label>
-                  <label>
-                    {t("phone")}
-                    <input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" />
-                  </label>
-                  <label className="full-span">
-                    {t("address")}
-                    <input name="address" defaultValue={selectedStudent.address ?? ""} />
-                  </label>
-                  <label>
-                    {t("aadharNumber")}
-                    <input name="aadhar_number" defaultValue={selectedStudent.aadhar_number ?? ""} inputMode="numeric" />
-                  </label>
-                  <CompressedImageInput
-                    inputName="aadhar_photo"
-                    label={t("aadharFront")}
-                    previewLabel={t("aadharFrontPreview")}
-                    initialImageUrl={selectedStudent.aadhar_photo_url}
-                    variant="document"
-                  />
-                  <CompressedImageInput
-                    inputName="aadhar_back_photo"
-                    label={t("aadharBack")}
-                    previewLabel={t("aadharBackPreview")}
-                    initialImageUrl={selectedStudent.aadhar_back_photo_url}
-                    variant="document"
-                  />
-                  <label>
-                    {t("seatNumber")}
-                    <input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} />
-                  </label>
-                  <label>
-                    {t("lockerNumber")}
-                    <input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} />
-                  </label>
-                  <div className="full-span flex flex-wrap gap-2">
-                    <button className="primary-button" type="submit">
-                      {t("save")}
-                    </button>
-                    <button className="secondary-button" type="button" onClick={() => setEditingStudent(false)}>
-                      {t("cancel")}
-                    </button>
-                  </div>
-                </form>
-              ) : null}
-
-              <form
-                className="student-status-action-row"
-                onSubmit={(event) => submitAndClose(
-                  event,
-                  setStudentStatusAction,
-                  setNotice,
-                  startTransition,
-                  () => {
-                    setQuery("");
-                    setListMode(selectedStudent.active ? "inactive" : "active");
-                    closeStudentDetails();
-                  },
-                )}
-              >
-                <input type="hidden" name="student_type" value="library" />
-                <input type="hidden" name="id" value={selectedStudent.id} />
-                <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} />
-                <input type="hidden" name="active" value={selectedStudent.active ? "false" : "true"} />
-                <button className={selectedStudent.active ? "secondary-button tone-cancel" : "secondary-button tone-approve"} type="submit">
-                  {selectedStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
-                  {selectedStudent.active ? t("markInactive") : t("reactivate")}
+                  {t("subscriptionHistory")} <span>{drawerHistoryTotal}</span>
                 </button>
-              </form>
+              </nav>
+            ) : null}
 
-              <div className="rounded-lg bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Plus size={16} />
-                  <h4 className="font-headline text-base font-bold">
-                    {Number(selectedStudent.dues_amount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}
-                  </h4>
-                </div>
-                <PaymentForm
-                  key={`${selectedStudent.id}-${selectedStudent.last_payment_id ?? selectedStudent.updated_at}`}
-                  type="library"
-                  rooms={[]}
-                  mainCourses={[]}
-                  skillCourses={[]}
-                  referrals={[]}
-                  courseStudents={courseStudentRows}
-                  libraryStudents={students}
-                  initialLibraryStudent={selectedStudent}
-                  setNotice={setNotice}
-                  startTransition={startTransition}
-                />
-              </div>
-
-              <div className="rounded-lg bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h4 className="font-headline text-base font-bold">{t("subscriptionHistory")}</h4>
-                  <span className="text-xs text-on-surface-variant">{historyQuery.isFetching ? t("saving") : `${historyPayments.length}`}</span>
-                </div>
-                <div className="space-y-2">
-                  {historyQuery.error ? <p className="text-sm text-error">{historyQuery.error instanceof Error ? historyQuery.error.message : "Could not load history."}</p> : null}
-                  {historyPayments.slice(0, 8).map((payment) => (
-                    <div key={payment.id} className="subscription-history-row">
-                      <div className="min-w-0">
-                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
-                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)} · {paymentModeLabel(payment, t)} · {labelForStatus(payment.approval_status, t)}</p>
-                        <p>{t("paymentDate")} {displayDate(payment.payment_date)}</p>
-                      </div>
-                      <div className="subscription-amount-grid">
-                        <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
-                        <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
-                        <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
-                        <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
-                      </div>
-                    </div>
-                  ))}
-                  {historyPayments.length === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {selectedCourseStudent ? (
-        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={courseStudentDisplayName(selectedCourseStudent, t)}>
-          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
-          <section className="action-sheet library-student-sheet">
-            <header className="sheet-header">
-              <div>
-                <p className="eyebrow">{selectedCourseStudent.courseName}</p>
-                <h2>{t("studentDetails")}</h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="secondary-button" type="button" onClick={() => setEditingStudent((value) => !value)}>
-                  {editingStudent ? <X size={16} /> : <Pencil size={16} />}
-                  {editingStudent ? t("cancel") : t("editTransaction")}
-                </button>
-                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeStudentDetails}>
-                  <X size={18} />
-                </button>
-              </div>
-            </header>
-
-            <div className="space-y-5">
-              {!editingStudent ? (
-                <section className="library-student-summary-card">
-                  <div className="library-student-summary-top">
-                    <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="detail" />
-                    <div className="library-student-summary-identity">
-                      <span className="library-student-roll-badge">#{selectedCourseStudent.rollNumber ?? "-"}</span>
-                      <h3>{courseStudentDisplayName(selectedCourseStudent, t)}</h3>
-                      <p>{selectedCourseStudent.courseName}</p>
-                    </div>
-                    <span className={`library-expiry-chip ${selectedCourseStudent.subscriptionEndDate && selectedCourseStudent.subscriptionEndDate < today ? "expired" : ""}`}>
-                      {selectedCourseStudent.active
-                        ? subscriptionExpiryStatusLabel(selectedCourseStudent.subscriptionEndDate, today, t)
-                        : t("inactiveStudents")}
-                    </span>
+            <div className="student-drawer-body">
+              {confirmingStatus ? (
+                <section className="student-status-confirmation" role="alertdialog" aria-label={drawerActive ? t("markInactive") : t("reactivate")}>
+                  <div>
+                    <strong>{drawerActive ? t("markInactive") : t("reactivate")}?</strong>
+                    <p>
+                      {drawerActive
+                        ? "The student moves to Inactive. Their profile, subscription history, and payments stay unchanged."
+                        : "The student returns to Active with the same profile and subscription history."}
+                    </p>
                   </div>
-                  <div className="library-student-summary-grid">
-                    <div className="important">
-                      <span>{t("subscriptionPeriod")}</span>
-                      <strong>{displayDateRange(selectedCourseStudent.subscriptionStartDate, selectedCourseStudent.subscriptionEndDate, t)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("timing")}</span>
-                      <strong>{displayTimeRange(selectedCourseStudent.startTime, selectedCourseStudent.endTime)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("lastPayment")}</span>
-                      <strong>{displayDate(selectedCourseStudent.lastPaymentDate)}</strong>
-                    </div>
-                    <div>
-                      <span>{t("aadharFront")}</span>
-                      <StudentDocumentPreview imageUrl={selectedCourseStudent.aadharPhotoUrl} previewLabel={t("aadharFrontPreview")} />
-                    </div>
-                    <div>
-                      <span>{t("aadharBack")}</span>
-                      <StudentDocumentPreview imageUrl={selectedCourseStudent.aadharBackPhotoUrl} previewLabel={t("aadharBackPreview")} />
-                    </div>
-                  </div>
-                  <div className="library-student-summary-money">
-                    <span>{t("fee")} <strong>{displayMoneyValue(selectedCourseStudent.feeAmount)}</strong></span>
-                    <span>{t("paid")} <strong>{displayMoneyValue(selectedCourseStudent.paidAmount)}</strong></span>
-                    <span>{t("dues")} <strong>{displayMoneyValue(selectedCourseStudent.duesAmount)}</strong></span>
-                    <span>{t("advance")} <strong>{displayMoneyValue(selectedCourseStudent.advanceAmount)}</strong></span>
+                  <div className="student-status-confirmation-actions">
+                    <button className="secondary-button" type="button" onClick={() => setConfirmingStatus(false)}>{t("cancel")}</button>
+                    <form
+                      onSubmit={(event) => submitAndClose(
+                        event,
+                        setStudentStatusAction,
+                        setNotice,
+                        startTransition,
+                        () => {
+                          setQuery("");
+                          setListMode(drawerActive ? "inactive" : "active");
+                          closeStudentDetails();
+                        },
+                      )}
+                    >
+                      <input type="hidden" name="student_type" value={drawerKind} />
+                      <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                      {selectedStudent ? <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} /> : null}
+                      <input type="hidden" name="active" value={drawerActive ? "false" : "true"} />
+                      <button className={drawerActive ? "secondary-button tone-cancel" : "primary-button"} type="submit">
+                        {drawerActive ? t("markInactive") : t("reactivate")}
+                      </button>
+                    </form>
                   </div>
                 </section>
-              ) : (
+              ) : null}
+
+              {editingStudent && selectedStudent ? (
                 <form
-                  key={selectedCourseStudent.paymentId}
-                  className="form-grid two"
-                  onSubmit={(event) => submitWith(
-                    event,
-                    saveCourseStudentAction,
-                    setNotice,
-                    startTransition,
-                    false,
-                    () => setEditingStudent(false),
-                  )}
+                  key={`library-profile-${selectedStudent.id}`}
+                  className="form-grid two student-profile-edit-form"
+                  onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false, () => setEditingStudent(false))}
                 >
-                  <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId ?? ""} />
-                  <label>
-                    {t("name")}
-                    <input name="customer_name" defaultValue={courseStudentDisplayName(selectedCourseStudent, t)} required />
-                  </label>
-                  <label>
-                    {t("rollNumber")}
-                    <input name="roll_number" defaultValue={selectedCourseStudent.rollNumber ?? ""} required />
-                  </label>
-                  <CompressedImageInput
-                    inputName="aadhar_photo"
-                    label={t("aadharFront")}
-                    previewLabel={t("aadharFrontPreview")}
-                    initialImageUrl={selectedCourseStudent.aadharPhotoUrl}
-                    variant="document"
-                  />
-                  <CompressedImageInput
-                    inputName="aadhar_back_photo"
-                    label={t("aadharBack")}
-                    previewLabel={t("aadharBackPreview")}
-                    initialImageUrl={selectedCourseStudent.aadharBackPhotoUrl}
-                    variant="document"
-                  />
-                  <label>
-                    {t("startDate")}
-                    <input name="start_date" type="date" defaultValue={selectedCourseStudent.subscriptionStartDate ?? ""} required />
-                  </label>
-                  <label>
-                    {t("endDate")}
-                    <input name="end_date" type="date" defaultValue={selectedCourseStudent.subscriptionEndDate ?? ""} required />
-                  </label>
-                  <label>
-                    {t("startTime")}
-                    <input name="start_time" type="time" defaultValue={selectedCourseStudent.startTime?.slice(0, 5) ?? "06:00"} required />
-                  </label>
-                  <label>
-                    {t("endTime")}
-                    <input name="end_time" type="time" defaultValue={selectedCourseStudent.endTime?.slice(0, 5) ?? "07:00"} required />
-                  </label>
+                  <input type="hidden" name="id" value={selectedStudent.id} />
+                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={studentNameInputValue(selectedStudent)} initialImageUrl={selectedStudent.photo_url} variant="student" />
+                  <label>{t("name")}<input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required /></label>
+                  <label>{t("rollNumber")}<input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required /></label>
+                  <label>{t("phone")}<input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" /></label>
+                  <label className="full-span">{t("address")}<input name="address" defaultValue={selectedStudent.address ?? ""} /></label>
+                  <label>{t("aadharNumber")}<input name="aadhar_number" defaultValue={selectedStudent.aadhar_number ?? ""} inputMode="numeric" /></label>
+                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedStudent.aadhar_photo_url} variant="document" />
+                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedStudent.aadhar_back_photo_url} variant="document" />
+                  <label>{t("seatNumber")}<input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} /></label>
+                  <label>{t("lockerNumber")}<input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} /></label>
                   <div className="full-span flex flex-wrap gap-2">
                     <button className="primary-button" type="submit">{t("save")}</button>
                     <button className="secondary-button" type="button" onClick={() => setEditingStudent(false)}>{t("cancel")}</button>
                   </div>
                 </form>
-              )}
+              ) : null}
 
-              <form
-                className="student-status-action-row"
-                onSubmit={(event) => submitAndClose(
-                  event,
-                  setStudentStatusAction,
-                  setNotice,
-                  startTransition,
-                  () => {
-                    setQuery("");
-                    setListMode(selectedCourseStudent.active ? "inactive" : "active");
-                    closeStudentDetails();
-                  },
-                )}
-              >
-                <input type="hidden" name="student_type" value="course" />
-                <input type="hidden" name="id" value={selectedCourseStudent.id} />
-                <input type="hidden" name="active" value={selectedCourseStudent.active ? "false" : "true"} />
-                <button className={selectedCourseStudent.active ? "secondary-button tone-cancel" : "secondary-button tone-approve"} type="submit">
-                  {selectedCourseStudent.active ? <UserX size={16} /> : <UserCheck size={16} />}
-                  {selectedCourseStudent.active ? t("markInactive") : t("reactivate")}
-                </button>
-              </form>
+              {editingStudent && selectedCourseStudent ? (
+                <form
+                  key={`course-profile-${selectedCourseStudent.id}`}
+                  className="form-grid two student-profile-edit-form"
+                  onSubmit={(event) => submitWith(event, saveCourseStudentAction, setNotice, startTransition, false, () => setEditingStudent(false))}
+                >
+                  <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId ?? ""} />
+                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={drawerName} initialImageUrl={selectedCourseStudent.photoUrl} variant="student" />
+                  <label>{t("name")}<input name="customer_name" defaultValue={drawerName} required /></label>
+                  <label>{t("rollNumber")}<input name="roll_number" defaultValue={selectedCourseStudent.rollNumber ?? ""} required /></label>
+                  <label>{t("phone")}<input name="phone_number" defaultValue={selectedCourseStudent.phoneNumber ?? ""} inputMode="tel" /></label>
+                  <label className="full-span">{t("address")}<input name="address" defaultValue={selectedCourseStudent.address ?? ""} /></label>
+                  <label>{t("aadharNumber")}<input name="aadhar_number" defaultValue={selectedCourseStudent.aadharNumber ?? ""} inputMode="numeric" /></label>
+                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedCourseStudent.aadharPhotoUrl} variant="document" />
+                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedCourseStudent.aadharBackPhotoUrl} variant="document" />
+                  <label>{t("startDate")}<input name="start_date" type="date" defaultValue={selectedCourseStudent.subscriptionStartDate ?? ""} required /></label>
+                  <label>{t("endDate")}<input name="end_date" type="date" defaultValue={selectedCourseStudent.subscriptionEndDate ?? ""} required /></label>
+                  <label>{t("startTime")}<input name="start_time" type="time" defaultValue={selectedCourseStudent.startTime?.slice(0, 5) ?? "06:00"} required /></label>
+                  <label>{t("endTime")}<input name="end_time" type="time" defaultValue={selectedCourseStudent.endTime?.slice(0, 5) ?? "07:00"} required /></label>
+                  <div className="full-span flex flex-wrap gap-2">
+                    <button className="primary-button" type="submit">{t("save")}</button>
+                    <button className="secondary-button" type="button" onClick={() => setEditingStudent(false)}>{t("cancel")}</button>
+                  </div>
+                </form>
+              ) : null}
 
-              <div className="rounded-lg bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Plus size={16} />
-                  <h4 className="font-headline text-base font-bold">{t("addSubscription")}</h4>
-                </div>
-                <PaymentForm
-                  key={`course-renewal-${selectedCourseStudent.id}-${selectedCourseStudent.paymentId}`}
-                  type="course"
-                  rooms={[]}
-                  mainCourses={courses.filter((course) => course.kind === "main")}
-                  skillCourses={courses.filter((course) => course.kind === "skill")}
-                  referrals={[]}
-                  courseStudents={courseStudentRows}
-                  libraryStudents={students}
-                  initialCourseStudent={selectedCourseStudent}
-                  initialCourseSource={selectedSource.type === "library" ? null : selectedSource}
-                  setNotice={setNotice}
-                  startTransition={startTransition}
-                />
-              </div>
-
-              <div className="rounded-lg bg-surface-container-low p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h4 className="font-headline text-base font-bold">{t("subscriptionHistory")}</h4>
-                  <span className="text-xs text-on-surface-variant">{courseHistoryPayments.length}</span>
-                </div>
-                <div className="space-y-2">
-                  {courseHistoryPayments.slice(0, 8).map((payment) => (
-                    <div key={payment.id} className="subscription-history-row">
-                      <div className="min-w-0">
-                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
-                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)} · {paymentModeLabel(payment, t)}</p>
-                        <p>{t("paymentDate")} {displayDate(payment.payment_date)}</p>
-                      </div>
-                      <div className="subscription-amount-grid">
-                        <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
-                        <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
-                        <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
-                        <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
-                      </div>
+              {!editingStudent && drawerView === "details" ? (
+                <div className="student-drawer-details">
+                  <section className="student-drawer-section">
+                    <div className="student-drawer-section-heading"><h3>{t("studentProfile")}</h3></div>
+                    <div className="student-drawer-detail-grid">
+                      <StudentDetailItem label={t("phone")} value={drawerPhoneHref ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a> : t("notAdded")} />
+                      <StudentDetailItem label={t("address")} value={displayTextValue(drawerAddress)} className="wide" />
+                      <StudentDetailItem label={t("aadharNumber")} value={displayTextValue(drawerAadharNumber)} />
+                      {selectedStudent ? <StudentDetailItem label={t("seatNumber")} value={displayTextValue(selectedStudent.seat_number)} /> : null}
+                      {selectedStudent ? <StudentDetailItem label={t("lockerNumber")} value={displayTextValue(selectedStudent.locker_number)} /> : null}
+                      {selectedCourseStudent ? <StudentDetailItem label={t("course")} value={selectedCourseStudent.courseName} /> : null}
+                      <StudentDetailItem label={t("aadharFront")} value={<StudentDocumentPreview imageUrl={drawerAadharFront} previewLabel={t("aadharFrontPreview")} />} />
+                      <StudentDetailItem label={t("aadharBack")} value={<StudentDocumentPreview imageUrl={drawerAadharBack} previewLabel={t("aadharBackPreview")} />} />
                     </div>
-                  ))}
+                  </section>
+                  <section className="student-drawer-section">
+                    <div className="student-drawer-section-heading"><h3>{t("subscription")}</h3><span className={`status-chip ${drawerStatusClass}`}>{drawerStatusLabel}</span></div>
+                    <div className="student-drawer-detail-grid">
+                      <StudentDetailItem label={t("subscriptionPeriod")} value={displayDateRange(drawerSubscriptionStart, drawerSubscriptionEnd, t)} className="wide important" />
+                      <StudentDetailItem label={t("timing")} value={displayTimeRange(drawerStartTime, drawerEndTime)} />
+                      <StudentDetailItem label={t("lastPayment")} value={displayDate(drawerLastPayment)} />
+                    </div>
+                    <div className="student-drawer-money-grid">
+                      <span>{t("fee")}<strong>{displayMoneyValue(drawerFee)}</strong></span>
+                      <span>{t("paid")}<strong>{displayMoneyValue(drawerPaid)}</strong></span>
+                      <span>{t("dues")}<strong>{displayMoneyValue(drawerDues)}</strong></span>
+                      <span>{t("advance")}<strong>{displayMoneyValue(drawerAdvance)}</strong></span>
+                    </div>
+                  </section>
                 </div>
-              </div>
+              ) : null}
+
+              {!editingStudent && drawerView === "history" ? (
+                <SubscriptionHistoryTimeline
+                  payments={drawerHistoryPayments}
+                  total={drawerHistoryTotal}
+                  error={drawerHistoryError}
+                  hasMore={drawerHasMoreHistory}
+                  loadingMore={drawerLoadingMoreHistory}
+                  onLoadOlder={() => void drawerHistoryQuery.fetchNextPage()}
+                />
+              ) : null}
+
+              {!editingStudent && drawerView === "subscription" && selectedStudent ? (
+                <section className="student-subscription-step">
+                  <div className="student-subscription-step-intro">
+                    <Plus size={18} />
+                    <div><h3>{Number(selectedStudent.dues_amount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}</h3><p>#{drawerRollNumber} · {drawerName}</p></div>
+                  </div>
+                  <PaymentForm
+                    key={`drawer-library-subscription-${selectedStudent.id}-${selectedStudent.last_payment_id ?? selectedStudent.updated_at}`}
+                    type="library"
+                    rooms={[]}
+                    mainCourses={[]}
+                    skillCourses={[]}
+                    referrals={[]}
+                    courseStudents={courseStudentRows}
+                    libraryStudents={students}
+                    initialLibraryStudent={selectedStudent}
+                    setNotice={setNotice}
+                    startTransition={startTransition}
+                    onSuccess={() => setDrawerView("details")}
+                  />
+                </section>
+              ) : null}
+
+              {!editingStudent && drawerView === "subscription" && selectedCourseStudent ? (
+                <section className="student-subscription-step">
+                  <div className="student-subscription-step-intro">
+                    <Plus size={18} />
+                    <div><h3>{t("addSubscription")}</h3><p>#{drawerRollNumber} · {drawerName}</p></div>
+                  </div>
+                  <PaymentForm
+                    key={`drawer-course-subscription-${selectedCourseStudent.id}-${selectedCourseStudent.paymentId ?? "new"}`}
+                    type="course"
+                    rooms={[]}
+                    mainCourses={courses.filter((course) => course.kind === "main")}
+                    skillCourses={courses.filter((course) => course.kind === "skill")}
+                    referrals={[]}
+                    courseStudents={courseStudentRows}
+                    libraryStudents={students}
+                    initialCourseStudent={selectedCourseStudent}
+                    initialCourseSource={selectedSource.type === "library" ? null : selectedSource}
+                    setNotice={setNotice}
+                    startTransition={startTransition}
+                    onSuccess={() => setDrawerView("details")}
+                  />
+                </section>
+              ) : null}
             </div>
-          </section>
+
+            {!editingStudent && drawerView !== "subscription" ? (
+              <footer className="student-drawer-footer">
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => {
+                    setConfirmingStatus(false);
+                    setDrawerView("subscription");
+                  }}
+                >
+                  <Plus size={18} />
+                  {selectedStudent && Number(selectedStudent.dues_amount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}
+                </button>
+              </footer>
+            ) : null}
+          </aside>
         </div>
       ) : null}
+
     </section>
   );
 }
@@ -6718,6 +6846,7 @@ function PaymentForm({
   const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? initialCoursePrefill?.rollNumber ?? defaultNewLibraryRollNumber);
   const [phoneNumber, setPhoneNumber] = useState(initialLibraryPrefill?.phoneNumber ?? "");
   const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
+  const [aadharNumber, setAadharNumber] = useState(initialCoursePrefill?.aadharNumber ?? "");
   const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? initialCoursePrefill?.seatNumber ?? "");
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? initialCourseRenewalRange?.startDate ?? todayIso());
@@ -6863,6 +6992,7 @@ function PaymentForm({
     setRollNumber(defaultNewLibraryRollNumber);
     setPhoneNumber("");
     setAddress("");
+    setAadharNumber("");
     setSeatNumber("");
     setLockerNumber("");
     setStartTime("06:00");
@@ -6883,6 +7013,7 @@ function PaymentForm({
     setRollNumber("");
     setPhoneNumber("");
     setAddress("");
+    setAadharNumber("");
     setSeatNumber("");
     setLockerNumber("");
     setStartTime("06:00");
@@ -6993,6 +7124,7 @@ function PaymentForm({
     setRollNumber(nextCourseRollNumberForSource(source));
     setPhoneNumber("");
     setAddress("");
+    setAadharNumber("");
     setSeatNumber("");
     setLockerNumber("");
     setStartTime("06:00");
@@ -7013,6 +7145,7 @@ function PaymentForm({
     setRollNumber("");
     setPhoneNumber("");
     setAddress("");
+    setAadharNumber("");
     setSeatNumber("");
     setLockerNumber("");
     setStartTime("06:00");
@@ -7057,8 +7190,9 @@ function PaymentForm({
     setSelectedCourseStudentId(values.id);
     setStudentName(values.name);
     setRollNumber(values.rollNumber);
-    setPhoneNumber("");
-    setAddress("");
+    setPhoneNumber(values.phoneNumber);
+    setAddress(values.address);
+    setAadharNumber(values.aadharNumber);
     setSeatNumber(values.seatNumber);
     setLockerNumber("");
     setStartTime(values.startTime);
@@ -7532,7 +7666,7 @@ function PaymentForm({
                             onClick={() => selectCourseStudent(record.id)}
                           >
                             <div className="library-search-result-main">
-                              <StudentAvatar displayName={displayName} className="picker" />
+                              <StudentAvatar displayName={displayName} imageUrl={record.photoUrl} className="picker" />
                               <span>
                                 <strong>{record.rollNumber ?? "-"} · {displayName}</strong>
                                 <small>
@@ -7557,7 +7691,7 @@ function PaymentForm({
                     <>
                       {!initialCourseStudent ? (
                         <div className="library-selected-profile with-photo full-span">
-                          <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} className="selected" />
+                          <StudentAvatar displayName={courseStudentDisplayName(selectedCourseStudent, t)} imageUrl={selectedCourseStudent.photoUrl} className="selected" />
                           <span>
                             <strong>{courseStudentDisplayName(selectedCourseStudent, t)}</strong>
                             <small>
@@ -7568,6 +7702,9 @@ function PaymentForm({
                       ) : null}
                       <input type="hidden" name="customer_name" value={studentName} />
                       <input type="hidden" name="roll_number" value={rollNumber} />
+                      <input type="hidden" name="phone_number" value={phoneNumber} />
+                      <input type="hidden" name="address" value={address} />
+                      <input type="hidden" name="aadhar_number" value={aadharNumber} />
                     </>
                   ) : null}
                   {courseMemberMode === "new" ? (
@@ -7592,6 +7729,25 @@ function PaymentForm({
                           </span>
                         ) : null}
                       </label>
+                      <label>
+                        {t("phone")}
+                        <input name="phone_number" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} inputMode="tel" />
+                      </label>
+                      <label className="full-span">
+                        {t("address")}
+                        <input name="address" value={address} onChange={(event) => setAddress(event.target.value)} />
+                      </label>
+                      <label>
+                        {t("aadharNumber")}
+                        <input name="aadhar_number" value={aadharNumber} onChange={(event) => setAadharNumber(event.target.value)} inputMode="numeric" />
+                      </label>
+                      <CompressedImageInput
+                        inputName="student_photo"
+                        label={t("studentPhoto")}
+                        previewLabel={t("photoPreview")}
+                        displayName={studentName}
+                        variant="student"
+                      />
                       <CompressedImageInput
                         inputName="aadhar_photo"
                         label={t("aadharFront")}

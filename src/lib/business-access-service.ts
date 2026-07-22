@@ -22,7 +22,7 @@ export async function resolveExactBusinessEmail(businessId: string, rawEmail: st
   const { data: profile, error } = await admin
     .from("profiles")
     .select("id,full_name,active,account_status")
-    .ilike("email", email)
+    .eq("email", email)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!profile) return { email, profile: null, membership: null };
@@ -92,7 +92,7 @@ export async function createOrRegenerateBusinessInvitation(input: {
     .from("business_invitations")
     .select("id")
     .eq("business_id", input.businessId)
-    .ilike("email", input.email)
+    .eq("email", input.email)
     .eq("status", "pending")
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
@@ -175,4 +175,3 @@ export async function revokeBusinessInvitation(input: { invitationId: string; bu
     entity_id: input.invitationId,
   });
 }
-
