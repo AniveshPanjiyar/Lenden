@@ -8,7 +8,7 @@ export default function Loading() {
         <div className="app-splash-copy">
           <p className="eyebrow">Lenden</p>
           <h1>Collections made clear</h1>
-          <p>Preparing your latest dashboard…</p>
+          <p>Opening Lenden…</p>
         </div>
         <div className="app-splash-progress" aria-hidden="true">
           <span />

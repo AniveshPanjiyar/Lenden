@@ -413,6 +413,11 @@ export type ClosingSummary = {
   closing: number;
 };
 
+export type CashBalanceSummary = {
+  profile_id: string;
+  balance: number;
+};
+
 export type PaymentTransferMutationPatch = {
   type: "payment-transfer";
   payment: Payment;
@@ -452,6 +457,7 @@ export type AppData = {
   movements: MoneyMovement[];
   ledger: LedgerEntry[];
   closingSummaries: ClosingSummary[];
+  cashBalances: CashBalanceSummary[];
   changeRequests: ChangeRequest[];
   agentSettlements: AgentSettlement[];
   notifications: AppNotification[];
@@ -459,8 +465,10 @@ export type AppData = {
 
 export type BootstrapPayload = Pick<
   AppData,
-  "businessContext" | "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals"
+  "businessContext" | "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals" | "notifications"
 >;
+
+export type WorkspaceBootstrapPayload = BootstrapPayload;
 
 export type DashboardPayload = Pick<
   AppData,
@@ -472,7 +480,76 @@ export type DashboardPayload = Pick<
   | "movements"
   | "ledger"
   | "closingSummaries"
+  | "cashBalances"
   | "changeRequests"
   | "agentSettlements"
   | "notifications"
 >;
+
+export type PageResult<T> = {
+  items: T[];
+  nextCursor: string | null;
+  total: number;
+};
+
+export type DashboardOverviewPayload = {
+  page: "dashboard";
+  payments: Payment[];
+  expenses: Expense[];
+  movements: MoneyMovement[];
+  ledger: LedgerEntry[];
+  closingSummaries: ClosingSummary[];
+  cashBalances: CashBalanceSummary[];
+  changeRequests: ChangeRequest[];
+  agentSettlements: AgentSettlement[];
+  notifications: AppNotification[];
+};
+
+export type TransactionPagePayload = {
+  page: "transactions";
+  payments: Payment[];
+  expenses: Expense[];
+  movements: MoneyMovement[];
+  ledger: LedgerEntry[];
+  changeRequests: ChangeRequest[];
+  agentSettlements: AgentSettlement[];
+  notifications: AppNotification[];
+};
+
+export type ClosingOverviewPayload = {
+  page: "closing";
+  payments: Payment[];
+  expenses: Expense[];
+  movements: MoneyMovement[];
+  ledger: LedgerEntry[];
+  closingSummaries: ClosingSummary[];
+  notifications: AppNotification[];
+};
+
+export type StudentRosterPayload = {
+  page: "students";
+  sourceId: string;
+  status: "active" | "live" | "inactive";
+  result: PageResult<LibraryStudent | CourseStudent>;
+  libraryStudents: LibraryStudent[];
+  courseStudents: CourseStudent[];
+  payments: Payment[];
+  notifications: AppNotification[];
+};
+
+export type StudentDetailPayload =
+  | { source: "library"; student: LibraryStudent }
+  | { source: "course"; student: CourseStudent };
+
+export type SettingsPagePayload = {
+  page: "settings";
+  changeRequests: ChangeRequest[];
+  notifications: AppNotification[];
+};
+
+export type OperationalPagePayload =
+  | DashboardOverviewPayload
+  | TransactionPagePayload
+  | ClosingOverviewPayload
+  | StudentRosterPayload
+  | SettingsPagePayload;

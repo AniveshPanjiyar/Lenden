@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useTransition, WheelEvent } from "react";
+import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +24,6 @@ import {
   Hotel,
   Landmark,
   LogOut,
-  Menu,
   Minus,
   MoreHorizontal,
   Pencil,
@@ -35,6 +34,7 @@ import {
   Settings,
   Share2,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   UserCheck,
   UserPlus,
@@ -68,12 +68,34 @@ import {
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
+import { clearPersistedQueryCache } from "@/components/query-provider";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, Payment, PaymentMode, Profile, ReferralCode, StudentHistoryPage } from "@/lib/types";
-import { rangeForPreset, type AppTab, type AppViewState, type DateFilterKey, type DateRangePreset, type DateRangeState, type TransactionFilter } from "@/lib/view-state";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentDetailPayload, StudentHistoryPage, StudentRosterPayload } from "@/lib/types";
+import {
+  applyAppViewStateToSearchParams,
+  defaultClosingFilters,
+  defaultDashboardFilters,
+  defaultTransactionFilters,
+  parseAppViewState,
+  rangeForPreset,
+  type AppTab,
+  type AppViewState,
+  type BusinessTypeFilter,
+  type ClosingFilterState,
+  type DashboardFilterState,
+  type DateFilterKey,
+  type DateRangePreset,
+  type DateRangeState,
+  type StudentFilterState,
+  type TransactionFilter,
+  type TransactionFilterState,
+  type TransactionModeFilter,
+  type TransactionRecordType,
+} from "@/lib/view-state";
 
 type Tab = AppTab;
+type OperationalTab = Extract<Tab, "home" | "payments" | "closing">;
 type Language = "en" | "hi";
 type ToastNotice = ActionResult & { id: string };
 type ActionModal = "positive" | "negative" | null;
@@ -318,6 +340,7 @@ const messages: Record<Language, Record<string, string>> = {
     code: "Code",
     closeNavigation: "Close navigation",
     closeModal: "Close modal",
+    openProfileMenu: "Open profile menu",
     collectDue: "Collect due",
     collectPayment: "Collect payment",
     collectMoney: "Collect money",
@@ -369,6 +392,21 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
+    filters: "Filters",
+    filterResults: "Filter results",
+    applyFilters: "Apply filters",
+    resetFilters: "Reset",
+    activeFilters: "Applied filters",
+    businessModule: "Business module",
+    allBusinesses: "All businesses",
+    transactionType: "Transaction type",
+    paymentMode: "Payment mode",
+    studentSource: "Student source",
+    studentStatus: "Student status",
+    cashTransfers: "Cash transfers",
+    agentPayouts: "Agent payouts",
+    filterDateError: "Choose a valid start and end date. The start date cannot be after the end date.",
+    businessWideBalance: "Business-wide balance · module filter does not change this amount",
     filterPayments: "Filter payments",
     fullName: "Full name",
     from: "From",
@@ -402,6 +440,8 @@ const messages: Record<Language, Record<string, string>> = {
     notAdded: "Not added",
     studentRecords: "Student records",
     studentSearch: "Search student",
+    clearSearch: "Clear search",
+    showActiveStudents: "Show active students",
     activeStudents: "Active students",
     ago: "ago",
     day: "day",
@@ -695,6 +735,7 @@ const messages: Record<Language, Record<string, string>> = {
     code: "कोड",
     closeNavigation: "मेनू बंद करें",
     closeModal: "बंद करें",
+    openProfileMenu: "प्रोफाइल मेनू खोलें",
     collectDue: "बाकी जमा करें",
     collectPayment: "पैसा जमा करें",
     collectMoney: "पैसा लें",
@@ -746,6 +787,21 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
+    filters: "फ़िल्टर",
+    filterResults: "नतीजे फ़िल्टर करें",
+    applyFilters: "फ़िल्टर लागू करें",
+    resetFilters: "रीसेट",
+    activeFilters: "लागू फ़िल्टर",
+    businessModule: "बिज़नेस मॉड्यूल",
+    allBusinesses: "सभी बिज़नेस",
+    transactionType: "लेन-देन प्रकार",
+    paymentMode: "भुगतान माध्यम",
+    studentSource: "छात्र स्रोत",
+    studentStatus: "छात्र स्थिति",
+    cashTransfers: "नकद ट्रांसफर",
+    agentPayouts: "एजेंट भुगतान",
+    filterDateError: "सही शुरू और समाप्ति तारीख चुनें। शुरू की तारीख समाप्ति तारीख के बाद नहीं हो सकती।",
+    businessWideBalance: "पूरे बिज़नेस का बैलेंस · मॉड्यूल फ़िल्टर से यह राशि नहीं बदलती",
     filterPayments: "छांटें",
     fullName: "पूरा नाम",
     from: "से",
@@ -779,6 +835,8 @@ const messages: Record<Language, Record<string, string>> = {
     notAdded: "नहीं जोड़ा गया",
     studentRecords: "छात्र रिकॉर्ड",
     studentSearch: "छात्र खोजें",
+    clearSearch: "खोज हटाएं",
+    showActiveStudents: "चालू छात्र दिखाएं",
     activeStudents: "चालू छात्र",
     ago: "पहले",
     day: "दिन",
@@ -1910,6 +1968,7 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
     rooms: data.rooms,
     courses: data.courses,
     referrals: data.referrals,
+    notifications: data.notifications,
   };
 }
 
@@ -1923,34 +1982,168 @@ function dashboardFromAppData(data: AppData): DashboardPayload {
     movements: data.movements,
     ledger: data.ledger,
     closingSummaries: data.closingSummaries,
+    cashBalances: data.cashBalances,
     changeRequests: data.changeRequests,
     agentSettlements: data.agentSettlements,
     notifications: data.notifications,
   };
 }
 
+function emptyDashboardPayload(): DashboardPayload {
+  return {
+    libraryStudents: [],
+    courseStudents: [],
+    studentPayments: [],
+    payments: [],
+    expenses: [],
+    movements: [],
+    ledger: [],
+    closingSummaries: [],
+    cashBalances: [],
+    changeRequests: [],
+    agentSettlements: [],
+    notifications: [],
+  };
+}
+
+function dashboardFromOperationalPage(payload: OperationalPagePayload): DashboardPayload {
+  const empty = emptyDashboardPayload();
+  if (payload.page === "dashboard") return { ...empty, ...payload };
+  if (payload.page === "transactions") return { ...empty, ...payload };
+  if (payload.page === "closing") return { ...empty, ...payload };
+  if (payload.page === "students") return {
+    ...empty,
+    libraryStudents: payload.libraryStudents,
+    courseStudents: payload.courseStudents,
+    payments: payload.payments,
+    notifications: payload.notifications,
+  };
+  return { ...empty, changeRequests: payload.changeRequests, notifications: payload.notifications };
+}
+
 function mergeCachedAppData(bootstrap: BootstrapPayload, dashboard: DashboardPayload): AppData {
   return {
     ...bootstrap,
     ...dashboard,
+    notifications: bootstrap.notifications ?? [],
   };
 }
 
-function dashboardDataSearchParams(dateRange: DateRangeState, dateFilterKey: DateFilterKey) {
+function dashboardDataSearchParams(
+  tab: AppTab,
+  dashboardFilters: DashboardFilterState,
+  transactionFilters: TransactionFilterState,
+  closingFilters: ClosingFilterState,
+  studentFilters: StudentFilterState,
+) {
   const params = new URLSearchParams();
+  const dateRange = tab === "payments"
+    ? transactionFilters.dateRange
+    : tab === "closing"
+      ? { preset: "custom" as const, from: closingFilters.date, to: closingFilters.date }
+      : dashboardFilters.dateRange;
+  const dateFilterKey = tab === "payments"
+    ? transactionFilters.dateFilterKey
+    : tab === "closing"
+      ? closingFilters.dateFilterKey
+      : dashboardFilters.dateFilterKey;
+  params.set("tab", tab);
   params.set("range", dateRange.preset);
   params.set("dateKey", dateFilterKey);
   if (dateRange.preset === "custom") {
     params.set("from", dateRange.from);
     params.set("to", dateRange.to);
   }
+  if (tab === "home" && dashboardFilters.businessType !== "all") params.set("dashBusiness", dashboardFilters.businessType);
+  if (tab === "payments") {
+    if (transactionFilters.businessType !== "all") params.set("txBusiness", transactionFilters.businessType);
+    if (transactionFilters.mode !== "all") params.set("txMode", transactionFilters.mode);
+  }
+  if (tab === "closing") {
+    params.set("closingDate", closingFilters.date);
+    params.set("closingDateKey", closingFilters.dateFilterKey);
+  }
+  if (tab === "library_students") {
+    params.set("studentSource", studentFilters.sourceId);
+    params.set("studentStatus", studentFilters.status);
+  }
   return params;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Request failed (${response.status})`);
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", signal });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { message?: string } | null;
+    throw new OperationalRequestError(body?.message ?? `Request failed (${response.status})`, response.status);
+  }
   return response.json() as Promise<T>;
+}
+
+class OperationalRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "OperationalRequestError";
+  }
+}
+
+function operationalPageName(tab: AppTab) {
+  if (tab === "payments") return "transactions";
+  if (tab === "closing") return "closing";
+  if (tab === "library_students") return "students";
+  if (tab === "settings") return "settings";
+  return "dashboard";
+}
+
+function isOperationalTab(tab: Tab): tab is OperationalTab {
+  return tab === "home" || tab === "payments" || tab === "closing";
+}
+
+const subscribeToHydration = () => () => {};
+const hydratedClientSnapshot = () => true;
+const serverSnapshot = () => false;
+
+function useHasHydrated() {
+  return useSyncExternalStore(subscribeToHydration, hydratedClientSnapshot, serverSnapshot);
+}
+
+type WorkspaceViewState = {
+  tab: Tab;
+  lastOperationalTab: OperationalTab;
+  dashboardFilters: DashboardFilterState;
+  transactionFilters: TransactionFilterState;
+  closingFilters: ClosingFilterState;
+  studentFilters: StudentFilterState;
+};
+
+type WorkspaceViewAction =
+  | { type: "replace"; value: AppViewState }
+  | { type: "tab"; value: SetStateAction<Tab> }
+  | { type: "last-operational-tab"; value: OperationalTab }
+  | { type: "dashboard"; value: SetStateAction<DashboardFilterState> }
+  | { type: "transactions"; value: SetStateAction<TransactionFilterState> }
+  | { type: "closing"; value: SetStateAction<ClosingFilterState> }
+  | { type: "students"; value: SetStateAction<StudentFilterState> };
+
+function applyStateUpdate<T>(current: T, update: SetStateAction<T>) {
+  return typeof update === "function" ? (update as (value: T) => T)(current) : update;
+}
+
+function workspaceViewReducer(state: WorkspaceViewState, action: WorkspaceViewAction): WorkspaceViewState {
+  if (action.type === "replace") {
+    return {
+      ...action.value,
+      lastOperationalTab: isOperationalTab(action.value.tab) ? action.value.tab : state.lastOperationalTab,
+    };
+  }
+  if (action.type === "tab") {
+    const tab = applyStateUpdate(state.tab, action.value);
+    return { ...state, tab, lastOperationalTab: isOperationalTab(tab) ? tab : state.lastOperationalTab };
+  }
+  if (action.type === "last-operational-tab") return { ...state, lastOperationalTab: action.value };
+  if (action.type === "dashboard") return { ...state, dashboardFilters: applyStateUpdate(state.dashboardFilters, action.value) };
+  if (action.type === "transactions") return { ...state, transactionFilters: applyStateUpdate(state.transactionFilters, action.value) };
+  if (action.type === "closing") return { ...state, closingFilters: applyStateUpdate(state.closingFilters, action.value) };
+  return { ...state, studentFilters: applyStateUpdate(state.studentFilters, action.value) };
 }
 
 function LogoutButton({ label }: { label: string }) {
@@ -1971,7 +2164,7 @@ function LogoutButton({ label }: { label: string }) {
         type="submit"
         disabled={pending}
         onClick={() => {
-          window.localStorage.removeItem("lenden-query-cache-v3");
+          clearPersistedQueryCache();
         }}
       >
         <LogOut size={20} />
@@ -1982,28 +2175,86 @@ function LogoutButton({ label }: { label: string }) {
 }
 
 export function AppShell({ data, initialViewState }: { data: AppData; initialViewState: AppViewState }) {
+  const hasHydrated = useHasHydrated();
   const businessId = data.businessContext.business.id;
   const cacheScope = `${data.profile.id}:${businessId}`;
   const initialUserIsSalesAgent = isSalesAgent(data.profile.role);
   const initialTab = initialUserIsSalesAgent && (initialViewState.tab === "closing" || initialViewState.tab === "settings" || initialViewState.tab === "library_students")
     ? "home"
     : initialViewState.tab;
-  const initialTransactionProfileId = initialViewState.transactionProfileId === "all"
+  const initialEnabledModules = new Set(data.businessContext.enabledModules);
+  const initialAvailableBusinessTypes = (Object.keys(businessLabels) as BusinessType[]).filter((businessType) =>
+    initialEnabledModules.has(businessType) && (
+      isOwnerish(data.profile.role) ||
+      data.businessContext.accessMode === "support" ||
+      data.permissions.includes(businessPermissions[businessType])
+    ),
+  );
+  const initialTransactionProfileId = initialViewState.transactionFilters.profileId === "all"
     ? data.profile.id
-    : data.profiles.some((profile) => profile.id === initialViewState.transactionProfileId)
-    ? initialViewState.transactionProfileId
+    : data.profiles.some((profile) => profile.id === initialViewState.transactionFilters.profileId)
+    ? initialViewState.transactionFilters.profileId
     : data.profile.id;
-  const initialTransactionFilter = initialViewState.transactionFilter;
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const initialTransactionFilters = {
+    ...initialViewState.transactionFilters,
+    profileId: initialTransactionProfileId,
+    businessType: initialViewState.transactionFilters.businessType === "all" || initialAvailableBusinessTypes.includes(initialViewState.transactionFilters.businessType)
+      ? initialViewState.transactionFilters.businessType
+      : "all" as const,
+  };
+  const initialStudentSourceIds = [
+    ...(initialAvailableBusinessTypes.includes("library") ? ["library"] : []),
+    ...(initialAvailableBusinessTypes.includes("course")
+      ? data.courses.filter((course) => course.active).map(studentRecordSourceId)
+      : []),
+  ];
+  const initialStudentSourceId = initialStudentSourceIds.includes(initialViewState.studentFilters.sourceId)
+    ? initialViewState.studentFilters.sourceId
+    : initialStudentSourceIds[0] ?? "library";
+  const initialStudentFilters = { ...initialViewState.studentFilters, sourceId: initialStudentSourceId };
+  const [workspaceView, dispatchWorkspaceView] = useReducer(workspaceViewReducer, {
+    tab: initialTab,
+    lastOperationalTab: isOperationalTab(initialTab) ? initialTab : "home",
+    dashboardFilters: {
+      ...initialViewState.dashboardFilters,
+      businessType: initialViewState.dashboardFilters.businessType === "all" || initialAvailableBusinessTypes.includes(initialViewState.dashboardFilters.businessType)
+        ? initialViewState.dashboardFilters.businessType
+        : "all",
+    },
+    transactionFilters: initialTransactionFilters,
+    closingFilters: initialViewState.closingFilters,
+    studentFilters: initialStudentFilters,
+  });
+  const { tab, lastOperationalTab, dashboardFilters, transactionFilters, closingFilters, studentFilters } = workspaceView;
+  const [historyShouldPush, setHistoryShouldPush] = useState(false);
+  const setTab = useCallback<Dispatch<SetStateAction<Tab>>>((value) => {
+    setHistoryShouldPush(true);
+    dispatchWorkspaceView({ type: "tab", value });
+  }, [dispatchWorkspaceView, setHistoryShouldPush]);
+  const setDashboardFilters = useCallback<Dispatch<SetStateAction<DashboardFilterState>>>((value) => {
+    setHistoryShouldPush(true);
+    dispatchWorkspaceView({ type: "dashboard", value });
+  }, [dispatchWorkspaceView, setHistoryShouldPush]);
+  const setTransactionFilters = useCallback<Dispatch<SetStateAction<TransactionFilterState>>>((value) => {
+    setHistoryShouldPush(true);
+    dispatchWorkspaceView({ type: "transactions", value });
+  }, [dispatchWorkspaceView, setHistoryShouldPush]);
+  const setClosingFilters = useCallback<Dispatch<SetStateAction<ClosingFilterState>>>((value) => {
+    setHistoryShouldPush(true);
+    dispatchWorkspaceView({ type: "closing", value });
+  }, [dispatchWorkspaceView, setHistoryShouldPush]);
+  const setStudentFilters = useCallback<Dispatch<SetStateAction<StudentFilterState>>>((value) => {
+    setHistoryShouldPush(true);
+    dispatchWorkspaceView({ type: "students", value });
+  }, [dispatchWorkspaceView, setHistoryShouldPush]);
   const [language, setLanguageState] = useState<Language>("en");
-  const [dateRange, setDateRange] = useState<DateRangeState>(initialViewState.dateRange);
-  const [dateFilterKey, setDateFilterKey] = useState<DateFilterKey>(initialViewState.dateFilterKey);
-  const [transactionProfileId, setTransactionProfileId] = useState(initialTransactionProfileId);
-  const [transactionFilter, setTransactionFilter] = useState<TransactionFilter>(initialTransactionFilter);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
   const [notificationOverrides, setNotificationOverrides] = useState<AppNotification[] | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navigationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const [actionModal, setActionModal] = useState<ActionModal>(null);
   const [selectedPositive, setSelectedPositive] = useState<PositiveFlow | null>(null);
   const [selectedNegative, setSelectedNegative] = useState<NegativeFlow | null>(null);
@@ -2011,50 +2262,133 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [actionBusyMessageKey, setActionBusyMessageKey] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const initialDashboardData = useMemo(() => dashboardFromAppData(data), [data]);
-  const initialDashboardParams = useMemo(
-    () => dashboardDataSearchParams(initialViewState.dateRange, initialViewState.dateFilterKey).toString(),
-    [initialViewState.dateFilterKey, initialViewState.dateRange],
-  );
+  const initialDashboardParams = dashboardDataSearchParams(
+    initialTab,
+    initialViewState.dashboardFilters,
+    initialTransactionFilters,
+    initialViewState.closingFilters,
+    initialStudentFilters,
+  ).toString();
   const dashboardParams = useMemo(
-    () => dashboardDataSearchParams(dateRange, dateFilterKey).toString(),
-    [dateFilterKey, dateRange],
+    () => dashboardDataSearchParams(tab, dashboardFilters, transactionFilters, closingFilters, studentFilters).toString(),
+    [closingFilters, dashboardFilters, studentFilters, tab, transactionFilters],
   );
+  const initialOperationalPage = operationalPageName(initialTab);
+  const activeOperationalPage = operationalPageName(tab);
+  const lastOperationalTabStorageKey = `lenden:last-operational-tab:${cacheScope}`;
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap", cacheScope],
-    queryFn: () => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`),
+    queryFn: ({ signal }) => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`, signal),
     initialData: () => bootstrapFromAppData(data),
-    refetchInterval: isOwnerish(data.profile.role) ? 120_000 : false,
-    refetchOnWindowFocus: true,
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
   });
   const dashboardQuery = useQuery({
-    queryKey: ["dashboard", cacheScope, dashboardParams],
-    queryFn: () => fetchJson<DashboardPayload>(`/api/businesses/${businessId}/dashboard?${dashboardParams}`),
-    initialData: dashboardParams === initialDashboardParams ? () => initialDashboardData : undefined,
-    placeholderData: (previousDashboard) => previousDashboard,
+    queryKey: ["operational", cacheScope, activeOperationalPage, dashboardParams],
+    queryFn: async ({ signal }) => dashboardFromOperationalPage(await fetchJson<OperationalPagePayload>(
+      `/api/businesses/${businessId}/operational/${activeOperationalPage}?${dashboardParams}`,
+      signal,
+    )),
+    initialData: activeOperationalPage === initialOperationalPage && dashboardParams === initialDashboardParams
+      ? () => initialDashboardData
+      : undefined,
+    placeholderData: (previousDashboard, previousQuery) =>
+      previousQuery?.queryKey[2] === activeOperationalPage ? previousDashboard : undefined,
+    staleTime: activeOperationalPage === "students" ? 120_000 : 30_000,
   });
+  const needsCollectionRoster = actionModal === "positive" && (selectedPositive === "library" || selectedPositive === "course");
+  const collectionRosterQuery = useQuery({
+    queryKey: ["collection-roster", cacheScope, selectedPositive, data.courses.map((course) => course.id).join(",")],
+    queryFn: async ({ signal }) => {
+      const sources = selectedPositive === "library"
+        ? ["library"]
+        : data.courses.filter((course) => course.active).map(studentRecordSourceId);
+      const pages = await Promise.all(sources.flatMap((sourceId) => (["active", "inactive"] as const).map((status) => {
+        const params = new URLSearchParams({ tab: "library_students", studentSource: sourceId, studentStatus: status, limit: "200" });
+        return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
+      })));
+      return {
+        ...emptyDashboardPayload(),
+        libraryStudents: pages.flatMap((page) => page.libraryStudents),
+        courseStudents: pages.flatMap((page) => page.courseStudents),
+      };
+    },
+    enabled: needsCollectionRoster,
+    staleTime: 120_000,
+  });
+  const prefetchOperationalFilters = useCallback((
+    nextTab: AppTab,
+    nextDashboardFilters: DashboardFilterState,
+    nextTransactionFilters: TransactionFilterState,
+    nextClosingFilters: ClosingFilterState,
+  ) => {
+    const page = operationalPageName(nextTab);
+    const params = dashboardDataSearchParams(
+      nextTab,
+      nextDashboardFilters,
+      nextTransactionFilters,
+      nextClosingFilters,
+      studentFilters,
+    ).toString();
+    return queryClient
+      .cancelQueries({ queryKey: ["operational", cacheScope, page], type: "inactive" })
+      .then(() => queryClient.prefetchQuery({
+        queryKey: ["operational", cacheScope, page, params],
+        queryFn: async ({ signal }) => dashboardFromOperationalPage(await fetchJson<OperationalPagePayload>(
+          `/api/businesses/${businessId}/operational/${page}?${params}`,
+          signal,
+        )),
+        staleTime: page === "students" ? 120_000 : 30_000,
+      }));
+  }, [businessId, cacheScope, queryClient, studentFilters]);
+  const emptyOperationalData = useMemo(() => emptyDashboardPayload(), []);
+  const fallbackDashboardData = activeOperationalPage === initialOperationalPage
+    ? initialDashboardData
+    : emptyOperationalData;
   const appData = useMemo(
-    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? initialDashboardData),
-    [bootstrapQuery.data, dashboardQuery.data, initialDashboardData],
+    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? fallbackDashboardData),
+    [bootstrapQuery.data, dashboardQuery.data, fallbackDashboardData],
   );
   const t = useMemo(() => (key: string) => messages[language][key] ?? messages.en[key] ?? key, [language]);
-  const notifications = notificationOverrides ?? appData.notifications;
+  const notifications = notificationOverrides ?? appData.notifications ?? [];
+  const notificationsRef = useRef(appData.notifications ?? []);
   const unreadNotifications = notifications.filter((notification) => !notification.read_at).length;
   const currentUserIsSalesAgent = isSalesAgent(appData.profile.role);
   const owner = isOwnerish(appData.profile.role);
   const primaryOwner = appData.profile.membership_role === "primary_owner";
   const manager = appData.profile.membership_role === "co_owner";
   const supportMode = appData.businessContext.accessMode === "support";
-  const enabledModules = new Set(appData.businessContext.enabledModules);
-  const permissions = activePermissions(appData.profile.role, appData.permissions).filter((permission) => {
+  const enabledModules = useMemo(() => new Set(appData.businessContext.enabledModules), [appData.businessContext.enabledModules]);
+  const permissions = useMemo(() => activePermissions(appData.profile.role, appData.permissions).filter((permission) => {
     const moduleType = (Object.keys(businessPermissions) as BusinessType[]).find((key) => businessPermissions[key] === permission);
     return !moduleType || enabledModules.has(moduleType);
-  });
+  }), [appData.permissions, appData.profile.role, enabledModules]);
   const canViewLibraryStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_library"));
-  const canViewStudentRecords = canViewLibraryStudents || (!currentUserIsSalesAgent && permissions.includes("collect_course"));
-  const visibleTabItems = currentUserIsSalesAgent
+  const canViewCourseStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_course"));
+  const canViewStudentRecords = canViewLibraryStudents || canViewCourseStudents;
+  const studentFilterSources = useMemo(
+    () => studentRecordSources(appData.courses, t, canViewLibraryStudents, canViewCourseStudents),
+    [appData.courses, canViewCourseStudents, canViewLibraryStudents, t],
+  );
+  const defaultStudentSourceId = studentFilterSources[0]?.id ?? "library";
+  const effectiveStudentSourceId = studentFilterSources.some((source) => source.id === studentFilters.sourceId)
+    ? studentFilters.sourceId
+    : defaultStudentSourceId;
+  const effectiveStudentFilters = { sourceId: effectiveStudentSourceId, status: studentFilters.status };
+  const availableBusinessTypes = useMemo(
+    () => (Object.keys(businessLabels) as BusinessType[]).filter((businessType) =>
+      enabledModules.has(businessType) && (owner || supportMode || permissions.includes(businessPermissions[businessType])),
+    ),
+    [enabledModules, owner, permissions, supportMode],
+  );
+  const visibleTabItems = useMemo(() => currentUserIsSalesAgent
     ? tabItems.filter((item) => item.id === "home" || item.id === "payments")
-    : tabItems.filter((item) => item.id !== "library_students" || canViewStudentRecords);
-  const bottomTabItems = visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing");
+    : tabItems.filter((item) => item.id !== "library_students" || canViewStudentRecords),
+  [canViewStudentRecords, currentUserIsSalesAgent]);
+  const bottomTabItems = useMemo(
+    () => visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing"),
+    [visibleTabItems],
+  );
 
   const pushNotice = useCallback((notice: ActionResult | null) => {
     if (!notice?.message) return;
@@ -2063,7 +2397,16 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     window.setTimeout(() => {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, notice.ok ? 5200 : 7600);
-  }, []);
+  }, [setToasts]);
+
+  useEffect(() => {
+    const accessError = [bootstrapQuery.error, dashboardQuery.error]
+      .find((error): error is OperationalRequestError => error instanceof OperationalRequestError && (error.status === 401 || error.status === 403));
+    if (!accessError) return;
+    clearPersistedQueryCache();
+    queryClient.clear();
+    window.location.assign(`/account?error=${encodeURIComponent(accessError.message)}`);
+  }, [bootstrapQuery.error, dashboardQuery.error, queryClient]);
 
   useEffect(() => {
     const savedLanguage = window.localStorage.getItem("lenden-language");
@@ -2071,6 +2414,63 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       queueMicrotask(() => setLanguageState(savedLanguage));
     }
   }, []);
+
+  useEffect(() => {
+    if (!isOperationalTab(tab)) {
+      const savedTab = window.sessionStorage.getItem(lastOperationalTabStorageKey);
+      if (savedTab === "home" || savedTab === "payments" || savedTab === "closing") {
+        dispatchWorkspaceView({ type: "last-operational-tab", value: savedTab });
+      }
+    }
+  }, [lastOperationalTabStorageKey, tab]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(lastOperationalTabStorageKey, lastOperationalTab);
+  }, [lastOperationalTab, lastOperationalTabStorageKey]);
+
+  useEffect(() => {
+    if (!sidebarOpen || !window.matchMedia("(max-width: 767px)").matches) return;
+    const panel = sidebarRef.current as HTMLElement | null;
+    const origin = navigationTriggerRef.current;
+    if (!panel) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusableSelector = "a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const focusable = () => [...panel.querySelectorAll<HTMLElement>(focusableSelector)];
+    (focusable()[0] ?? panel).focus();
+
+    function handleNavigationKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebarOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (controls.length === 0) {
+        event.preventDefault();
+        panel?.focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleNavigationKeydown);
+    return () => {
+      document.removeEventListener("keydown", handleNavigationKeydown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => origin?.focus());
+    };
+  }, [sidebarOpen]);
 
   useEffect(() => {
     const expiresAt = data.businessContext.supportSession?.expires_at;
@@ -2101,7 +2501,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
         refreshes.push(
           queryClient.refetchQueries({
-            queryKey: ["dashboard", cacheScope, dashboardParams],
+            queryKey: ["operational", cacheScope, activeOperationalPage, dashboardParams],
             exact: true,
             type: "active",
           }),
@@ -2124,12 +2524,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
     function applyPatchToCachedRanges(patch: MutationPatch) {
       const cachedDashboards = queryClient.getQueriesData<DashboardPayload>({
-        queryKey: ["dashboard", cacheScope],
+        queryKey: ["operational", cacheScope],
       });
       let reconciled = false;
       cachedDashboards.forEach(([queryKey, current]) => {
         if (!current) return;
-        const params = new URLSearchParams(String(queryKey[2] ?? ""));
+        const params = new URLSearchParams(String(queryKey[3] ?? ""));
         const preset = params.get("range") as DateRangePreset | null;
         const presetRange = rangeForPreset(preset ?? "today");
         const rangeFrom = params.get("from") ?? presetRange.from;
@@ -2176,7 +2576,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       window.removeEventListener(mutationCommittedEvent, commitMutation);
       setDocumentAppBusy(false);
     };
-  }, [appData.profile.id, cacheScope, dashboardParams, owner, queryClient, supportMode]);
+  }, [activeOperationalPage, appData.profile.id, cacheScope, dashboardParams, owner, queryClient, supportMode]);
 
   useEffect(() => {
     async function handlePullRefresh(event: Event) {
@@ -2191,7 +2591,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       try {
         await Promise.all([
           queryClient.refetchQueries({ queryKey: ["bootstrap", cacheScope], exact: true, type: "active" }),
-          queryClient.refetchQueries({ queryKey: ["dashboard", cacheScope, dashboardParams], exact: true, type: "active" }),
+          queryClient.refetchQueries({ queryKey: ["operational", cacheScope, activeOperationalPage, dashboardParams], exact: true, type: "active" }),
           queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }),
         ]);
       } catch (error) {
@@ -2206,32 +2606,79 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
     window.addEventListener(pullRefreshEvent, handlePullRefresh);
     return () => window.removeEventListener(pullRefreshEvent, handlePullRefresh);
-  }, [cacheScope, dashboardParams, pushNotice, queryClient]);
+  }, [activeOperationalPage, cacheScope, dashboardParams, pushNotice, queryClient]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    params.set("tab", tab);
-    params.set("range", dateRange.preset);
-    params.set("dateKey", dateFilterKey);
-    params.set("txUser", transactionProfileId);
-    params.set("txFilter", transactionFilter);
-    params.delete("settlementFilter");
+    notificationsRef.current = appData.notifications ?? [];
+  }, [appData.notifications]);
 
-    if (dateRange.preset === "custom") {
-      params.set("from", dateRange.from);
-      params.set("to", dateRange.to);
-    } else {
-      params.delete("from");
-      params.delete("to");
-    }
+  useEffect(() => {
+    const params = applyAppViewStateToSearchParams(
+      new URLSearchParams(window.location.search),
+      {
+        tab,
+        dashboardFilters,
+        transactionFilters,
+        closingFilters,
+        studentFilters: { sourceId: effectiveStudentSourceId, status: studentFilters.status },
+      },
+      { profileId: appData.profile.id, studentSourceId: defaultStudentSourceId },
+    );
 
     const nextSearch = params.toString();
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) {
-      window.history.replaceState(null, "", nextUrl);
+      const method = historyShouldPush ? "pushState" : "replaceState";
+      window.history[method](null, "", nextUrl);
     }
-  }, [dateFilterKey, dateRange, tab, transactionFilter, transactionProfileId]);
+    if (historyShouldPush) queueMicrotask(() => setHistoryShouldPush(false));
+  }, [appData.profile.id, closingFilters, dashboardFilters, defaultStudentSourceId, effectiveStudentSourceId, historyShouldPush, setHistoryShouldPush, studentFilters.status, tab, transactionFilters]);
+
+  useEffect(() => {
+    function restoreHistoryState() {
+      const parsed = parseAppViewState(Object.fromEntries(new URLSearchParams(window.location.search)), appData.profile.id);
+      const nextTab = currentUserIsSalesAgent && (parsed.tab === "closing" || parsed.tab === "settings" || parsed.tab === "library_students")
+        ? "home"
+        : parsed.tab === "library_students" && !canViewStudentRecords
+          ? "home"
+          : parsed.tab;
+      const nextProfileId = parsed.transactionFilters.profileId === appData.profile.id
+        || appData.profiles.some((profile) => profile.id === parsed.transactionFilters.profileId)
+        ? parsed.transactionFilters.profileId
+        : appData.profile.id;
+      const nextDashboardBusiness = parsed.dashboardFilters.businessType === "all"
+        || availableBusinessTypes.includes(parsed.dashboardFilters.businessType)
+        ? parsed.dashboardFilters.businessType
+        : "all";
+      const nextTransactionBusiness = parsed.transactionFilters.businessType === "all"
+        || availableBusinessTypes.includes(parsed.transactionFilters.businessType)
+        ? parsed.transactionFilters.businessType
+        : "all";
+      const nextStudentSource = studentFilterSources.some((source) => source.id === parsed.studentFilters.sourceId)
+        ? parsed.studentFilters.sourceId
+        : defaultStudentSourceId;
+
+      setHistoryShouldPush(false);
+      dispatchWorkspaceView({
+        type: "replace",
+        value: {
+          tab: nextTab,
+          dashboardFilters: { ...parsed.dashboardFilters, businessType: nextDashboardBusiness },
+          transactionFilters: {
+            ...parsed.transactionFilters,
+            profileId: nextProfileId,
+            businessType: nextTransactionBusiness,
+          },
+          closingFilters: parsed.closingFilters,
+          studentFilters: { ...parsed.studentFilters, sourceId: nextStudentSource },
+        },
+      });
+    }
+
+    window.addEventListener("popstate", restoreHistoryState);
+    return () => window.removeEventListener("popstate", restoreHistoryState);
+  }, [appData.profile.id, appData.profiles, availableBusinessTypes, canViewStudentRecords, currentUserIsSalesAgent, defaultStudentSourceId, setHistoryShouldPush, studentFilterSources]);
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
@@ -2255,7 +2702,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           : null;
         if (assignedProfileId && assignedProfileId !== appData.profile.id && !owner && !supportMode) {
           queryClient.setQueriesData<DashboardPayload>(
-            { queryKey: ["dashboard", cacheScope] },
+            { queryKey: ["operational", cacheScope] },
             (current) => current ? {
               ...current,
               payments: current.payments.filter((payment) => payment.id !== paymentId),
@@ -2277,7 +2724,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         (payload) => {
           const notification = payload.new as AppNotification;
           setNotificationOverrides((current) => {
-            const source = current ?? appData.notifications;
+            const source = current ?? notificationsRef.current;
             return [notification, ...source.filter((item) => item.id !== notification.id)];
           });
           pushNotice({ ok: true, message: `${notification.title}: ${notification.body}` });
@@ -2314,12 +2761,36 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           dispatchRemotePatch({ type: "student", studentType: "course", student });
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "business_modules",
+          filter: `business_id=eq.${businessId}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ["bootstrap", cacheScope] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "business_memberships",
+          filter: `profile_id=eq.${appData.profile.id}`,
+        },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ["bootstrap", cacheScope] });
+        },
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [appData.notifications, appData.profile.id, businessId, cacheScope, owner, pushNotice, queryClient, supportMode]);
+  }, [appData.profile.id, businessId, cacheScope, owner, pushNotice, queryClient, supportMode]);
 
   function setLanguage(nextLanguage: Language) {
     setLanguageState(nextLanguage);
@@ -2396,9 +2867,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     }, {});
   }, [appData.allPermissions, appData.profiles]);
 
-  const selectedDateRange = normalizeDateRange(dateRange);
-  const selectedDateRangeLabel = formatDateRange(selectedDateRange, t);
-  const closingDate = selectedDateRange.to;
+  const dashboardDateRange = normalizeDateRange(dashboardFilters.dateRange);
+  const dashboardDateRangeLabel = formatDateRange(dashboardDateRange, t);
+  const transactionDateRange = normalizeDateRange(transactionFilters.dateRange);
+  const transactionDateRangeLabel = formatDateRange(transactionDateRange, t);
+  const closingDate = closingFilters.date;
   const appOwnerProfileIds = useMemo(() => ownerProfileIdSet(appData.profiles), [appData.profiles]);
   const postingEvents = useMemo(
     () => buildDailyPostingEvents({
@@ -2412,17 +2885,23 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     }),
     [appData.agentSettlements, appData.businessContext.business.timezone, appData.expenses, appData.ledger, appData.movements, appData.payments, appData.profiles],
   );
-  const selectedPostingEvents = useMemo(
-    () => postingEvents.filter((event) => dateInRange(postingEventDate(event, dateFilterKey), selectedDateRange)),
-    [dateFilterKey, postingEvents, selectedDateRange],
-  );
-  const transactionUserId = canViewSharedBusinessHistory ? transactionProfileId : appData.profile.id;
-  const closingProfiles = appData.profiles.filter((profile) => profile.active);
+  const selectedBusiness = dashboardFilters.businessType;
+  const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
+  const dashboardExpenseBusinesses = new Map(appData.expenses.map((expense) => [expense.id, expense.business_type ?? "general"]));
+  const selectedPostingEvents = postingEvents.filter((event) => {
+    if (!dateInRange(postingEventDate(event, dashboardFilters.dateFilterKey), dashboardDateRange)) return false;
+    if (selectedBusiness === "all") return true;
+    if (event.source_type === "payment") return dashboardPaymentBusinesses.get(event.source_id) === selectedBusiness;
+    if (event.source_type === "expense") return dashboardExpenseBusinesses.get(event.source_id) === selectedBusiness;
+    return false;
+  });
+  const transactionUserId = canViewSharedBusinessHistory ? transactionFilters.profileId : appData.profile.id;
+  const closingProfiles = useMemo(() => appData.profiles.filter((profile) => profile.active), [appData.profiles]);
   const closingSummaries = useMemo(
     () => {
       const withPostingFlow = (summary: UserClosingSummary) => ({
         ...summary,
-        ...postingFlowTotals(postingEventsForProfileDate(postingEvents, summary.profile.id, closingDate, dateFilterKey)),
+        ...postingFlowTotals(postingEventsForProfileDate(postingEvents, summary.profile.id, closingDate, closingFilters.dateFilterKey)),
       });
       if (appData.closingSummaries.length > 0) {
         return appData.closingSummaries
@@ -2461,7 +2940,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         )),
       );
     },
-    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingProfiles, dateFilterKey, postingEvents],
+    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingFilters.dateFilterKey, closingProfiles, postingEvents],
   );
   const agentIncentiveSummary = useMemo<AgentIncentiveSummary>(() => {
     const agentPayments = appData.payments.filter(
@@ -2506,36 +2985,41 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       .filter((item) => item.balance > 0);
   }, [appData.agentSettlements, appData.payments, appOwnerProfileIds, salesAgents]);
 
-  const totals = useMemo(() => {
-    const paymentEvents = selectedPostingEvents.filter((event) => event.source_type === "payment");
-    const expenseEvents = selectedPostingEvents.filter((event) => event.source_type === "expense");
-    const paymentsById = new Map(appData.payments.map((payment) => [payment.id, payment]));
-    const expensesById = new Map(appData.expenses.map((expense) => [expense.id, expense]));
-    return {
-      total: paymentEvents.reduce((sum, event) => sum + event.amount, 0),
-      cash: paymentEvents.reduce((sum, event) => sum + event.cash_amount, 0),
-      online: paymentEvents.reduce((sum, event) => sum + event.online_amount, 0),
-      expense: expenseEvents.reduce((sum, event) => sum + event.amount, 0),
-      byBusiness: Object.fromEntries(
-        Object.keys(businessLabels).map((business) => [
-          business,
-          paymentEvents
-            .filter((event) => paymentsById.get(event.source_id)?.business_type === business)
-            .reduce((sum, event) => sum + event.amount, 0),
-        ]),
-      ) as Record<BusinessType, number>,
-      expenseByBusiness: Object.fromEntries(
-        Object.keys(businessLabels).map((business) => [
-          business,
-          expenseEvents
-            .filter((event) => (expensesById.get(event.source_id)?.business_type ?? "general") === business)
-            .reduce((sum, event) => sum + event.amount, 0),
-        ]),
-      ) as Record<BusinessType, number>,
-    };
-  }, [appData.expenses, appData.payments, selectedPostingEvents]);
+  const paymentEvents = selectedPostingEvents.filter((event) => event.source_type === "payment");
+  const expenseEvents = selectedPostingEvents.filter((event) => event.source_type === "expense");
+  const paymentsById = new Map(appData.payments.map((payment) => [payment.id, payment]));
+  const expensesById = new Map(appData.expenses.map((expense) => [expense.id, expense]));
+  const totals = {
+    total: paymentEvents.reduce((sum, event) => sum + event.amount, 0),
+    cash: paymentEvents.reduce((sum, event) => sum + event.cash_amount, 0),
+    online: paymentEvents.reduce((sum, event) => sum + event.online_amount, 0),
+    expense: expenseEvents.reduce((sum, event) => sum + event.amount, 0),
+    byBusiness: Object.fromEntries(
+      Object.keys(businessLabels).map((business) => [
+        business,
+        paymentEvents
+          .filter((event) => paymentsById.get(event.source_id)?.business_type === business)
+          .reduce((sum, event) => sum + event.amount, 0),
+      ]),
+    ) as Record<BusinessType, number>,
+    expenseByBusiness: Object.fromEntries(
+      Object.keys(businessLabels).map((business) => [
+        business,
+        expenseEvents
+          .filter((event) => (expensesById.get(event.source_id)?.business_type ?? "general") === business)
+          .reduce((sum, event) => sum + event.amount, 0),
+      ]),
+    ) as Record<BusinessType, number>,
+  };
 
   const cashBalances = useMemo(() => {
+    if (appData.cashBalances.length > 0) {
+      const balancesByProfile = new Map(appData.cashBalances.map((summary) => [summary.profile_id, numberValue(summary.balance)]));
+      return appData.profiles
+        .filter((profile) => balancesByProfile.has(profile.id))
+        .map((profile) => ({ profile, balance: balancesByProfile.get(profile.id) ?? 0 }));
+    }
+
     if (closingSummaries.length > 0) {
       return closingSummaries.map((summary) => ({
         profile: summary.profile,
@@ -2549,7 +3033,16 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         .filter((entry) => entry.account_profile_id === profile.id)
         .reduce((sum, entry) => sum + numberValue(entry.amount), 0),
     }));
-  }, [appData.ledger, appData.profiles, closingSummaries]);
+  }, [appData.cashBalances, appData.ledger, appData.profiles, closingSummaries]);
+  const transactionSelectableProfiles = (() => {
+    if (currentUserIsSalesAgent) return [];
+    if (owner) return appData.profiles.filter((item) => item.active);
+    const visibleProfileIds = new Set<string>([appData.profile.id]);
+    appData.payments.forEach((payment) => visibleProfileIds.add(paymentReviewProfileId(payment)));
+    appData.expenses.forEach((expense) => visibleProfileIds.add(expense.spent_by));
+    visibleProfileIds.add(transactionUserId);
+    return appData.profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
+  })();
 
   function canUsePayment(type: BusinessType | "expense") {
     if (currentUserIsSalesAgent) return false;
@@ -2565,7 +3058,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     } else {
       setTab(nextTab);
     }
+    setNotificationsOpen(false);
+    setFilterDrawerOpen(false);
     setSidebarOpen(false);
+  }
+
+  function leaveFocusedPage() {
+    changeTab(lastOperationalTab);
   }
 
   function openAction(nextModal: Exclude<ActionModal, null>) {
@@ -2580,26 +3079,80 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     setSelectedNegative(null);
   }
 
-  const activeDateRangeOptions = dateRangeOptions;
-  const showSharedDateRange = tab === "home" || tab === "payments";
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
-  const showPageHeadingRow = tab !== "library_students";
+  const focusedPage = tab === "library_students" || tab === "settings";
+  const showOperationalFilters = tab === "home" || tab === "payments" || tab === "closing";
+  const currentPageTitle = t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
+  const dateBasisLabel = (key: DateFilterKey) => key === "approval" ? t("approvalDate") : t("transactionDate");
+  const transactionActivityLabel = (activity: TransactionFilter) => {
+    if (activity === "cash_in") return t("cashIn");
+    if (activity === "cash_out") return t("cashOut");
+    if (activity === "pending") return t("pending");
+    if (activity === "transactions") return t("transactions");
+    return t("all");
+  };
+  const transactionRecordLabel = (recordType: TransactionRecordType) => {
+    if (recordType === "payment") return t("payments");
+    if (recordType === "expense") return t("expenses");
+    if (recordType === "transfer") return t("cashTransfers");
+    if (recordType === "agent_payout") return t("agentPayouts");
+    return t("allTypes");
+  };
+  const transactionModeLabel = (mode: TransactionModeFilter) => mode === "all" ? t("all") : mode === "mixed" ? t("mixed") : mode === "cash" ? t("cash") : t("online");
+  const scopeRangeLabel = (range: DateRangeState, formattedRange: string) => {
+    if (range.preset === "custom") return formattedRange;
+    const option = dateRangeOptions.find((item) => item.value === range.preset);
+    return option ? t(option.labelKey) : formattedRange;
+  };
+  const activeScopeLabel = tab === "home"
+    ? `${scopeRangeLabel(dashboardFilters.dateRange, dashboardDateRangeLabel)} · ${dateBasisLabel(dashboardFilters.dateFilterKey)}`
+    : tab === "payments"
+      ? `${scopeRangeLabel(transactionFilters.dateRange, transactionDateRangeLabel)} · ${dateBasisLabel(transactionFilters.dateFilterKey)}`
+      : `${closingDate} · ${dateBasisLabel(closingFilters.dateFilterKey)}`;
+  const activeFilterChips: { key: string; label: string; clear: () => void }[] = [];
+  if (tab === "home") {
+    if (dashboardFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: dashboardDateRangeLabel, clear: () => setDashboardFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
+    if (dashboardFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(dashboardFilters.dateFilterKey), clear: () => setDashboardFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
+    if (dashboardFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(dashboardFilters.businessType, t), clear: () => setDashboardFilters((current) => ({ ...current, businessType: "all" })) });
+  } else if (tab === "payments") {
+    if (transactionFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: transactionDateRangeLabel, clear: () => setTransactionFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
+    if (transactionFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(transactionFilters.dateFilterKey), clear: () => setTransactionFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
+    if (transactionFilters.profileId !== appData.profile.id) activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: appData.profile.id })) });
+    if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
+    if (transactionFilters.recordType !== "all") activeFilterChips.push({ key: "type", label: transactionRecordLabel(transactionFilters.recordType), clear: () => setTransactionFilters((current) => ({ ...current, recordType: "all" })) });
+    if (transactionFilters.mode !== "all") activeFilterChips.push({ key: "mode", label: transactionModeLabel(transactionFilters.mode), clear: () => setTransactionFilters((current) => ({ ...current, mode: "all" })) });
+    if (transactionFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(transactionFilters.businessType, t), clear: () => setTransactionFilters((current) => ({ ...current, businessType: "all" })) });
+  } else if (tab === "closing") {
+    if (closingFilters.date !== todayIso()) activeFilterChips.push({ key: "date", label: closingFilters.date, clear: () => setClosingFilters((current) => ({ ...current, date: todayIso() })) });
+    if (closingFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(closingFilters.dateFilterKey), clear: () => setClosingFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
+  }
   const busyMessage = actionBusyMessageKey
     ? t(actionBusyMessageKey)
     : pending
       ? t("saving")
       : null;
+  const operationalPagePending = dashboardQuery.isPending && !dashboardQuery.data;
+  const operationalPageRefreshing = hasHydrated && dashboardQuery.isFetching && !operationalPagePending;
+  const operationalPageBusy = hasHydrated && (operationalPagePending || operationalPageRefreshing);
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
     <div
-      className="app-root bg-surface text-on-surface antialiased min-h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container pb-24 md:pb-0"
+      className={`app-root bg-surface text-on-surface antialiased min-h-screen flex flex-col selection:bg-primary-container selection:text-on-primary-container ${focusedPage ? "focused-page-root" : "pb-24 md:pb-0"}`}
       onWheelCapture={disableNumberInputWheelChange}
     >
-      <header className="app-header bg-surface dark:bg-surface flex justify-between items-center px-4 py-3 w-full sticky top-0 z-40 transition-shadow border-b border-outline-variant/10 shadow-xs" id="main-header">
+      {!focusedPage ? <header className="app-header flex justify-between items-center px-4 py-3 w-full sticky top-0 z-40" id="main-header">
         <div className="app-header-brand flex items-center gap-3">
-          <button type="button" aria-label="Open Menu" className="mobile-menu-button header-icon-button text-primary dark:text-inverse-primary hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors rounded-full p-2 scale-95 duration-100 ease-in-out md:hidden cursor-pointer" onClick={() => setSidebarOpen(true)}>
-            <Menu size={22} />
+          <button
+            ref={navigationTriggerRef}
+            type="button"
+            aria-label={t("openProfileMenu")}
+            aria-controls="app-navigation-menu"
+            aria-expanded={sidebarOpen}
+            className="mobile-menu-button profile-menu-trigger rounded-full overflow-hidden border border-outline-variant/30 shadow-soft focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface md:hidden"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <img alt="" className="w-full h-full object-cover" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)} />
           </button>
           <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
           <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
@@ -2622,7 +3175,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             ) : null}
           </select>
           <span className="font-headline text-headline-sm font-semibold tracking-tight text-primary dark:text-inverse-primary">
-            {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
+            {currentPageTitle}
           </span>
         </div>
         <div className="app-header-actions flex items-center gap-3">
@@ -2637,11 +3190,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               <span className="absolute top-2 right-2.5 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
             ) : null}
           </button>
-          <button type="button" className="profile-avatar-button rounded-full overflow-hidden w-9 h-9 border border-outline-variant/30 shadow-soft focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface">
-            <img alt="Profile picture of user" className="w-full h-full object-cover" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)}/>
-          </button>
         </div>
-      </header>
+      </header> : null}
 
       {supportMode && appData.businessContext.supportSession ? (
         <div className="support-mode-banner" role="status">
@@ -2651,7 +3201,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         </div>
       ) : null}
 
-      <div className="app-shell-body flex flex-1 overflow-hidden relative w-full max-w-7xl mx-auto">
+      <div className={`app-shell-body flex flex-1 overflow-hidden relative w-full mx-auto ${focusedPage ? "focused-shell-body" : "max-w-7xl"}`}>
+        {!focusedPage ? <>
         {sidebarOpen && (
           <button
             className="app-sidebar-scrim fixed inset-0 z-45 bg-black/40 backdrop-blur-xs md:hidden border-0 cursor-pointer"
@@ -2660,7 +3211,18 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             onClick={() => setSidebarOpen(false)}
           />
         )}
-        <aside className={`app-sidebar fixed inset-y-0 left-0 z-50 flex flex-col bg-surface-container-low dark:bg-surface-container-lowest h-full w-80 shadow-2xl py-6 overflow-y-auto transition-transform duration-300 md:sticky md:top-[64px] md:h-[calc(100vh-64px)] md:shadow-xl md:rounded-r-xl ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0 md:flex'}`}>
+        <aside
+          aria-label={t("main")}
+          aria-modal={sidebarOpen ? true : undefined}
+          className={`app-sidebar fixed inset-y-0 left-0 z-50 flex flex-col bg-surface-container-low dark:bg-surface-container-lowest h-full w-80 shadow-2xl py-6 overflow-y-auto transition-transform duration-300 md:sticky md:top-[64px] md:h-[calc(100vh-64px)] md:shadow-xl md:rounded-r-xl ${sidebarOpen ? 'is-open translate-x-0' : 'is-closed -translate-x-full md:translate-x-0 md:flex'}`}
+          id="app-navigation-menu"
+          ref={sidebarRef}
+          role={sidebarOpen ? "dialog" : undefined}
+          tabIndex={-1}
+        >
+          <button className="app-sidebar-close grid md:hidden" type="button" aria-label={t("closeNavigation")} onClick={() => setSidebarOpen(false)}>
+            <X size={20} />
+          </button>
           <div className="app-sidebar-profile px-6 mb-8 flex items-center gap-4">
             <img alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)}/>
             <div>
@@ -2730,86 +3292,60 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             </form>
           </div>
         </aside>
+        </> : null}
 
         <main
-          className="app-main flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8 w-full"
+          className={`app-main flex-1 overflow-y-auto w-full ${focusedPage ? "focused-page-main" : "px-4 py-6 md:px-8 md:py-8"}`}
+          aria-busy={operationalPageBusy}
           onInvalidCapture={handleInvalid}
         >
-          <div className="app-main-inner max-w-4xl mx-auto space-y-8">
-            {showPageHeadingRow ? (
-              <div className="page-heading-row flex justify-between items-center">
-                <div className="flex items-center gap-3 md:hidden">
-                  <h1 className="mobile-page-title font-headline text-2xl font-bold text-on-surface">
-                    {t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}
-                  </h1>
+          {focusedPage ? (
+            <header className="focused-page-header">
+              <button type="button" className="focused-page-back" onClick={leaveFocusedPage}>
+                <ArrowLeft size={20} />
+                <span>{t("back")}</span>
+              </button>
+              <div>
+                <p>{appData.businessContext.business.name}</p>
+                <h1>{currentPageTitle}</h1>
+              </div>
+            </header>
+          ) : null}
+          <div className={`app-main-inner mx-auto space-y-8 ${focusedPage ? "focused-page-content" : "max-w-4xl"}`}>
+            {operationalPageRefreshing ? (
+              <div className="operational-page-progress" role="status" aria-label="Updating results">
+                <span />
+              </div>
+            ) : null}
+            {showOperationalFilters ? (
+              <section className="operational-filter-toolbar" aria-label={t("activeFilters")}>
+                <div className="operational-filter-heading">
+                  <div>
+                    <h1>{t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}</h1>
+                    <p>{activeScopeLabel}</p>
+                  </div>
+                  <button className="operational-filter-trigger" type="button" onClick={() => setFilterDrawerOpen(true)}>
+                    <SlidersHorizontal size={18} />
+                    <span>{t("filters")}</span>
+                    {activeFilterChips.length > 0 ? <strong>{activeFilterChips.length}</strong> : null}
+                  </button>
                 </div>
-
-                <div className="page-controls controls-row flex items-center gap-2 ml-auto">
-                  {tab === "closing" ? (
-                    <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
-                      <CalendarDays size={19} />
-                      <input
-                        aria-label={t("settlementDate")}
-                        type="date"
-                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                        value={closingDate}
-                        onChange={(event) => {
-                          const nextDate = event.target.value || todayIso();
-                          setDateRange({ preset: "custom", from: nextDate, to: nextDate });
-                        }}
-                      />
-                    </div>
-                  ) : showSharedDateRange ? (
-                    <div className="app-date-filter date-filter date-range-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
-                      <CalendarDays size={19} />
-                      <select
-                        aria-label={t("dateRange")}
-                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                        value={dateRange.preset}
-                        onChange={(event) => setDateRange((current) => rangeForPreset(event.target.value as DateRangePreset, current))}
-                      >
-                        {activeDateRangeOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {t(option.labelKey)}
-                          </option>
-                        ))}
-                      </select>
-                      {dateRange.preset === "custom" ? (
-                        <div className="custom-date-inputs flex items-center gap-2 border-l border-outline-variant/30 pl-2 ml-2">
-                          <input
-                            aria-label={t("startDate")}
-                            type="date"
-                            className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                            value={dateRange.from}
-                            onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", from: event.target.value }))}
-                          />
-                          <span className="text-xs text-on-surface-variant font-bold">{t("rangeTo")}</span>
-                          <input
-                            aria-label={t("endDate")}
-                            type="date"
-                            className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                            value={dateRange.to}
-                            onChange={(event) => setDateRange((current) => ({ ...current, preset: "custom", to: event.target.value }))}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {tab === "home" || tab === "payments" || tab === "closing" ? (
-                    <label className="app-date-filter date-key-filter flex items-center gap-2 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
-                      <span className="date-key-label">{t("dateKey")}</span>
-                      <select
-                        aria-label={t("dateKey")}
-                        className="bg-transparent border-0 p-0 text-sm outline-hidden cursor-pointer"
-                        value={dateFilterKey}
-                        onChange={(event) => setDateFilterKey(event.target.value as DateFilterKey)}
-                      >
-                        <option value="approval">{t("approvalDate")}</option>
-                        <option value="transaction">{t("transactionDate")}</option>
-                      </select>
-                    </label>
-                  ) : null}
-                </div>
+                {activeFilterChips.length > 0 ? (
+                  <div className="operational-filter-chips">
+                    {activeFilterChips.map((chip) => (
+                      <button key={chip.key} type="button" onClick={chip.clear} aria-label={`${t("resetFilters")}: ${chip.label}`}>
+                        <span>{chip.label}</span>
+                        <X size={14} />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : !focusedPage ? (
+              <div className="page-heading-row flex justify-between items-center md:hidden">
+                <h1 className="mobile-page-title font-headline text-2xl font-bold text-on-surface">
+                  {currentPageTitle}
+                </h1>
               </div>
             ) : null}
 
@@ -2838,18 +3374,41 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 close={() => setNotificationsOpen(false)}
               />
             ) : null}
+            {filterDrawerOpen && showOperationalFilters ? (
+              <OperationalFilterDrawer
+                key={tab}
+                tab={tab}
+                dashboardFilters={dashboardFilters}
+                transactionFilters={transactionFilters}
+                closingFilters={closingFilters}
+                businessTypes={availableBusinessTypes}
+                transactionProfiles={transactionSelectableProfiles}
+                showTransactionProfile={!currentUserIsSalesAgent && canViewSharedBusinessHistory}
+                owner={owner}
+                salesAgent={currentUserIsSalesAgent}
+                defaultProfileId={appData.profile.id}
+                onApplyDashboard={setDashboardFilters}
+                onApplyTransactions={setTransactionFilters}
+                onApplyClosing={setClosingFilters}
+                onPrefetch={prefetchOperationalFilters}
+                onClose={() => setFilterDrawerOpen(false)}
+              />
+            ) : null}
 
-            {tab === "home" ? (
+            {operationalPagePending ? <OperationalPageSkeleton page={activeOperationalPage} /> : null}
+
+            {!operationalPagePending && tab === "home" ? (
               <HomeView
                 totals={totals}
                 cashBalances={cashBalances}
                 owner={owner}
                 data={appData}
-                postingEvents={postingEvents}
-                dateFilterKey={dateFilterKey}
-                dateRange={selectedDateRange}
-                dateRangePreset={dateRange.preset}
-                dateLabel={selectedDateRangeLabel}
+                postingEvents={selectedPostingEvents}
+                dateFilterKey={dashboardFilters.dateFilterKey}
+                dateRange={dashboardDateRange}
+                dateRangePreset={dashboardFilters.dateRange.preset}
+                dateLabel={dashboardDateRangeLabel}
+                businessTypeFilter={dashboardFilters.businessType}
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
@@ -2858,16 +3417,20 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {tab === "payments" ? (
+            {!operationalPagePending && tab === "payments" ? (
               <TransactionsView
-                dateLabel={selectedDateRangeLabel}
-                dateRange={selectedDateRange}
-                dateRangePreset={dateRange.preset}
-                dateFilterKey={dateFilterKey}
-                transactionFilter={transactionFilter}
-                setTransactionFilter={setTransactionFilter}
+                businessId={businessId}
+                cacheScope={cacheScope}
+                dateLabel={transactionDateRangeLabel}
+                dateRange={transactionDateRange}
+                dateRangePreset={transactionFilters.dateRange.preset}
+                dateFilterKey={transactionFilters.dateFilterKey}
+                transactionFilter={transactionFilters.activity}
                 transactionProfileId={transactionUserId}
-                setTransactionProfileId={setTransactionProfileId}
+                recordTypeFilter={transactionFilters.recordType}
+                modeFilter={transactionFilters.mode}
+                businessTypeFilter={transactionFilters.businessType}
+                openFilters={() => setFilterDrawerOpen(true)}
                 payments={appData.payments}
                 expenses={appData.expenses}
                 movements={appData.movements}
@@ -2886,7 +3449,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {tab === "library_students" && canViewStudentRecords ? (
+            {!operationalPagePending && tab === "library_students" && canViewStudentRecords ? (
               <LibraryStudentsView
                 businessId={businessId}
                 cacheScope={cacheScope}
@@ -2894,16 +3457,21 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 courseStudentRows={appData.courseStudents}
                 payments={appData.payments}
                 courses={appData.courses}
-                includeLibrary={canViewLibraryStudents}
+                studentSources={studentFilterSources}
+                selectedSourceId={effectiveStudentFilters.sourceId}
+                setSelectedSourceId={(sourceId) => setStudentFilters((current) => ({ ...current, sourceId }))}
+                listMode={effectiveStudentFilters.status}
+                setListMode={(status) => setStudentFilters((current) => ({ ...current, status }))}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
             ) : null}
 
-            {tab === "closing" ? (
+            {!operationalPagePending && tab === "closing" ? (
               <ClosingView
+                key={`${closingDate}-${closingFilters.dateFilterKey}`}
                 date={closingDate}
-                dateFilterKey={dateFilterKey}
+                dateFilterKey={closingFilters.dateFilterKey}
                 owner={owner}
                 profile={appData.profile}
                 summaries={closingSummaries}
@@ -2918,7 +3486,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {tab === "settings" ? (
+            {!operationalPagePending && tab === "settings" ? (
               <SettingsView
                 owner={owner}
                 canManageBusinessSettings={supportMode || appData.profile.membership_role === "primary_owner"}
@@ -2937,7 +3505,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         </main>
       </div>
 
-      <nav
+      {!focusedPage ? <nav
         className="mobile-bottom-nav md:hidden fixed bottom-0 left-0 w-full flex justify-around items-center pt-2 pb-safe-bottom bg-surface-container dark:bg-surface-container-highest z-45 border-t border-outline-variant/10 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]"
         style={{ gridTemplateColumns: `repeat(${bottomTabItems.length}, minmax(0, 1fr))` }}
         aria-label={t("main")}
@@ -2954,7 +3522,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             <span className="font-label text-[10px] font-medium truncate w-full text-center mt-1">{item.id === "payments" ? t("transaction") : t(item.labelKey)}</span>
           </button>
         ))}
-      </nav>
+      </nav> : null}
 
       {actionModal && !currentUserIsSalesAgent ? (
         <ActionSheet
@@ -2968,11 +3536,12 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
-          courseStudents={appData.courseStudents}
-          libraryStudents={appData.libraryStudents}
+          courseStudents={collectionRosterQuery.data?.courseStudents ?? appData.courseStudents}
+          libraryStudents={collectionRosterQuery.data?.libraryStudents ?? appData.libraryStudents}
+          studentOptionsLoading={needsCollectionRoster && collectionRosterQuery.isPending}
           receiveMoneyProfiles={receiveMoneyProfiles}
           sendMoneyProfiles={sendMoneyProfiles}
-          settlementDate={closingDate}
+          settlementDate={dashboardFilters.dateRange.to}
           agentIncentiveBalances={agentIncentiveBalances}
           canPayAgentIncentive={primaryOwner}
           closeAction={closeAction}
@@ -2983,6 +3552,24 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
     </div>
     </LanguageContext.Provider>
+  );
+}
+
+function OperationalPageSkeleton({ page }: { page: ReturnType<typeof operationalPageName> }) {
+  const cards = page === "dashboard" ? 4 : page === "students" ? 6 : 5;
+  return (
+    <section className={`operational-page-skeleton operational-page-skeleton-${page}`} aria-label={`Loading ${page}`}>
+      <div className="operational-skeleton-heading" />
+      <div className="operational-skeleton-grid">
+        {Array.from({ length: cards }, (_, index) => (
+          <div className="operational-skeleton-card" key={index}>
+            <span />
+            <strong />
+            <small />
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -3224,6 +3811,257 @@ function PendingReviewSheet({
   );
 }
 
+function FilterDateRangeFields({
+  value,
+  onChange,
+}: {
+  value: DateRangeState;
+  onChange: (value: DateRangeState) => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div className="operational-filter-section">
+      <div className="operational-filter-section-heading">
+        <CalendarDays size={18} />
+        <strong>{t("dateRange")}</strong>
+      </div>
+      <label className="operational-filter-field">
+        <span>{t("dateRange")}</span>
+        <select
+          value={value.preset}
+          onChange={(event) => onChange(rangeForPreset(event.target.value as DateRangePreset, value))}
+        >
+          {dateRangeOptions.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
+        </select>
+      </label>
+      {value.preset === "custom" ? (
+        <div className="operational-filter-date-grid">
+          <label className="operational-filter-field">
+            <span>{t("startDate")}</span>
+            <input type="date" value={value.from} onChange={(event) => onChange({ ...value, from: event.target.value })} />
+          </label>
+          <label className="operational-filter-field">
+            <span>{t("endDate")}</span>
+            <input type="date" value={value.to} onChange={(event) => onChange({ ...value, to: event.target.value })} />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FilterDateBasisFields({
+  value,
+  onChange,
+}: {
+  value: DateFilterKey;
+  onChange: (value: DateFilterKey) => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <fieldset className="operational-filter-section">
+      <legend>{t("dateKey")}</legend>
+      <div className="operational-filter-choice-grid">
+        {(["approval", "transaction"] as DateFilterKey[]).map((option) => (
+          <label className={value === option ? "selected" : ""} key={option}>
+            <input type="radio" name="filter-date-basis" value={option} checked={value === option} onChange={() => onChange(option)} />
+            <span>{option === "approval" ? t("approvalDate") : t("transactionDate")}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function OperationalFilterDrawer({
+  tab,
+  dashboardFilters,
+  transactionFilters,
+  closingFilters,
+  businessTypes,
+  transactionProfiles,
+  showTransactionProfile,
+  owner,
+  salesAgent,
+  defaultProfileId,
+  onApplyDashboard,
+  onApplyTransactions,
+  onApplyClosing,
+  onPrefetch,
+  onClose,
+}: {
+  tab: AppTab;
+  dashboardFilters: DashboardFilterState;
+  transactionFilters: TransactionFilterState;
+  closingFilters: ClosingFilterState;
+  businessTypes: BusinessType[];
+  transactionProfiles: Profile[];
+  showTransactionProfile: boolean;
+  owner: boolean;
+  salesAgent: boolean;
+  defaultProfileId: string;
+  onApplyDashboard: (filters: DashboardFilterState) => void;
+  onApplyTransactions: (filters: TransactionFilterState) => void;
+  onApplyClosing: (filters: ClosingFilterState) => void;
+  onPrefetch: (
+    tab: AppTab,
+    dashboardFilters: DashboardFilterState,
+    transactionFilters: TransactionFilterState,
+    closingFilters: ClosingFilterState,
+  ) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { t } = useLanguage();
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const [dashboardDraft, setDashboardDraft] = useState(dashboardFilters);
+  const [transactionDraft, setTransactionDraft] = useState(transactionFilters);
+  const [closingDraft, setClosingDraft] = useState(closingFilters);
+  const [error, setError] = useState("");
+  const mountDialog = useCallback((node: HTMLDialogElement | null) => {
+    dialogRef.current = node;
+    if (node && !node.open) node.showModal();
+  }, []);
+  const close = () => dialogRef.current?.close();
+  const pageTitle = t(tabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void onPrefetch(tab, dashboardDraft, transactionDraft, closingDraft);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [closingDraft, dashboardDraft, onPrefetch, tab, transactionDraft]);
+
+  function dateRangeIsValid(range: DateRangeState) {
+    return range.preset !== "custom" || Boolean(range.from && range.to && range.from <= range.to);
+  }
+
+  function resetDraft() {
+    setError("");
+    if (tab === "home") setDashboardDraft(defaultDashboardFilters());
+    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId));
+    if (tab === "closing") setClosingDraft(defaultClosingFilters());
+  }
+
+  function applyDraft() {
+    const range = tab === "home" ? dashboardDraft.dateRange : tab === "payments" ? transactionDraft.dateRange : null;
+    if (range && !dateRangeIsValid(range)) {
+      setError(t("filterDateError"));
+      return;
+    }
+    close();
+    window.requestAnimationFrame(() => {
+      if (tab === "home") onApplyDashboard(dashboardDraft);
+      if (tab === "payments") onApplyTransactions({
+        ...transactionDraft,
+        profileId: showTransactionProfile ? transactionDraft.profileId : defaultProfileId,
+      });
+      if (tab === "closing") onApplyClosing(closingDraft);
+    });
+  }
+
+  const activityOptions = owner
+    ? (["all", "cash_in", "cash_out", "transactions"] as TransactionFilter[])
+    : (["all", "cash_in", "cash_out", "pending"] as TransactionFilter[]);
+  const recordTypeOptions = salesAgent
+    ? (["all", "agent_payout"] as TransactionRecordType[])
+    : (["all", "payment", "expense", "transfer", "agent_payout"] as TransactionRecordType[]);
+  const activityLabel = (activity: TransactionFilter) => activity === "cash_in" ? t("cashIn") : activity === "cash_out" ? t("cashOut") : activity === "pending" ? t("pending") : activity === "transactions" ? t("transactions") : t("all");
+  const recordTypeLabel = (recordType: TransactionRecordType) => recordType === "payment" ? t("payments") : recordType === "expense" ? t("expenses") : recordType === "transfer" ? t("cashTransfers") : recordType === "agent_payout" ? t("agentPayouts") : t("allTypes");
+
+  return (
+    <dialog
+      aria-labelledby="operational-filter-title"
+      className="operational-filter-dialog"
+      onClick={(event) => { if (event.target === event.currentTarget) close(); }}
+      onClose={onClose}
+      ref={mountDialog}
+    >
+      <div className="operational-filter-drawer">
+        <header>
+          <div>
+            <p className="eyebrow">{pageTitle}</p>
+            <h2 id="operational-filter-title">{t("filterResults")}</h2>
+          </div>
+          <button type="button" onClick={close} aria-label={t("closeModal")}><X size={20} /></button>
+        </header>
+        <div className="operational-filter-body">
+          {tab === "home" ? (
+            <>
+              <FilterDateRangeFields value={dashboardDraft.dateRange} onChange={(dateRange) => setDashboardDraft((current) => ({ ...current, dateRange }))} />
+              <FilterDateBasisFields value={dashboardDraft.dateFilterKey} onChange={(dateFilterKey) => setDashboardDraft((current) => ({ ...current, dateFilterKey }))} />
+              <label className="operational-filter-field operational-filter-section">
+                <span>{t("businessModule")}</span>
+                <select value={dashboardDraft.businessType} onChange={(event) => setDashboardDraft((current) => ({ ...current, businessType: event.target.value as BusinessTypeFilter }))}>
+                  <option value="all">{t("allBusinesses")}</option>
+                  {businessTypes.map((businessType) => <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>)}
+                </select>
+              </label>
+            </>
+          ) : null}
+          {tab === "payments" ? (
+            <>
+              <FilterDateRangeFields value={transactionDraft.dateRange} onChange={(dateRange) => setTransactionDraft((current) => ({ ...current, dateRange }))} />
+              <FilterDateBasisFields value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
+              {showTransactionProfile ? (
+                <label className="operational-filter-field operational-filter-section">
+                  <span>{t("user")}</span>
+                  <select value={transactionDraft.profileId} onChange={(event) => setTransactionDraft((current) => ({ ...current, profileId: event.target.value }))}>
+                    {transactionProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.id === defaultProfileId ? `${profile.full_name} (${t("self")})` : profile.full_name}</option>)}
+                  </select>
+                </label>
+              ) : null}
+              <label className="operational-filter-field operational-filter-section">
+                <span>{t("direction")}</span>
+                <select value={transactionDraft.activity} onChange={(event) => setTransactionDraft((current) => ({ ...current, activity: event.target.value as TransactionFilter }))}>
+                  {activityOptions.map((activity) => <option key={activity} value={activity}>{activityLabel(activity)}</option>)}
+                </select>
+              </label>
+              <label className="operational-filter-field operational-filter-section">
+                <span>{t("transactionType")}</span>
+                <select value={transactionDraft.recordType} onChange={(event) => setTransactionDraft((current) => ({ ...current, recordType: event.target.value as TransactionRecordType }))}>
+                  {recordTypeOptions.map((recordType) => <option key={recordType} value={recordType}>{recordTypeLabel(recordType)}</option>)}
+                </select>
+              </label>
+              <label className="operational-filter-field operational-filter-section">
+                <span>{t("paymentMode")}</span>
+                <select value={transactionDraft.mode} onChange={(event) => setTransactionDraft((current) => ({ ...current, mode: event.target.value as TransactionModeFilter }))}>
+                  <option value="all">{t("all")}</option><option value="cash">{t("cash")}</option><option value="online">{t("online")}</option><option value="mixed">{t("mixed")}</option>
+                </select>
+              </label>
+              {businessTypes.length > 0 && !salesAgent ? (
+                <label className="operational-filter-field operational-filter-section">
+                  <span>{t("businessModule")}</span>
+                  <select value={transactionDraft.businessType} onChange={(event) => setTransactionDraft((current) => ({ ...current, businessType: event.target.value as BusinessTypeFilter }))}>
+                    <option value="all">{t("allBusinesses")}</option>
+                    {businessTypes.map((businessType) => <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>)}
+                  </select>
+                </label>
+              ) : null}
+            </>
+          ) : null}
+          {tab === "closing" ? (
+            <>
+              <label className="operational-filter-field operational-filter-section">
+                <span>{t("settlementDate")}</span>
+                <input type="date" value={closingDraft.date} onChange={(event) => setClosingDraft((current) => ({ ...current, date: event.target.value || todayIso() }))} />
+              </label>
+              <FilterDateBasisFields value={closingDraft.dateFilterKey} onChange={(dateFilterKey) => setClosingDraft((current) => ({ ...current, dateFilterKey }))} />
+            </>
+          ) : null}
+          {error ? <p className="operational-filter-error" role="alert">{error}</p> : null}
+        </div>
+        <footer>
+          <button className="operational-filter-reset" type="button" onClick={resetDraft}>{t("resetFilters")}</button>
+          <div>
+            <button className="secondary-button" type="button" onClick={close}>{t("cancel")}</button>
+            <button className="primary-button" type="button" onClick={applyDraft}>{t("applyFilters")}</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
+  );
+}
+
 function HomeView({
   totals,
   cashBalances,
@@ -3234,6 +4072,7 @@ function HomeView({
   dateRange,
   dateRangePreset,
   dateLabel,
+  businessTypeFilter,
   agentIncentiveSummary,
   agentReferralCodes,
   changeTab,
@@ -3256,6 +4095,7 @@ function HomeView({
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
   dateLabel: string;
+  businessTypeFilter: BusinessTypeFilter;
   agentIncentiveSummary: AgentIncentiveSummary;
   agentReferralCodes: ReferralCode[];
   changeTab: (tab: AppTab) => void;
@@ -3265,6 +4105,9 @@ function HomeView({
   const { t } = useLanguage();
   const [pendingReviewOpen, setPendingReviewOpen] = useState(false);
   const rangedPostingEvents = postingEvents.filter((event) => dateInRange(postingEventDate(event, dateFilterKey), dateRange));
+  const dashboardBusinessTypes = (Object.keys(businessLabels) as BusinessType[]).filter((business) => businessTypeFilter === "all" || business === businessTypeFilter);
+  const paymentMatchesBusiness = (payment: Payment) => businessTypeFilter === "all" || payment.business_type === businessTypeFilter;
+  const expenseMatchesBusiness = (expense: Expense) => businessTypeFilter === "all" || (expense.business_type ?? "general") === businessTypeFilter;
 
   // Outline: Calculate pending amounts and render either a personalized staff dashboard or owner business status.
   if (isSalesAgent(data.profile.role)) {
@@ -3312,6 +4155,7 @@ function HomeView({
     const myPendingPayments = data.payments.filter(
       (payment) =>
         payment.record_status === "active" &&
+        paymentMatchesBusiness(payment) &&
         isPendingReviewStatus(payment.approval_status) &&
         pendingInScope(payment.payment_date) &&
         paymentReviewProfileId(payment) === profileId,
@@ -3319,17 +4163,18 @@ function HomeView({
     const myPendingExpenses = data.expenses.filter(
       (expense) =>
         expense.record_status === "active" &&
+        expenseMatchesBusiness(expense) &&
         isPendingReviewStatus(expense.approval_status) &&
         pendingInScope(expense.expense_date) &&
         expense.spent_by === profileId,
     );
-    const myPendingSettlementMovements = data.movements.filter(
+    const myPendingSettlementMovements = businessTypeFilter === "all" ? data.movements.filter(
       (movement) =>
         movement.status === "pending" &&
         movement.type === "settlement" &&
         pendingInScope(indiaDateIso(movement.created_at)) &&
         (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
-    );
+    ) : [];
     const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
     const myBalance = myLedgerBalance + myPendingCash;
     const myPostingEvents = rangedPostingEvents.filter((event) => event.profile_id === profileId);
@@ -3356,7 +4201,7 @@ function HomeView({
       myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
       myPendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
     const myPendingCount = myPendingPayments.length + myPendingExpenses.length + myPendingSettlementMovements.length;
-    const myBusinessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
+    const myBusinessStatus = dashboardBusinessTypes.map((business): BusinessDashboardStatus => {
       const businessPaymentEvents = myPostingEvents.filter(
         (event) => event.source_type === "payment" && data.payments.find((payment) => payment.id === event.source_id)?.business_type === business,
       );
@@ -3536,8 +4381,8 @@ function HomeView({
 
   const pendingInScope = (isoDate: string) => pendingRecordInScope(isoDate, dateRange, dateRangePreset);
   const ownerProfileIds = ownerProfileIdSet(data.profiles);
-  const activePayments = data.payments.filter((payment) => payment.record_status === "active");
-  const activeExpenses = data.expenses.filter((expense) => expense.record_status === "active");
+  const activePayments = data.payments.filter((payment) => payment.record_status === "active" && paymentMatchesBusiness(payment));
+  const activeExpenses = data.expenses.filter((expense) => expense.record_status === "active" && expenseMatchesBusiness(expense));
   const pendingPayments = activePayments.filter(
     (payment) => isEffectivelyPendingPayment(payment, ownerProfileIds) && pendingInScope(payment.payment_date),
   );
@@ -3551,12 +4396,12 @@ function HomeView({
   const ownerInAmount = ownerInCash + ownerInOnline;
   const ownerOutCash = ownerFlow.outCash;
   const ownerOutOnline = ownerFlow.outOnline;
-  const pendingSettlementMovements = data.movements.filter(
+  const pendingSettlementMovements = businessTypeFilter === "all" ? data.movements.filter(
     (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(indiaDateIso(movement.created_at)),
-  );
-  const pendingAgentSettlements = data.agentSettlements.filter(
+  ) : [];
+  const pendingAgentSettlements = businessTypeFilter === "all" ? data.agentSettlements.filter(
     (settlement) => settlement.status === "pending" && pendingInScope(indiaDateIso(settlement.created_at)),
-  );
+  ) : [];
   const pendingReviewRecords: PendingReviewRecord[] = [
     ...pendingPayments.map((payment): PendingReviewRecord => ({
       id: payment.id,
@@ -3636,7 +4481,7 @@ function HomeView({
     .filter((payment) => staffProfileIds.has(paymentReviewProfileId(payment)))
     .reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
   const remainingStaffCash = confirmedStaffCash + pendingStaffCash;
-  const businessStatus = (Object.keys(businessLabels) as BusinessType[]).map((business): BusinessDashboardStatus => {
+  const businessStatus = dashboardBusinessTypes.map((business): BusinessDashboardStatus => {
     const businessPaymentEvents = rangedPostingEvents.filter(
       (event) => event.source_type === "payment" && data.payments.find((payment) => payment.id === event.source_id)?.business_type === business,
     );
@@ -3691,7 +4536,7 @@ function HomeView({
           </div>
           <div>
             <p className="dashboard-card-value font-headline text-3xl font-bold text-primary">{formatMoney(remainingStaffCash)}</p>
-            <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">{t("includesPendingStaffCash")}</p>
+            <p className="dashboard-card-note text-xs text-on-surface-variant font-medium mt-1">{businessTypeFilter === "all" ? t("includesPendingStaffCash") : t("businessWideBalance")}</p>
           </div>
         </div>
 
@@ -3920,14 +4765,18 @@ function TransactionCardAmount({
 }
 
 function TransactionsView({
+  businessId,
+  cacheScope,
   dateLabel,
   dateRange,
   dateRangePreset,
   dateFilterKey,
   transactionFilter,
-  setTransactionFilter,
   transactionProfileId,
-  setTransactionProfileId,
+  recordTypeFilter,
+  modeFilter,
+  businessTypeFilter,
+  openFilters,
   payments,
   expenses,
   movements,
@@ -3944,14 +4793,18 @@ function TransactionsView({
   setNotice,
   startTransition,
 }: {
+  businessId: string;
+  cacheScope: string;
   dateLabel: string;
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
   dateFilterKey: DateFilterKey;
   transactionFilter: TransactionFilter;
-  setTransactionFilter: (filter: TransactionFilter) => void;
   transactionProfileId: string;
-  setTransactionProfileId: (id: string) => void;
+  recordTypeFilter: TransactionRecordType;
+  modeFilter: TransactionModeFilter;
+  businessTypeFilter: BusinessTypeFilter;
+  openFilters: () => void;
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
@@ -3986,23 +4839,13 @@ function TransactionsView({
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
   const effectiveTransactionFilter = owner && transactionFilter === "pending" ? "transactions" : transactionFilter;
-  const selectableProfiles = useMemo(() => {
-    if (owner) return profiles.filter((item) => item.active);
-
-    const visibleProfileIds = new Set<string>([profile.id]);
-    payments.forEach((payment) => {
-      visibleProfileIds.add(paymentReviewProfileId(payment));
-    });
-    expenses.forEach((expense) => visibleProfileIds.add(expense.spent_by));
-    if (transactionProfileId !== "all") visibleProfileIds.add(transactionProfileId);
-
-    return profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
-  }, [expenses, owner, payments, profile.id, profiles, transactionProfileId]);
   const allTransactionRecords = useMemo(() => {
     type HistoryRecordFilter = Exclude<TransactionFilter, "all" | "pending">;
     type HistoryRecord = {
       id: string;
       kind: "collection" | "expense" | "settlement" | "agent_payout";
+      recordCategory: Exclude<TransactionRecordType, "all">;
+      businessType: BusinessType | null;
       filter: HistoryRecordFilter;
       date: string;
       sortAt: string;
@@ -4108,6 +4951,8 @@ function TransactionsView({
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
         const baseRecord = {
           sourceId: payment.id,
+          recordCategory: "payment" as const,
+          businessType: payment.business_type,
           title: paymentDisplayTitle(payment, t),
           businessLabel: transactionBusinessTag(payment.business_type, t),
           status: paymentStatus,
@@ -4282,6 +5127,8 @@ function TransactionsView({
         const pendingApproval = isEffectivelyPendingExpense(expense, ownerProfileIds);
         const baseRecord = {
           sourceId: expense.id,
+          recordCategory: "expense" as const,
+          businessType: expense.business_type ?? "general",
           title: expenseDisplayTitle(expense),
           meta: `${profileName(profiles, expense.spent_by, t)}${expense.spent_by === profile.id ? ` (${t("self")})` : ""}`,
           status: labelForStatus(expenseEffectiveStatus, t),
@@ -4393,6 +5240,8 @@ function TransactionsView({
           id: `movement-${movement.id}-pending`,
           sourceId: movement.id,
           kind: direction === "in" ? "collection" : "settlement",
+          recordCategory: "transfer",
+          businessType: null,
           filter: direction === "in" ? "cash_in" : "cash_out",
           date: transactionDate,
           sortAt: movement.created_at,
@@ -4433,6 +5282,8 @@ function TransactionsView({
           id: `movement-${movement.id}-${event.direction}`,
           sourceId: movement.id,
           kind: incoming ? "collection" as const : "settlement" as const,
+          recordCategory: "transfer" as const,
+          businessType: null,
           filter: incoming ? "cash_in" as const : "cash_out" as const,
           date: postingEventDate(event, dateFilterKey),
           sortAt: movement.responded_at ?? movement.created_at,
@@ -4472,6 +5323,8 @@ function TransactionsView({
           id: `agent-${settlement.id}-pending`,
           sourceId: settlement.id,
           kind: "agent_payout",
+          recordCategory: "agent_payout",
+          businessType: null,
           filter: incoming ? "cash_in" : "cash_out",
           date: transactionDate,
           sortAt: settlement.created_at,
@@ -4504,6 +5357,8 @@ function TransactionsView({
           id: `agent-${settlement.id}-${event.direction}`,
           sourceId: settlement.id,
           kind: "agent_payout" as const,
+          recordCategory: "agent_payout" as const,
+          businessType: null,
           filter: incoming ? "cash_in" as const : "cash_out" as const,
           date: postingEventDate(event, dateFilterKey),
           sortAt: settlement.responded_at ?? settlement.created_at,
@@ -4543,18 +5398,46 @@ function TransactionsView({
   const selectedExpense = selectedTransactionActionRecord?.recordType === "expense"
     ? expenses.find((expense) => expense.id === (selectedTransactionActionRecord.sourceId ?? selectedTransactionActionRecord.id)) ?? null
     : null;
+  const attachmentRecord = selectedPayment?.photo_path
+    ? { type: "payment" as const, id: selectedPayment.id }
+    : selectedExpense?.photo_path
+      ? { type: "expense" as const, id: selectedExpense.id }
+      : null;
+  const attachmentQuery = useQuery({
+    queryKey: ["record-attachment", cacheScope, attachmentRecord?.type ?? "none", attachmentRecord?.id ?? ""],
+    queryFn: ({ signal }) => fetchJson<{ url: string | null }>(
+      `/api/businesses/${businessId}/records/${attachmentRecord?.type}/${encodeURIComponent(attachmentRecord?.id ?? "")}/attachment`,
+      signal,
+    ),
+    enabled: transactionAction?.kind === "detail" && Boolean(attachmentRecord),
+    staleTime: 300_000,
+  });
   const closeTransactionAction = () => setTransactionAction(null);
   const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
     trigger.closest("details")?.removeAttribute("open");
     setTransactionAction({ kind, recordKey });
   };
+  const matchesSecondaryFilters = useCallback((record: (typeof allTransactionRecords)[number]) => {
+    if (recordTypeFilter !== "all" && record.recordCategory !== recordTypeFilter) return false;
+    if (businessTypeFilter !== "all" && record.businessType !== businessTypeFilter) return false;
+    if (modeFilter !== "all") {
+      const cash = numberValue(record.cashAmount);
+      const online = numberValue(record.onlineAmount);
+      const recordMode: TransactionModeFilter = cash > 0 && online > 0 ? "mixed" : online > 0 ? "online" : "cash";
+      if (recordMode !== modeFilter) return false;
+    }
+    return true;
+  }, [businessTypeFilter, modeFilter, recordTypeFilter]);
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
+    if (!matchesSecondaryFilters(record)) return false;
     if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
     if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
     if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
     return record.filter === effectiveTransactionFilter && !record.pendingApproval;
-  }), [allTransactionRecords, effectiveTransactionFilter, owner]);
-  const totalTransactionRecords = allTransactionRecords.filter((record) => record.filter !== "transactions" && !record.pendingApproval);
+  }), [allTransactionRecords, effectiveTransactionFilter, matchesSecondaryFilters, owner]);
+  const totalTransactionRecords = allTransactionRecords.filter((record) =>
+    record.filter !== "transactions" && !record.pendingApproval && matchesSecondaryFilters(record),
+  );
   const inCashTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) > 0)
     .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
@@ -4578,17 +5461,6 @@ function TransactionsView({
     groups.push({ date: record.date, records: [record] });
     return groups;
   }, []);
-  const visibleTransactionFilters = (owner
-    ? ["all", "cash_in", "cash_out", "transactions"]
-    : ["all", "cash_in", "cash_out", "pending"]) as TransactionFilter[];
-  const transactionFilterLabel = (filter: TransactionFilter) => {
-    if (filter === "all") return t("all");
-    if (filter === "cash_in") return t("cashIn");
-    if (filter === "cash_out") return t("cashOut");
-    if (filter === "pending") return t("pending");
-    if (filter === "transactions") return t("transactions");
-    return t("all");
-  };
 
   return (
     <div className="view-stack mobile-clean transaction-history-view">
@@ -4600,23 +5472,9 @@ function TransactionsView({
       ) : null}
 
       <section className="history-summary-panel">
-        <div className="history-filter-row">
-          <button className="history-filter-chip" type="button">
-            <CalendarDays size={20} />
-            <span>{dateLabel}</span>
-          </button>
-          {canUseProfileFilter ? (
-            <label className="history-filter-chip history-user-select">
-              <UserPlus size={20} />
-              <select value={transactionProfileId} onChange={(event) => setTransactionProfileId(event.target.value)}>
-                {selectableProfiles.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.id === profile.id ? `${item.full_name} (${t("self")})` : item.full_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
+        <div className="history-summary-context">
+          <span>{dateLabel}</span>
+          <strong>{transactionRecords.length} {t("transactions")}</strong>
         </div>
         {!currentUserIsSalesAgent ? (
           <div className="history-total-card">
@@ -4639,18 +5497,6 @@ function TransactionsView({
             <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
           </div>
         )}
-        <div className="history-tab-strip" role="tablist" aria-label={t("transactions")}>
-          {visibleTransactionFilters.map((filter) => (
-            <button
-              className={effectiveTransactionFilter === filter ? "history-tab active" : "history-tab"}
-              key={filter}
-              type="button"
-              onClick={() => setTransactionFilter(filter)}
-            >
-              {transactionFilterLabel(filter)}
-            </button>
-          ))}
-        </div>
         {allTransactionRecords.some((record) => record.pendingApproval) ? (
           <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
         ) : null}
@@ -4802,7 +5648,10 @@ function TransactionsView({
             </div>
           ))
         ) : (
-          <p className="muted">{t("noRecordsForFilter")}</p>
+          <div className="operational-filter-empty">
+            <p className="muted">{t("noRecordsForFilter")}</p>
+            <button className="secondary-button" type="button" onClick={openFilters}>{t("filters")}</button>
+          </div>
         )}
       </section>
 
@@ -4855,7 +5704,18 @@ function TransactionsView({
                 </dl>
                 {selectedTransactionActionRecord.journey?.length ? <section><h3>Transaction flow</h3><TransactionJourney steps={selectedTransactionActionRecord.journey} amount={selectedTransactionActionRecord.amount} /></section> : null}
                 {selectedTransactionActionRecord.transferLines?.length ? <section><h3>Transfer activity</h3><div className="history-transfer-panel">{selectedTransactionActionRecord.transferLines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}</div></section> : null}
-                {selectedPayment?.photo_path || selectedExpense?.photo_path ? <section><h3>Attachment</h3><a className="transaction-attachment" href={selectedPayment?.photo_path ?? selectedExpense?.photo_path ?? undefined} target="_blank" rel="noreferrer">Open attachment</a></section> : null}
+                {attachmentRecord ? (
+                  <section>
+                    <h3>Attachment</h3>
+                    {attachmentQuery.data?.url ? (
+                      <a className="transaction-attachment" href={attachmentQuery.data.url} target="_blank" rel="noreferrer">Open attachment</a>
+                    ) : attachmentQuery.isPending ? (
+                      <p className="muted">Preparing attachment…</p>
+                    ) : (
+                      <p className="muted">Attachment is unavailable.</p>
+                    )}
+                  </section>
+                ) : null}
               </div>
             ) : null}
 
@@ -5841,8 +6701,13 @@ function studentRecordSourceId(course: Course) {
   return `${course.kind === "skill" ? "skill" : "course"}:${course.id}`;
 }
 
-function studentRecordSources(courses: Course[], t: (key: string) => string, includeLibrary: boolean): StudentRecordSource[] {
-  const visibleCourses = courses.filter((course) => course.active);
+function studentRecordSources(
+  courses: Course[],
+  t: (key: string) => string,
+  includeLibrary: boolean,
+  includeCourses: boolean,
+): StudentRecordSource[] {
+  const visibleCourses = includeCourses ? courses.filter((course) => course.active) : [];
   return [
     ...(includeLibrary ? [{ id: "library", type: "library", label: t("library") } satisfies StudentRecordSource] : []),
     ...visibleCourses.map((course): StudentRecordSource => ({
@@ -5929,7 +6794,11 @@ function LibraryStudentsView({
   courseStudentRows,
   payments,
   courses,
-  includeLibrary,
+  studentSources,
+  selectedSourceId,
+  setSelectedSourceId,
+  listMode,
+  setListMode,
   setNotice,
   startTransition,
 }: {
@@ -5939,15 +6808,18 @@ function LibraryStudentsView({
   courseStudentRows: CourseStudent[];
   payments: Payment[];
   courses: Course[];
-  includeLibrary: boolean;
+  studentSources: StudentRecordSource[];
+  selectedSourceId: string;
+  setSelectedSourceId: (sourceId: string) => void;
+  listMode: LibraryStudentListMode;
+  setListMode: (mode: LibraryStudentListMode) => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
-  const [listMode, setListMode] = useState<LibraryStudentListMode>("active");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [currentMinute, setCurrentMinute] = useState(() => currentMinuteOfDay());
-  const [selectedSourceId, setSelectedSourceId] = useState<StudentRecordSource["id"]>("library");
   const [selectedId, setSelectedId] = useState("");
   const [editingStudent, setEditingStudent] = useState(false);
   const [drawerView, setDrawerView] = useState<StudentDrawerView>("details");
@@ -5955,19 +6827,55 @@ function LibraryStudentsView({
   const drawerPanelRef = useRef<HTMLElement>(null);
   const drawerOriginRef = useRef<HTMLElement | null>(null);
   const today = todayIso();
-  const sources = useMemo(() => studentRecordSources(courses, t, includeLibrary), [courses, includeLibrary, t]);
   const selectedSource = useMemo(
-    () => sources.find((source) => source.id === selectedSourceId) ?? sources[0] ?? { id: "library", type: "library", label: t("library") } satisfies StudentRecordSource,
-    [selectedSourceId, sources, t],
+    () => studentSources.find((source) => source.id === selectedSourceId) ?? studentSources[0] ?? { id: "library", type: "library", label: t("library") } satisfies StudentRecordSource,
+    [selectedSourceId, studentSources, t],
   );
-  const selectedSourceValue = selectedSource.id;
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [query]);
+  const rosterQuery = useInfiniteQuery({
+    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery],
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({
+        tab: "library_students",
+        studentSource: selectedSource.id,
+        studentStatus: listMode,
+        cursor: String(pageParam),
+      });
+      if (debouncedQuery) params.set("studentSearch", debouncedQuery);
+      return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
+    },
+    initialPageParam: "0",
+    getNextPageParam: (lastPage) => lastPage.result.nextCursor ?? undefined,
+    staleTime: 120_000,
+  });
+  const remoteLibraryStudents = useMemo(
+    () => rosterQuery.data?.pages.flatMap((page) => page.libraryStudents) ?? [],
+    [rosterQuery.data?.pages],
+  );
+  const remoteCourseStudents = useMemo(
+    () => rosterQuery.data?.pages.flatMap((page) => page.courseStudents) ?? [],
+    [rosterQuery.data?.pages],
+  );
+  const mergedLibraryStudents = useMemo(() => {
+    const rows = new Map(students.map((student) => [student.id, student]));
+    remoteLibraryStudents.forEach((student) => rows.set(student.id, student));
+    return [...rows.values()];
+  }, [remoteLibraryStudents, students]);
+  const mergedCourseStudentRows = useMemo(() => {
+    const rows = new Map(courseStudentRows.map((student) => [student.id, student]));
+    remoteCourseStudents.forEach((student) => rows.set(student.id, student));
+    return [...rows.values()];
+  }, [courseStudentRows, remoteCourseStudents]);
   const showingLibraryStudents = selectedSource.type === "library";
-  const activeStudents = students.filter((student) => student.active && !student.placeholder);
+  const activeStudents = mergedLibraryStudents.filter((student) => student.active && !student.placeholder);
   const liveStudents = activeStudents.filter((student) => isLibraryStudentLiveNow(student, currentMinute));
-  const inactiveStudents = students.filter((student) => !student.active && !student.placeholder);
+  const inactiveStudents = mergedLibraryStudents.filter((student) => !student.active && !student.placeholder);
   const courseStudents = useMemo(
-    () => selectedSource.type === "library" ? [] : courseStudentRecordsForSource(courseStudentRows, selectedSource),
-    [courseStudentRows, selectedSource],
+    () => selectedSource.type === "library" ? [] : courseStudentRecordsForSource(mergedCourseStudentRows, selectedSource),
+    [mergedCourseStudentRows, selectedSource],
   );
   const activeCourseStudents = courseStudents.filter((record) => record.active);
   const liveCourseStudents = activeCourseStudents.filter((record) => isTimeRangeLiveNow(record.startTime, record.endTime, currentMinute));
@@ -5975,9 +6883,6 @@ function LibraryStudentsView({
   const expired = (student: LibraryStudent) => isExpiredLibraryStudent(student, today);
   const sourceStudents = listMode === "live" ? liveStudents : listMode === "active" ? activeStudents : inactiveStudents;
   const sourceCourseStudents = listMode === "live" ? liveCourseStudents : listMode === "active" ? activeCourseStudents : inactiveCourseStudents;
-  const activeCount = showingLibraryStudents ? activeStudents.length : activeCourseStudents.length;
-  const liveCount = showingLibraryStudents ? liveStudents.length : liveCourseStudents.length;
-  const inactiveCount = showingLibraryStudents ? inactiveStudents.length : inactiveCourseStudents.length;
   const normalizedQuery = query.trim().toLowerCase();
   const visibleStudents = showingLibraryStudents ? sourceStudents
     .filter((student) => {
@@ -6005,17 +6910,31 @@ function LibraryStudentsView({
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const baseSelectedStudent = showingLibraryStudents ? students.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null : null;
-  const selectedCourseStudent = showingLibraryStudents ? null : courseStudents.find((record) => record.id === selectedId) ?? null;
-  const changeStudentSource = (nextSourceId: string) => {
-    setSelectedSourceId(nextSourceId);
-    setQuery("");
-    setListMode("active");
-    setSelectedId("");
-    setEditingStudent(false);
-    setDrawerView("details");
-    setConfirmingStatus(false);
-  };
+  const rawSelectedStudent = showingLibraryStudents ? mergedLibraryStudents.find((student) => libraryStudentMatchesSelection(student, selectedId)) ?? null : null;
+  const rawSelectedCourseStudent = showingLibraryStudents ? null : courseStudents.find((record) => record.id === selectedId) ?? null;
+  const studentDetailQuery = useQuery({
+    queryKey: ["student-detail", cacheScope, showingLibraryStudents ? "library" : "course", selectedId],
+    queryFn: ({ signal }) => fetchJson<StudentDetailPayload>(
+      `/api/businesses/${businessId}/students/${showingLibraryStudents ? "library" : "course"}/${encodeURIComponent(selectedId)}`,
+      signal,
+    ),
+    enabled: Boolean(selectedId),
+    staleTime: 60_000,
+  });
+  const baseSelectedStudent = useMemo(
+    () => rawSelectedStudent && studentDetailQuery.data?.source === "library"
+      ? { ...rawSelectedStudent, ...studentDetailQuery.data.student }
+      : rawSelectedStudent,
+    [rawSelectedStudent, studentDetailQuery.data],
+  );
+  const selectedCourseStudent = useMemo(
+    () => rawSelectedCourseStudent
+      && selectedSource.type !== "library"
+      && studentDetailQuery.data?.source === "course"
+      ? courseStudentRecordFromStudent(studentDetailQuery.data.student, selectedSource)
+      : rawSelectedCourseStudent,
+    [rawSelectedCourseStudent, selectedSource, studentDetailQuery.data],
+  );
   const openStudentDetails = (studentId: string) => {
     drawerOriginRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSelectedId(studentId);
@@ -6085,7 +7004,16 @@ function LibraryStudentsView({
     [historyQuery.data?.pages, localHistoryPayments],
   );
   const selectedStudent = useMemo(
-    () => baseSelectedStudent ? libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments) : null,
+    () => {
+      if (!baseSelectedStudent) return null;
+      const latest = libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments);
+      return {
+        ...latest,
+        photo_url: baseSelectedStudent.photo_url,
+        aadhar_photo_url: baseSelectedStudent.aadhar_photo_url,
+        aadhar_back_photo_url: baseSelectedStudent.aadhar_back_photo_url,
+      };
+    },
     [baseSelectedStudent, historyPayments],
   );
   const courseHistoryQuery = useInfiniteQuery({
@@ -6156,47 +7084,32 @@ function LibraryStudentsView({
   const drawerStatusClass = drawerExpired ? "status-pending" : drawerActive ? "status-approved" : "status-rejected";
   return (
     <section className="library-students-view">
-      <div className="library-student-source-bar">
-        <h1 className="library-student-page-title">{t("libraryStudents")}</h1>
+      <section className="library-student-source-bar" aria-label={t("studentStatus")}>
         <label className="library-student-source-select">
-          {showingLibraryStudents ? <BookOpen size={20} /> : <GraduationCap size={20} />}
+          <BookOpen size={20} aria-hidden="true" />
+          <span className="sr-only">{t("studentSource")}</span>
           <select
-            aria-label={t("selectCourse")}
-            value={selectedSourceValue}
-            onChange={(event) => changeStudentSource(event.target.value)}
+            aria-label={t("studentSource")}
+            value={selectedSource.id}
+            onChange={(event) => setSelectedSourceId(event.target.value)}
           >
-            {sources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.label}
-              </option>
-            ))}
+            {studentSources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}
           </select>
         </label>
-        <div className="library-student-filter-row">
-          <button
-            type="button"
-            className={`filter-chip ${listMode === "active" ? "active" : ""}`}
-            onClick={() => setListMode("active")}
-          >
-            ACTIVE · {activeCount}
-          </button>
-          <button
-            type="button"
-            className={`filter-chip ${listMode === "live" ? "active" : ""}`}
-            onClick={() => setListMode("live")}
-          >
-            LIVE · {liveCount}
-          </button>
-          <button
-            type="button"
-            className={`filter-chip ${listMode === "inactive" ? "active" : ""}`}
-            onClick={() => setListMode("inactive")}
-          >
-            INACTIVE · {inactiveCount}
-          </button>
+        <div className="library-student-filter-row" role="group" aria-label={t("studentStatus")}>
+          {(["active", "live", "inactive"] as LibraryStudentListMode[]).map((status) => (
+            <button
+              aria-pressed={listMode === status}
+              className={`filter-chip ${listMode === status ? "active" : ""}`}
+              key={status}
+              type="button"
+              onClick={() => setListMode(status)}
+            >
+              {status === "live" ? "LIVE" : status === "inactive" ? t("inactive") : t("active")}
+            </button>
+          ))}
         </div>
-      </div>
-
+      </section>
       <section className="library-student-list-panel">
         <label className="form-grid block">
           <span className="mb-2 block text-sm font-bold text-on-surface-variant">{t("studentSearch")}</span>
@@ -6304,7 +7217,26 @@ function LibraryStudentsView({
               </article>
             );
           })}
-          {(showingLibraryStudents ? visibleStudents.length : visibleCourseStudents.length) === 0 ? <p className="text-sm text-on-surface-variant">{t("noRecords")}</p> : null}
+          {rosterQuery.hasNextPage ? (
+            <button
+              className="secondary-button student-roster-load-more"
+              type="button"
+              onClick={() => void rosterQuery.fetchNextPage()}
+              disabled={rosterQuery.isFetchingNextPage}
+            >
+              {rosterQuery.isFetchingNextPage ? t("saving") : t("loadOlder")}
+            </button>
+          ) : null}
+          {(showingLibraryStudents ? visibleStudents.length : visibleCourseStudents.length) === 0 ? (
+            <div className="operational-filter-empty">
+              <p className="text-sm text-on-surface-variant">{t("noRecords")}</p>
+              {query.trim() ? (
+                <button className="secondary-button" type="button" onClick={() => setQuery("")}>{t("clearSearch")}</button>
+              ) : listMode !== "active" ? (
+                <button className="secondary-button" type="button" onClick={() => setListMode("active")}>{t("showActiveStudents")}</button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -6550,8 +7482,8 @@ function LibraryStudentsView({
                     mainCourses={[]}
                     skillCourses={[]}
                     referrals={[]}
-                    courseStudents={courseStudentRows}
-                    libraryStudents={students}
+                    courseStudents={mergedCourseStudentRows}
+                    libraryStudents={mergedLibraryStudents}
                     initialLibraryStudent={selectedStudent}
                     setNotice={setNotice}
                     startTransition={startTransition}
@@ -6573,8 +7505,8 @@ function LibraryStudentsView({
                     mainCourses={courses.filter((course) => course.kind === "main")}
                     skillCourses={courses.filter((course) => course.kind === "skill")}
                     referrals={[]}
-                    courseStudents={courseStudentRows}
-                    libraryStudents={students}
+                    courseStudents={mergedCourseStudentRows}
+                    libraryStudents={mergedLibraryStudents}
                     initialCourseStudent={selectedCourseStudent}
                     initialCourseSource={selectedSource.type === "library" ? null : selectedSource}
                     setNotice={setNotice}
@@ -6621,6 +7553,7 @@ function ActionSheet({
   referrals,
   courseStudents,
   libraryStudents,
+  studentOptionsLoading,
   receiveMoneyProfiles,
   sendMoneyProfiles,
   settlementDate,
@@ -6642,6 +7575,7 @@ function ActionSheet({
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
+  studentOptionsLoading: boolean;
   receiveMoneyProfiles: Profile[];
   sendMoneyProfiles: Profile[];
   settlementDate: string;
@@ -6710,18 +7644,25 @@ function ActionSheet({
             <button className="back-link" type="button" onClick={() => setSelectedPositive(null)}>
               {t("selectAnotherType")}
             </button>
-            <PaymentForm
-              type={selectedPositive}
-              rooms={rooms}
-              mainCourses={mainCourses}
-              skillCourses={skillCourses}
-              referrals={referrals}
-              courseStudents={courseStudents}
-              libraryStudents={libraryStudents}
-              setNotice={setNotice}
-              startTransition={startTransition}
-              onSuccess={closeAction}
-            />
+            {studentOptionsLoading ? (
+              <div className="operational-inline-loading" role="status">
+                <span className="saving-dot" aria-hidden="true" />
+                <p>Loading student records…</p>
+              </div>
+            ) : (
+              <PaymentForm
+                type={selectedPositive}
+                rooms={rooms}
+                mainCourses={mainCourses}
+                skillCourses={skillCourses}
+                referrals={referrals}
+                courseStudents={courseStudents}
+                libraryStudents={libraryStudents}
+                setNotice={setNotice}
+                startTransition={startTransition}
+                onSuccess={closeAction}
+              />
+            )}
           </>
         ) : null}
 

@@ -237,6 +237,79 @@ export async function resolveBusinessContext(identifier: { id?: string; slug?: s
   };
 }
 
+/**
+ * Lightweight access resolution for authenticated operational read APIs.
+ * It deliberately avoids loading every business a user belongs to and never
+ * updates last_business_id. Full workspace navigation still uses
+ * resolveBusinessContext on the server-rendered entry route.
+ */
+export async function resolveBusinessReadContext(businessId: string): Promise<{
+  identity: IdentityProfile;
+  context: BusinessContext;
+}> {
+  const { user, profile } = await requireIdentity();
+  const identityClient = await createClient();
+  const [businessResult, membershipResult] = await Promise.all([
+    identityClient
+      .from("businesses")
+      .select("id,name,slug,status,timezone,currency,created_at")
+      .eq("id", businessId)
+      .maybeSingle(),
+    identityClient
+      .from("business_memberships")
+      .select("id,business_id,profile_id,role,status,joined_at")
+      .eq("business_id", businessId)
+      .eq("profile_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  if (businessResult.error) throw new BusinessAccessError(businessResult.error.message, 500);
+  if (membershipResult.error) throw new BusinessAccessError(membershipResult.error.message, 500);
+
+  const business = businessResult.data as Business | null;
+  const membership = membershipResult.data as BusinessMembership | null;
+  if (!business || !membership || membership.status !== "active" || business.status !== "active") {
+    if (profile.platform_role === "platform_admin") {
+      return resolveBusinessContext({ id: businessId });
+    }
+    if (business && business.status !== "active") {
+      throw new BusinessAccessError("This business is inactive.");
+    }
+    if (business && membership?.status === "suspended") {
+      throw new BusinessAccessError("Your access to this business is suspended.");
+    }
+    throw new BusinessAccessError("You do not have access to this business.");
+  }
+
+  const tenantClient = await createClient({ businessId });
+  const [permissionsResult, modulesResult] = await Promise.all([
+    tenantClient
+      .from("business_member_permissions")
+      .select("permission")
+      .eq("membership_id", membership.id),
+    tenantClient
+      .from("business_modules")
+      .select("module")
+      .eq("business_id", businessId)
+      .eq("enabled", true),
+  ]);
+  if (permissionsResult.error) throw new BusinessAccessError(permissionsResult.error.message, 500);
+  if (modulesResult.error) throw new BusinessAccessError(modulesResult.error.message, 500);
+
+  return {
+    identity: profile,
+    context: {
+      business,
+      membership,
+      permissions: (permissionsResult.data ?? []).map((row) => String(row.permission)),
+      enabledModules: (modulesResult.data ?? []).map((row) => row.module as BusinessType),
+      accessMode: "member",
+      supportSession: null,
+      availableBusinesses: [{ business, role: membership.role }],
+    },
+  };
+}
+
 export async function resolveBusinessContextFromRequest() {
   const requestHeaders = await headers();
   const referer = requestHeaders.get("referer");
