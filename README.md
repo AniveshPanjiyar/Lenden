@@ -30,11 +30,12 @@ NEXT_PUBLIC_SUPABASE_URL=https://zxewmhlgrjdiumoiaina.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_j7srvJgYdT9dEyqDwOW9mQ_-GSZDCfl
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 APP_BASE_URL=http://localhost:4000
+SUPPORT_EMAIL=support@margdarshakss.com
 RESEND_API_KEY=your_resend_api_key
 RESEND_FROM_EMAIL=Lenden <access@your-verified-domain.example>
 ```
 
-The service role key and Resend key are server-only. Configure Google in Supabase Auth and allow `/auth/callback` for local and production URLs. Financial mutations use the signed-in user&apos;s authenticated Supabase client and remain subject to RLS.
+The service role key and Resend key are server-only. Configure Google in Supabase Auth, enable Manual Linking, and allow `/auth/callback` for local and production URLs. Financial mutations use the signed-in user&apos;s authenticated Supabase client and remain subject to RLS.
 
 Run locally:
 

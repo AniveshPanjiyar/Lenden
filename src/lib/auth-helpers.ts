@@ -1,15 +1,10 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { safeInternalPath } from "@/lib/navigation";
 
 export function safeNextPath(value: string | null | undefined, fallback = "/") {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return fallback;
-  try {
-    const parsed = new URL(value, "https://lenden.invalid");
-    return parsed.origin === "https://lenden.invalid" ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
-  } catch {
-    return fallback;
-  }
+  return safeInternalPath(value, fallback);
 }
 
 export async function appBaseUrl() {
@@ -22,4 +17,3 @@ export async function appBaseUrl() {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host?.startsWith("localhost") ? "http" : "https");
   return host ? `${protocol}://${host}` : "http://localhost:4000";
 }
-

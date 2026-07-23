@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { ReturnAwareLink } from "@/components/return-aware-link";
 import { loadAdminBusinessDirectory } from "./admin-data";
 import BusinessDirectoryClient from "./business-directory-client";
 
@@ -13,7 +13,7 @@ export default async function BusinessAdminPage() {
           <h1>Businesses</h1>
           <p>Open a business to manage its users, ownership, support access, modules, and activity.</p>
         </div>
-        <Link className="primary-button" href="/admin/businesses/new">New business</Link>
+        <ReturnAwareLink className="primary-button" href="/admin/businesses/new">New business</ReturnAwareLink>
       </header>
       <BusinessDirectoryClient businesses={businesses} />
     </main>

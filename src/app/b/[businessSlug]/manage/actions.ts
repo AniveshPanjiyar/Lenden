@@ -266,6 +266,7 @@ export async function createBusinessUserAction(
       revalidatePath(`/b/${context.business.slug}`);
       revalidatePath(`/b/${context.business.slug}/manage`);
       revalidatePath("/account");
+      revalidatePath("/settings");
       const accessVerb = resolution.membership?.status === "active" ? "has updated business access" : "now has access";
       return {
         ok: true,
@@ -397,6 +398,7 @@ export async function updateBusinessMemberAccessAction(
     revalidatePath(`/b/${context.business.slug}`);
     revalidatePath(`/b/${context.business.slug}/manage`);
     revalidatePath("/account");
+    revalidatePath("/settings");
     const verb = membership.status === "suspended" ? "restored" : "updated";
     return {
       ok: true,

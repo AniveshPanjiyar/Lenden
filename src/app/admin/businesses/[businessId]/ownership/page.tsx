@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { ReturnAwareLink } from "@/components/return-aware-link";
 import { notFound } from "next/navigation";
 import { loadAdminBusiness } from "../../admin-data";
 import OwnershipTransferForm from "./ownership-transfer-form";
@@ -23,7 +23,7 @@ export default async function BusinessOwnershipPage({ params }: { params: Promis
           <div className="admin-warning-callout">
             <strong>This legacy business has no active Owner</strong>
             <p>Add or reactivate an active Manager on the Users page, then assign ownership below.</p>
-            <Link className="secondary-button" href={`/admin/businesses/${business.id}/users`}>Manage users</Link>
+            <ReturnAwareLink className="secondary-button" href={`/admin/businesses/${business.id}/users`}>Manage users</ReturnAwareLink>
           </div>
         )}
         <div className="admin-role-note"><strong>Protected membership</strong><p>An active Owner cannot have business access suspended. Transfer ownership first.</p></div>

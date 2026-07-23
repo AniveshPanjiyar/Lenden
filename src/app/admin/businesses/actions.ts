@@ -225,6 +225,7 @@ export async function approveBusinessRequestAdminAction(
     revalidatePath("/admin/businesses/requests");
     revalidateBusinessAdmin(businessId, slug);
     revalidatePath("/account");
+    revalidatePath("/settings");
     return { ok: true, message: "Request approved. The requester is now the protected Owner.", entityId: businessId, href: `/admin/businesses/${businessId}` };
   } catch (error) {
     return actionError(error, "Could not approve request.");
@@ -246,6 +247,7 @@ export async function rejectBusinessRequestAdminAction(
     if (error) throw new Error(error.message);
     revalidatePath("/admin/businesses/requests");
     revalidatePath("/account");
+    revalidatePath("/settings");
     return { ok: true, message: "Request rejected. The reason is visible to the requester.", entityId: requestId };
   } catch (error) {
     return actionError(error, "Could not reject request.");

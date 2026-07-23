@@ -44,7 +44,7 @@ export async function signUpAction(_state: AuthActionState, formData: FormData):
   if (Object.keys(fieldErrors).length > 0) return { ok: false, message: "Review the highlighted details.", fieldErrors };
   if (!emailResult.success || !passwordResult.success) return { ok: false, message: "Review the account details." };
 
-  const next = safeNextPath(text(formData, "next"), "/account");
+  const next = safeNextPath(text(formData, "next"), "/settings?section=businesses");
   const baseUrl = await appBaseUrl();
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({

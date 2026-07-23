@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { ReturnAwareLink } from "@/components/return-aware-link";
 import { useMemo, useState } from "react";
 import { businessLabels } from "@/lib/constants";
 import type { AdminBusinessSummary } from "./admin-data";
@@ -97,7 +97,7 @@ export default function BusinessDirectoryClient({ businesses }: { businesses: Ad
                     </td>
                     <td data-label="Status"><span className={`status-pill ${business.status}`}>{business.status}</span></td>
                     <td className="admin-table-actions">
-                      <Link className="secondary-button" href={`/admin/businesses/${business.id}`}>Open</Link>
+                      <ReturnAwareLink className="secondary-button" href={`/admin/businesses/${business.id}`}>Open</ReturnAwareLink>
                       <BusinessStatusAction
                         businessId={business.id}
                         businessName={business.name}

@@ -1,18 +1,21 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { FocusedPageHeader } from "@/components/focused-page-header";
 import { businessLabels } from "@/lib/constants";
+import { safeReturnPath, withReturnTo } from "@/lib/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { invitationState } from "@/lib/invitations";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContext } from "@/lib/tenancy";
-import type { BusinessMembership, Profile } from "@/lib/types";
+import type { BusinessMembership, ChangeRequest, Course, Profile, ReferralCode, Room } from "@/lib/types";
 import type { BusinessType } from "@/lib/types";
 import {
   saveBusinessModulesAction,
 } from "./actions";
 import BusinessUsersSettings from "./business-users-settings";
+import { BusinessSetupSettings, ChangeApprovalsSettings } from "./business-configuration-settings";
 import { OwnershipTransferForm } from "./ownership-transfer-form";
 
-type ManageTab = "people" | "modules" | "ownership";
+type ManageTab = "people" | "setup" | "modules" | "approvals" | "ownership";
 
 const moduleDescriptions: Record<BusinessType, string> = {
   library: "Library subscriptions, collections, and student records",
@@ -26,7 +29,7 @@ export default async function BusinessManagePage({
   searchParams,
 }: {
   params: Promise<{ businessSlug: string }>;
-  searchParams: Promise<{ tab?: string | string[] }>;
+  searchParams: Promise<{ tab?: string | string[]; returnTo?: string | string[] }>;
 }) {
   const { businessSlug } = await params;
   const { identity, context } = await resolveBusinessContext({ slug: businessSlug });
@@ -34,24 +37,53 @@ export default async function BusinessManagePage({
     redirect(`/b/${businessSlug}`);
   }
 
-  const requestedTab = (await searchParams).tab;
+  const resolvedSearchParams = await searchParams;
+  const requestedTab = resolvedSearchParams.tab;
+  const rawReturnTo = Array.isArray(resolvedSearchParams.returnTo)
+    ? resolvedSearchParams.returnTo[0]
+    : resolvedSearchParams.returnTo;
+  const returnTo = safeReturnPath(rawReturnTo, `/b/${businessSlug}`);
 
   const client = await createClient({ businessId: context.business.id });
-  const [{ data: memberships }, { data: profiles }, { data: modules }, { data: memberPermissions }, { data: invitations, error: invitationError }] = await Promise.all([
+  const [
+    { data: memberships },
+    { data: profiles },
+    { data: modules },
+    { data: memberPermissions },
+    { data: invitations, error: invitationError },
+    { data: rooms, error: roomError },
+    { data: courses, error: courseError },
+    { data: referrals, error: referralError },
+    { data: changeRequests, error: changeRequestError },
+  ] = await Promise.all([
     client.from("business_memberships").select("id,business_id,profile_id,role,status,invited_at,joined_at,suspended_at,created_at,updated_at").eq("business_id", context.business.id).order("created_at"),
     client.from("profiles").select("id,email,full_name,avatar_url,platform_role,account_status,must_change_password,last_business_id,active").order("full_name"),
     client.from("business_modules").select("module,enabled").eq("business_id", context.business.id),
     client.from("business_member_permissions").select("membership_id,permission"),
     createAdminClient().from("business_invitations").select("id,email,intended_role,permissions,status,expires_at,delivery_status,delivery_error,last_sent_at,created_at,updated_at").eq("business_id", context.business.id).eq("status", "pending").order("created_at", { ascending: false }),
+    client.from("rooms").select("*").eq("business_id", context.business.id).order("room_number"),
+    client.from("courses").select("*").eq("business_id", context.business.id).order("kind").order("name"),
+    client.from("referral_codes").select("*").eq("business_id", context.business.id).order("code"),
+    client.from("record_change_requests").select("*").eq("business_id", context.business.id).order("created_at", { ascending: false }),
   ]);
   if (invitationError) throw new Error(invitationError.message);
+  if (roomError) throw new Error(roomError.message);
+  if (courseError) throw new Error(courseError.message);
+  if (referralError) throw new Error(referralError.message);
+  if (changeRequestError) throw new Error(changeRequestError.message);
   const profileMap = new Map(((profiles ?? []) as Array<Pick<Profile, "id" | "full_name" | "email" | "active">>).map((profile) => [profile.id, profile]));
   const memberRows = (memberships ?? []) as BusinessMembership[];
   const managers = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
   const enabledModules = new Set((modules ?? []).filter((module) => module.enabled).map((module) => module.module));
   const canManageBusinessSettings = context.accessMode === "support" || isPrimaryOwner(context.membership?.role);
   const canTransferOwnership = context.accessMode === "member" && isPrimaryOwner(context.membership?.role);
-  const availableTabs: ManageTab[] = ["people", ...(canManageBusinessSettings ? ["modules" as const] : []), ...(canTransferOwnership ? ["ownership" as const] : [])];
+  const canReviewChangeRequests = context.accessMode === "member" && isBusinessOwner(context.membership?.role);
+  const availableTabs: ManageTab[] = [
+    "people",
+    ...(canManageBusinessSettings ? ["setup" as const, "modules" as const] : []),
+    ...(canReviewChangeRequests ? ["approvals" as const] : []),
+    ...(canTransferOwnership ? ["ownership" as const] : []),
+  ];
   const requestedTabValue = typeof requestedTab === "string" ? requestedTab : "people";
   const activeTab: ManageTab = availableTabs.includes(requestedTabValue as ManageTab) ? requestedTabValue as ManageTab : "people";
   const permissionsByMembership = (memberPermissions ?? []).reduce<Record<string, string[]>>((rows, permission) => {
@@ -82,21 +114,32 @@ export default async function BusinessManagePage({
 
   const enabledModuleList = (["library", "guest_house", "course", "general"] as BusinessType[]).filter((module) => enabledModules.has(module));
 
+  const profileOptions = businessUsers.map((member) => ({
+    id: member.profileId,
+    fullName: member.fullName,
+    role: member.role,
+  }));
+
   return (
-    <main className="business-manage-page">
-      <header className="business-manage-header">
-        <div><p className="eyebrow">{context.business.name}</p><h1>Business settings</h1><p>Manage users, access, modules, and ownership. Every membership change is audited.</p></div>
-        <Link className="secondary-button" href={`/b/${businessSlug}`}>Back to app</Link>
-      </header>
+    <div className="authenticated-focused-page">
+      <FocusedPageHeader
+        backHref={returnTo}
+        eyebrow={context.business.name}
+        title="Business settings"
+        description="People, access, setup, modules, approvals, and ownership."
+      />
+      <main className="business-manage-page">
 
       {context.accessMode === "support" && context.supportSession ? (
         <div className="support-mode-banner"><strong>Audited support mode</strong><span>{context.supportSession.reason}</span><span>Expires {new Date(context.supportSession.expires_at).toLocaleString()}</span></div>
       ) : null}
 
       <nav aria-label="Business settings sections" className="business-settings-tabs">
-        <Link aria-current={activeTab === "people" ? "page" : undefined} href={`/b/${businessSlug}/manage?tab=people`}>People & access</Link>
-        {canManageBusinessSettings ? <Link aria-current={activeTab === "modules" ? "page" : undefined} href={`/b/${businessSlug}/manage?tab=modules`}>Business modules</Link> : null}
-        {canTransferOwnership ? <Link aria-current={activeTab === "ownership" ? "page" : undefined} href={`/b/${businessSlug}/manage?tab=ownership`}>Ownership</Link> : null}
+        <Link aria-current={activeTab === "people" ? "page" : undefined} href={withReturnTo(`/b/${businessSlug}/manage?tab=people`, returnTo)}>People & access</Link>
+        {canManageBusinessSettings ? <Link aria-current={activeTab === "setup" ? "page" : undefined} href={withReturnTo(`/b/${businessSlug}/manage?tab=setup`, returnTo)}>Business setup</Link> : null}
+        {canManageBusinessSettings ? <Link aria-current={activeTab === "modules" ? "page" : undefined} href={withReturnTo(`/b/${businessSlug}/manage?tab=modules`, returnTo)}>Business modules</Link> : null}
+        {canReviewChangeRequests ? <Link aria-current={activeTab === "approvals" ? "page" : undefined} href={withReturnTo(`/b/${businessSlug}/manage?tab=approvals`, returnTo)}>Change approvals</Link> : null}
+        {canTransferOwnership ? <Link aria-current={activeTab === "ownership" ? "page" : undefined} href={withReturnTo(`/b/${businessSlug}/manage?tab=ownership`, returnTo)}>Ownership</Link> : null}
       </nav>
 
       {activeTab === "people" ? (
@@ -122,6 +165,15 @@ export default async function BusinessManagePage({
         />
       ) : null}
 
+      {activeTab === "setup" && canManageBusinessSettings ? (
+        <BusinessSetupSettings
+          rooms={(rooms ?? []) as Room[]}
+          courses={(courses ?? []) as Course[]}
+          referrals={(referrals ?? []) as ReferralCode[]}
+          profiles={profileOptions}
+        />
+      ) : null}
+
       {activeTab === "modules" && canManageBusinessSettings ? (
         <section className="admin-panel business-modules-panel">
           <div className="business-users-heading">
@@ -143,6 +195,13 @@ export default async function BusinessManagePage({
         </section>
       ) : null}
 
+      {activeTab === "approvals" && canReviewChangeRequests ? (
+        <ChangeApprovalsSettings
+          requests={(changeRequests ?? []) as ChangeRequest[]}
+          profiles={profileOptions}
+        />
+      ) : null}
+
       {activeTab === "ownership" && canTransferOwnership ? (
         <section className="admin-panel business-ownership-panel">
           <div className="business-users-heading"><div><p className="eyebrow">Ownership</p><h2>Transfer primary ownership</h2><p>Choose an active Manager and review the role swap before confirming.</p></div><span className="status-pill">1 protected Owner</span></div>
@@ -157,6 +216,7 @@ export default async function BusinessManagePage({
         </section>
       ) : null}
 
-    </main>
+      </main>
+    </div>
   );
 }

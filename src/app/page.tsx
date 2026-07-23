@@ -25,5 +25,5 @@ export default async function Home({
   }
 
   if (profile.platform_role === "platform_admin") redirect("/admin/businesses");
-  redirect("/account");
+  redirect("/settings?section=businesses");
 }

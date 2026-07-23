@@ -48,23 +48,15 @@ import {
   createAgentSettlementAction,
   createExpenseAction,
   createPaymentAction,
-  deleteCourseAction,
-  deleteReferralAction,
-  deleteRoomAction,
   logoutAction,
   markNotificationsReadAction,
-  reviewChangeRequestAction,
   requestPaymentTransferAction,
   saveCourseStudentAction,
   saveLibraryStudentAction,
-  saveCourseAction,
-  saveReferralAction,
-  saveRoomAction,
   respondPaymentTransferAction,
   setStudentStatusAction,
   settleCashAction,
   updateRecordAction,
-  updateProfileAction,
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
@@ -252,7 +244,6 @@ const tabItems: { id: Tab; labelKey: string; icon: ReactNode }[] = [
   { id: "payments", labelKey: "transactions", icon: <ReceiptText size={17} /> },
   { id: "library_students", labelKey: "libraryStudents", icon: <BookOpen size={17} /> },
   { id: "closing", labelKey: "closing", icon: <ClipboardList size={17} /> },
-  { id: "settings", labelKey: "settings", icon: <Settings size={17} /> },
 ];
 
 const paymentOptions: { type: BusinessType | "expense"; labelKey: string; icon: ReactNode }[] = [
@@ -1155,21 +1146,10 @@ const transactionRefreshActions = new Set<ClientAction>([
   createAgentSettlementAction,
   createExpenseAction,
   createPaymentAction,
-  reviewChangeRequestAction,
   requestPaymentTransferAction,
   respondPaymentTransferAction,
   settleCashAction,
   updateRecordAction,
-]);
-
-const bootstrapRefreshActions = new Set<ClientAction>([
-  deleteCourseAction,
-  deleteReferralAction,
-  deleteRoomAction,
-  saveCourseAction,
-  saveReferralAction,
-  saveRoomAction,
-  updateProfileAction,
 ]);
 
 const libraryRefreshActions = new Set<ClientAction>([
@@ -1204,13 +1184,6 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     return {
       scope: "dashboard",
       savingMessageKey: "savingTransaction",
-    };
-  }
-
-  if (bootstrapRefreshActions.has(action)) {
-    return {
-      scope: "bootstrap",
-      savingMessageKey: "savingChanges",
     };
   }
 
@@ -2405,7 +2378,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     if (!accessError) return;
     clearPersistedQueryCache();
     queryClient.clear();
-    window.location.assign(`/account?error=${encodeURIComponent(accessError.message)}`);
+    window.location.assign(`/settings?section=businesses&error=${encodeURIComponent(accessError.message)}`);
   }, [bootstrapQuery.error, dashboardQuery.error, queryClient]);
 
   useEffect(() => {
@@ -3080,7 +3053,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
-  const focusedPage = tab === "library_students" || tab === "settings";
+  const focusedPage = tab === "library_students";
   const showOperationalFilters = tab === "home" || tab === "payments" || tab === "closing";
   const currentPageTitle = t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
   const dateBasisLabel = (key: DateFilterKey) => key === "approval" ? t("approvalDate") : t("transactionDate");
@@ -3134,6 +3107,25 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const operationalPagePending = dashboardQuery.isPending && !dashboardQuery.data;
   const operationalPageRefreshing = hasHydrated && dashboardQuery.isFetching && !operationalPagePending;
   const operationalPageBusy = hasHydrated && (operationalPagePending || operationalPageRefreshing);
+  const workspaceReturnParams = applyAppViewStateToSearchParams(
+    new URLSearchParams(),
+    {
+      tab,
+      dashboardFilters,
+      transactionFilters,
+      closingFilters,
+      studentFilters: effectiveStudentFilters,
+    },
+    {
+      profileId: appData.profile.id,
+      studentSourceId: defaultStudentSourceId,
+    },
+  );
+  const workspaceReturnQuery = workspaceReturnParams.toString();
+  const workspaceReturnHref = `/b/${appData.businessContext.business.slug}${workspaceReturnQuery ? `?${workspaceReturnQuery}` : ""}`;
+  const settingsHref = `/settings?section=profile&returnTo=${encodeURIComponent(workspaceReturnHref)}`;
+  const businessSettingsHref = `/b/${appData.businessContext.business.slug}/manage?returnTo=${encodeURIComponent(workspaceReturnHref)}`;
+  const adminHref = `/admin/businesses?returnTo=${encodeURIComponent(workspaceReturnHref)}`;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage, t }}>
@@ -3257,22 +3249,22 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             ))}
           </nav>
           <div className="px-4">
-            <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/account">
+            <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={settingsHref}>
               <UserCheck size={20} />
-              <span>Account & businesses</span>
+              <span>Settings</span>
             </Link>
           </div>
           {(owner || supportMode) ? (
             <div className="px-4">
-              <a className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={`/b/${appData.businessContext.business.slug}/manage`}>
+              <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={businessSettingsHref}>
                 <Settings size={20} />
                 <span>Business settings</span>
-              </a>
+              </Link>
             </div>
           ) : null}
           {appData.profile.platform_role === "platform_admin" ? (
             <div className="px-4">
-              <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href="/admin/businesses">
+              <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={adminHref}>
                 <ShieldCheck size={20} />
                 <span>Admin console</span>
               </Link>
@@ -3486,21 +3478,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {!operationalPagePending && tab === "settings" ? (
-              <SettingsView
-                owner={owner}
-                canManageBusinessSettings={supportMode || appData.profile.membership_role === "primary_owner"}
-                profile={appData.profile}
-                profiles={appData.profiles}
-                rooms={appData.rooms}
-                courses={appData.courses}
-                referrals={appData.referrals}
-                salesAgents={salesAgents}
-                changeRequests={appData.changeRequests}
-                setNotice={pushNotice}
-                startTransition={startTransition}
-              />
-            ) : null}
           </div>
         </main>
       </div>
@@ -7253,19 +7230,22 @@ function LibraryStudentsView({
           >
             <header className="student-drawer-header">
               <div className="student-drawer-topline">
-                {drawerView === "subscription" || editingStudent ? (
-                  <button
-                    className="student-drawer-back-button"
-                    type="button"
-                    onClick={() => {
+                <button
+                  className="student-drawer-back-button"
+                  type="button"
+                  aria-label={drawerView === "subscription" || editingStudent ? t("backToDetails") : t("back")}
+                  onClick={() => {
+                    if (drawerView === "subscription" || editingStudent) {
                       setEditingStudent(false);
                       setDrawerView("details");
-                    }}
-                  >
-                    <ArrowLeft size={18} />
-                    {t("backToDetails")}
-                  </button>
-                ) : <p className="eyebrow">{drawerSourceLabel}</p>}
+                      return;
+                    }
+                    closeStudentDetails();
+                  }}
+                >
+                  <ArrowLeft size={18} />
+                  {drawerView === "subscription" || editingStudent ? t("backToDetails") : t("back")}
+                </button>
                 <div className="student-drawer-header-actions">
                   {drawerView === "details" && !editingStudent ? (
                     <button className="student-drawer-edit-button" type="button" onClick={() => setEditingStudent(true)}>
@@ -10024,472 +10004,6 @@ function ClosingReviewDetail({
           ) : null}
         </div>
       </section>
-    </div>
-  );
-}
-
-function SettingsBranch({
-  title,
-  subtitle,
-  icon,
-  defaultOpen = false,
-  nested = false,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  icon: ReactNode;
-  defaultOpen?: boolean;
-  nested?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <details
-      className={`settings-branch${nested ? " settings-branch-nested" : ""}`}
-      open={defaultOpen}
-    >
-      <summary className="settings-branch-summary">
-        <ChevronRight size={18} className="settings-branch-chevron" />
-        <div className="settings-branch-icon">
-          {icon}
-        </div>
-        <div className="settings-branch-copy">
-          <h3>{title}</h3>
-          {subtitle ? <p>{subtitle}</p> : null}
-        </div>
-      </summary>
-      <div className="settings-branch-body">{children}</div>
-    </details>
-  );
-}
-
-function ProfileSettingsPanel({
-  profile,
-  setNotice,
-  startTransition,
-}: {
-  profile: Profile;
-  setNotice: (notice: ActionResult | null) => void;
-  startTransition: ReturnType<typeof useTransition>[1];
-}) {
-  const { t } = useLanguage();
-
-  return (
-    <section className="bg-surface-container-lowest p-6 rounded-xl shadow-soft border border-outline-variant/10">
-      <div className="flex items-start gap-4">
-        <img
-          alt="User profile"
-          className="size-16 rounded-full object-cover shadow-sm border border-outline-variant/30"
-          src={getProfileImage(profile.full_name, profile.avatar_url)}
-        />
-        <div className="min-w-0">
-          <h2 className="font-headline text-xl font-bold text-primary">Profile</h2>
-          <p className="text-sm text-on-surface-variant truncate">{profile.email}</p>
-        </div>
-      </div>
-
-      <form
-        className="form-grid two mt-5"
-        onSubmit={(event) => submitWith(event, updateProfileAction, setNotice, startTransition, false)}
-      >
-        <label className="text-xs text-on-surface-variant font-bold">
-          {t("fullName")}
-          <input
-            name="full_name"
-            defaultValue={profile.full_name}
-            required
-            className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
-          />
-        </label>
-        <label className="text-xs text-on-surface-variant font-bold">
-          {t("photo")}
-          <input
-            name="photo"
-            type="file"
-            accept="image/*"
-            className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface"
-          />
-        </label>
-        <div className="full-span flex justify-end">
-          <button type="submit" className="px-4 py-2 text-xs font-bold bg-primary text-on-primary rounded-lg border-0 cursor-pointer">
-            {t("save")}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function SettingsView({
-  owner,
-  canManageBusinessSettings,
-  profile,
-  profiles,
-  rooms,
-  courses,
-  referrals,
-  salesAgents,
-  changeRequests,
-  setNotice,
-  startTransition,
-}: {
-  owner: boolean;
-  canManageBusinessSettings: boolean;
-  profile: Profile;
-  profiles: Profile[];
-  rooms: { id: string; room_number: string; label: string | null; active: boolean }[];
-  courses: Course[];
-  referrals: ReferralCode[];
-  salesAgents: Profile[];
-  changeRequests: { id: string; record_type: string; request_type: string; reason: string | null; status: string; requested_by: string }[];
-  setNotice: (notice: ActionResult | null) => void;
-  startTransition: ReturnType<typeof useTransition>[1];
-}) {
-  const { language, setLanguage, t } = useLanguage();
-  const [showAddRoom, setShowAddRoom] = useState(false);
-  const [showAddCourse, setShowAddCourse] = useState(false);
-  const [showAddReferral, setShowAddReferral] = useState(false);
-  const activeRoomsCount = rooms.filter((room) => room.active).length;
-  const activeCoursesCount = courses.filter((course) => course.active).length;
-  const activeReferralCount = referrals.filter((referral) => referral.active).length;
-  if (!owner) {
-    return (
-      <div className="space-y-6 max-w-xl">
-        <ProfileSettingsPanel profile={profile} setNotice={setNotice} startTransition={startTransition} />
-        <section className="bg-surface-container-lowest p-6 rounded-xl shadow-soft border border-outline-variant/10">
-          <h2 className="font-headline text-xl font-bold text-primary mb-4">{t("languageSettings")}</h2>
-          <div className="flex gap-4">
-            <button
-              className={`flex-1 py-3 px-4 rounded-lg font-bold transition-all cursor-pointer border-0 ${language === "en" ? "bg-primary text-on-primary" : "bg-surface-container-low text-on-surface-variant hover:bg-surface-variant/50"}`}
-              type="button"
-              onClick={() => setLanguage("en")}
-            >
-              English
-            </button>
-            <button
-              className={`flex-1 py-3 px-4 rounded-lg font-bold transition-all cursor-pointer border-0 ${language === "hi" ? "bg-primary text-on-primary" : "bg-surface-container-low text-on-surface-variant hover:bg-surface-variant/50"}`}
-              type="button"
-              onClick={() => setLanguage("hi")}
-            >
-              हिंदी
-            </button>
-          </div>
-        </section>
-        <section className="bg-surface-container-lowest p-6 rounded-xl shadow-soft border border-outline-variant/10 text-center">
-          <p className="text-on-surface-variant font-medium">{t("adminOnlySettings")}</p>
-        </section>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-5xl space-y-4">
-      <ProfileSettingsPanel profile={profile} setNotice={setNotice} startTransition={startTransition} />
-
-      {canManageBusinessSettings ? <SettingsBranch
-        title="Business setup"
-        subtitle={`${activeRoomsCount} rooms, ${activeCoursesCount} courses, ${activeReferralCount} coupons`}
-        icon={<Settings size={20} />}
-        defaultOpen
-      >
-        <div className="space-y-4">
-          <SettingsBranch
-            title={t("rooms")}
-            subtitle={`${rooms.length} total`}
-            icon={<Hotel size={20} />}
-            nested
-            defaultOpen
-          >
-            <div className="overflow-hidden rounded-lg border border-outline-variant/30 divide-y divide-outline-variant/20">
-              {rooms.map((room) => (
-                <div key={room.id} className="flex items-center justify-between gap-3 p-4 hover:bg-surface-container-low/50 transition-colors">
-                  <div className="min-w-0">
-                    <span className="font-body font-semibold text-on-surface">{room.label ?? room.room_number}</span>
-                    {room.label ? <p className="text-xs text-on-surface-variant">{room.room_number}</p> : null}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className={`font-label text-xs ${room.active ? "text-primary bg-primary-fixed/30" : "text-secondary bg-secondary-fixed/50"} px-2.5 py-1 rounded-md font-bold`}>
-                      {room.active ? t("active") : t("hidden")}
-                    </span>
-                    <form
-                      onSubmit={(event) => submitWith(event, deleteRoomAction, setNotice, startTransition, false)}
-                    >
-                      <input type="hidden" name="id" value={room.id} />
-                      <button
-                        type="submit"
-                        aria-label={`Delete ${room.label ?? room.room_number}`}
-                        className="grid size-9 place-items-center rounded-lg border border-error/20 bg-transparent text-error hover:bg-error-container/50 cursor-pointer"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              ))}
-              {rooms.length === 0 ? <p className="p-4 text-sm text-on-surface-variant">{t("noRecordsForFilter")}</p> : null}
-            </div>
-
-            {showAddRoom ? (
-              <form className="mt-4 form-grid two rounded-lg bg-surface-container-low/30 p-4" onSubmit={(event) => {
-                submitWith(event, saveRoomAction, setNotice, startTransition);
-                setShowAddRoom(false);
-              }}>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("roomNo")}
-                  <input name="room_number" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("label")}
-                  <input name="label" className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <div className="full-span flex gap-2 justify-end">
-                  <button type="button" onClick={() => setShowAddRoom(false)} className="px-4 py-2 text-xs font-bold text-on-surface-variant hover:bg-surface-variant rounded-lg border-0 cursor-pointer">
-                    Cancel
-                  </button>
-                  <button type="submit" className="px-4 py-2 text-xs font-bold bg-primary text-on-primary rounded-lg border-0 cursor-pointer">
-                    {t("save")}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <button onClick={() => setShowAddRoom(true)} className="mt-4 w-full py-3 font-body text-primary font-bold hover:bg-primary-container/20 transition-colors flex items-center justify-center gap-2 border border-dashed border-primary/30 rounded-lg bg-transparent cursor-pointer">
-                <Plus size={16} />
-                {t("addRoom")}
-              </button>
-            )}
-          </SettingsBranch>
-
-          <SettingsBranch
-            title={t("courses")}
-            subtitle={`${courses.length} total`}
-            icon={<GraduationCap size={20} />}
-            nested
-          >
-            <div className="overflow-hidden rounded-lg border border-outline-variant/30 divide-y divide-outline-variant/20">
-              {courses.map((course) => (
-                <div key={course.id} className="flex items-center justify-between gap-3 p-4 hover:bg-surface-container-low/50 transition-colors">
-                  <span className="min-w-0 font-body font-semibold text-on-surface">{course.name}</span>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className={`font-label text-xs ${course.kind === "main" ? "text-primary bg-primary-fixed/30" : "text-secondary bg-secondary-fixed/50"} px-2.5 py-1 rounded-md font-bold uppercase`}>
-                      {t(course.kind)}
-                    </span>
-                    <form
-                      onSubmit={(event) => submitWith(event, deleteCourseAction, setNotice, startTransition, false)}
-                    >
-                      <input type="hidden" name="id" value={course.id} />
-                      <button
-                        type="submit"
-                        aria-label={`Delete ${course.name}`}
-                        className="grid size-9 place-items-center rounded-lg border border-error/20 bg-transparent text-error hover:bg-error-container/50 cursor-pointer"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              ))}
-              {courses.length === 0 ? <p className="p-4 text-sm text-on-surface-variant">{t("noRecordsForFilter")}</p> : null}
-            </div>
-
-            {showAddCourse ? (
-              <form className="mt-4 form-grid two rounded-lg bg-surface-container-low/30 p-4" onSubmit={(event) => {
-                submitWith(event, saveCourseAction, setNotice, startTransition);
-                setShowAddCourse(false);
-              }}>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("courseName")}
-                  <input name="name" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  Type
-                  <select name="kind" className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface">
-                    <option value="main">{t("main")}</option>
-                    <option value="skill">{t("skill")}</option>
-                  </select>
-                </label>
-                <div className="full-span flex gap-2 justify-end">
-                  <button type="button" onClick={() => setShowAddCourse(false)} className="px-4 py-2 text-xs font-bold text-on-surface-variant hover:bg-surface-variant rounded-lg border-0 cursor-pointer">
-                    Cancel
-                  </button>
-                  <button type="submit" className="px-4 py-2 text-xs font-bold bg-primary text-on-primary rounded-lg border-0 cursor-pointer">
-                    {t("save")}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <button onClick={() => setShowAddCourse(true)} className="mt-4 w-full py-3 font-body text-primary font-bold hover:bg-primary-container/20 transition-colors flex items-center justify-center gap-2 border border-dashed border-primary/30 rounded-lg bg-transparent cursor-pointer">
-                <Plus size={16} />
-                {t("addCourse")}
-              </button>
-            )}
-          </SettingsBranch>
-
-          <SettingsBranch
-            title="Coupons"
-            subtitle={`${referrals.length} total`}
-            icon={<ReceiptText size={20} />}
-            nested
-          >
-            <div className="overflow-hidden rounded-lg border border-outline-variant/30 divide-y divide-outline-variant/20">
-              {referrals.map((referral) => (
-                <div key={referral.id} className="flex items-center justify-between gap-3 p-4 hover:bg-surface-container-low/50 transition-colors">
-                  <div className="min-w-0">
-                    <span className="font-body font-bold text-on-surface">{referral.code}</span>
-                    <p className="text-xs text-on-surface-variant mt-0.5">
-                      {referral.agent_id ? profileName(profiles, referral.agent_id, t) : t("noAgent")}
-                    </p>
-                    <p className="text-xs text-on-surface-variant mt-1">
-                      {referral.discount_type === "percentage" ? `${referral.discount_value}%` : formatMoney(referral.discount_value)} Discount / {referral.incentive_type === "percentage" ? `${referral.incentive_value}%` : formatMoney(referral.incentive_value)} Incentive
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className={`status-chip ${referral.active ? "status-approved" : "status-rejected"}`}>
-                      {referral.active ? t("active") : t("inactive")}
-                    </span>
-                    <form
-                      onSubmit={(event) => submitWith(event, deleteReferralAction, setNotice, startTransition, false)}
-                    >
-                      <input type="hidden" name="id" value={referral.id} />
-                      <button
-                        type="submit"
-                        aria-label={`Delete ${referral.code}`}
-                        className="grid size-9 place-items-center rounded-lg border border-error/20 bg-transparent text-error hover:bg-error-container/50 cursor-pointer"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              ))}
-              {referrals.length === 0 ? <p className="p-4 text-sm text-on-surface-variant">{t("noRecordsForFilter")}</p> : null}
-            </div>
-
-            {showAddReferral ? (
-              <form className="mt-4 form-grid two rounded-lg bg-surface-container-low/30 p-4" onSubmit={(event) => {
-                submitWith(event, saveReferralAction, setNotice, startTransition);
-                setShowAddReferral(false);
-              }}>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("code")}
-                  <input name="code" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  Agent
-                  <select name="agent_id" className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface">
-                    <option value="">{t("noAgent")}</option>
-                    {salesAgents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>{agent.full_name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("discountType")}
-                  <select name="discount_type" className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface">
-                    <option value="amount">{t("discountAmount")}</option>
-                    <option value="percentage">{t("discountPercent")}</option>
-                  </select>
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  Discount Value
-                  <input name="discount_value" type="number" min="0" step="0.01" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  {t("incentiveType")}
-                  <select name="incentive_type" className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface">
-                    <option value="amount">{t("incentiveAmount")}</option>
-                    <option value="percentage">{t("incentivePercent")}</option>
-                  </select>
-                </label>
-                <label className="text-xs text-on-surface-variant font-bold">
-                  Incentive Value
-                  <input name="incentive_value" type="number" min="0" step="0.01" required className="w-full mt-1 p-2 rounded-lg border border-outline-variant bg-surface" />
-                </label>
-                <div className="full-span flex gap-2 justify-end mt-2">
-                  <button type="button" onClick={() => setShowAddReferral(false)} className="px-4 py-2 text-xs font-bold text-on-surface-variant hover:bg-surface-variant rounded-lg border-0 cursor-pointer">
-                    Cancel
-                  </button>
-                  <button type="submit" className="px-4 py-2 text-xs font-bold bg-primary text-on-primary rounded-lg border-0 cursor-pointer">
-                    {t("save")}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <button onClick={() => setShowAddReferral(true)} className="mt-4 w-full py-3 font-body text-primary font-bold hover:bg-primary-container/20 transition-colors flex items-center justify-center gap-2 border border-dashed border-primary/30 rounded-lg bg-transparent cursor-pointer">
-                <Plus size={16} />
-                Add coupon
-              </button>
-            )}
-          </SettingsBranch>
-        </div>
-      </SettingsBranch> : null}
-
-      <SettingsBranch
-        title="Security"
-        subtitle={`${changeRequests.length} change requests`}
-        icon={<ShieldCheck size={20} />}
-      >
-        <div className="space-y-4">
-          {changeRequests.map((request) => (
-            <article className="p-4 bg-surface rounded-xl border border-outline-variant/30 flex justify-between items-center gap-4" key={request.id}>
-              <div>
-                <strong className="text-on-surface text-base block capitalize">
-                  {request.request_type} {request.record_type}
-                </strong>
-                <p className="text-xs text-on-surface-variant mt-1">
-                  {profileName(profiles, request.requested_by, t)} · <span className={`status-chip status-${request.status}`}>{labelForStatus(request.status, t)}</span> · {request.reason ?? t("noReason")}
-                </p>
-              </div>
-              {request.status === "pending" ? (
-                <div className="flex gap-2 flex-shrink-0">
-                  <MiniAction
-                    hidden={{ request_id: request.id, decision: "accepted" }}
-                    label={t("approve")}
-                    tone="approve"
-                    action={reviewChangeRequestAction}
-                    setNotice={setNotice}
-                    startTransition={startTransition}
-                  />
-                  <MiniAction
-                    hidden={{ request_id: request.id, decision: "rejected" }}
-                    label={t("reject")}
-                    tone="reject"
-                    action={reviewChangeRequestAction}
-                    setNotice={setNotice}
-                    startTransition={startTransition}
-                  />
-                </div>
-              ) : null}
-            </article>
-          ))}
-          {changeRequests.length === 0 && (
-            <p className="text-on-surface-variant text-center py-6">{t("noRecordsForFilter")}</p>
-          )}
-        </div>
-      </SettingsBranch>
-
-      <SettingsBranch
-        title={t("languageSettings")}
-        subtitle={language === "en" ? "English (US)" : "हिंदी (Hindi)"}
-        icon={<Settings size={20} />}
-      >
-        <p className="text-on-surface-variant text-sm mb-4">{t("languageHelp")}</p>
-        <div className="flex gap-4">
-          <button
-            className={`flex-1 py-4 px-4 rounded-xl font-bold transition-all cursor-pointer border-0 ${language === "en" ? "bg-primary text-on-primary shadow-md" : "bg-surface text-on-surface-variant hover:bg-surface-container-low"}`}
-            type="button"
-            onClick={() => setLanguage("en")}
-          >
-            English (US)
-          </button>
-          <button
-            className={`flex-1 py-4 px-4 rounded-xl font-bold transition-all cursor-pointer border-0 ${language === "hi" ? "bg-primary text-on-primary shadow-md" : "bg-surface text-on-surface-variant hover:bg-surface-container-low"}`}
-            type="button"
-            onClick={() => setLanguage("hi")}
-          >
-            हिंदी (Hindi)
-          </button>
-        </div>
-      </SettingsBranch>
     </div>
   );
 }

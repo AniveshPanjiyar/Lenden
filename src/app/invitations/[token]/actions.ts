@@ -23,7 +23,6 @@ export async function acceptInvitationTokenAction(formData: FormData) {
   const { error } = await client.rpc("accept_business_invitation", { target_invitation_id: invitation.id });
   if (error) throw new Error(error.message);
   const { data: business, error: businessError } = await admin.from("businesses").select("slug").eq("id", invitation.business_id).single();
-  if (businessError || !business) redirect("/account");
+  if (businessError || !business) redirect("/settings?section=businesses");
   redirect(`/b/${business.slug}`);
 }
-

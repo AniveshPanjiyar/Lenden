@@ -4,6 +4,24 @@ import { getAppData } from "@/lib/data";
 import { BusinessAccessError, resolveBusinessContext } from "@/lib/tenancy";
 import { parseAppViewState } from "@/lib/view-state";
 
+function first(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function workspaceReturnPath(
+  businessSlug: string,
+  searchParams: Record<string, string | string[] | undefined>,
+) {
+  const params = new URLSearchParams();
+  Object.entries(searchParams).forEach(([key, value]) => {
+    if (key === "tab" || key === "returnTo") return;
+    if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
+    else if (value) params.set(key, value);
+  });
+  params.set("tab", "home");
+  return `/b/${businessSlug}?${params.toString()}`;
+}
+
 export default async function BusinessHome({
   params,
   searchParams,
@@ -12,6 +30,10 @@ export default async function BusinessHome({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [{ businessSlug }, resolvedSearchParams] = await Promise.all([params, searchParams]);
+  if (first(resolvedSearchParams.tab) === "settings") {
+    const returnTo = workspaceReturnPath(businessSlug, resolvedSearchParams);
+    redirect(`/settings?returnTo=${encodeURIComponent(returnTo)}`);
+  }
   let data;
   let initialViewState;
   try {

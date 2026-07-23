@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { ReturnAwareLink } from "@/components/return-aware-link";
 import { useActionState, useRef, useState } from "react";
 import { businessLabels } from "@/lib/constants";
 import { createBusinessAction, type AdminActionState } from "./actions";
@@ -24,8 +24,8 @@ export default function NewBusinessWizard() {
         <p>{state.message}</p>
         <div className="admin-info-callout"><strong>Registered Owner assigned</strong><p>The Owner&apos;s login and password were not changed.</p></div>
         <div className="admin-form-actions">
-          <Link className="primary-button" href={state.href ?? `/admin/businesses/${state.entityId}`}>Open business</Link>
-          <Link className="secondary-button" href="/admin/businesses">Back to businesses</Link>
+          <ReturnAwareLink className="primary-button" href={state.href ?? `/admin/businesses/${state.entityId}`}>Open business</ReturnAwareLink>
+          <ReturnAwareLink className="secondary-button" href="/admin/businesses">Back to businesses</ReturnAwareLink>
         </div>
       </section>
     );
@@ -119,7 +119,7 @@ export default function NewBusinessWizard() {
 
         <div className="admin-form-actions split">
           <div>
-            {step > 0 ? <button className="secondary-button" type="button" onClick={() => setStep((current) => current - 1)}>Back</button> : <Link className="secondary-button" href="/admin/businesses">Cancel</Link>}
+            {step > 0 ? <button className="secondary-button" type="button" onClick={() => setStep((current) => current - 1)}>Back</button> : <ReturnAwareLink className="secondary-button" href="/admin/businesses">Cancel</ReturnAwareLink>}
           </div>
           {step < steps.length - 1 ? (
             <button className="primary-button" type="button" onClick={() => { if (validateStep()) setStep((current) => current + 1); }}>Continue</button>

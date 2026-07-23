@@ -5,6 +5,7 @@ export type BusinessStatus = "active" | "suspended";
 export type MembershipStatus = "active" | "suspended";
 export type BusinessInvitationState = "pending" | "accepted" | "declined" | "revoked" | "expired";
 export type BusinessCreationRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type SettingsSection = "profile" | "businesses" | "contact" | "preferences";
 export type BusinessType = "guest_house" | "library" | "course" | "general";
 export type PaymentMode = "cash" | "online" | "mixed";
 export type ApprovalStatus =
@@ -82,6 +83,51 @@ export type BusinessCreationRequest = {
   created_business_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type LinkedIdentitySummary = {
+  id: string;
+  provider: string;
+  email: string | null;
+  createdAt: string | null;
+};
+
+export type UserSettingsPayload = {
+  profile: {
+    id: string;
+    fullName: string;
+    email: string;
+    avatarPath: string | null;
+    avatarUrl: string | null;
+    platformRole: PlatformRole;
+  };
+  identities: LinkedIdentitySummary[];
+  accesses: Array<{
+    businessId: string;
+    name: string;
+    slug: string;
+    role: BusinessRole;
+    status: MembershipStatus;
+    businessStatus: BusinessStatus;
+    canManage: boolean;
+  }>;
+  invitations: Array<{
+    id: string;
+    businessName: string;
+    role: Exclude<BusinessRole, "primary_owner">;
+    state: BusinessInvitationState;
+    expiresAt: string;
+  }>;
+  requests: Array<{
+    id: string;
+    name: string;
+    modules: BusinessType[];
+    status: BusinessCreationRequestStatus;
+    reason: string | null;
+    createdAt: string;
+    businessSlug: string | null;
+  }>;
+  supportEmail: string;
 };
 
 export type BusinessContext = {
