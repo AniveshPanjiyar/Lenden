@@ -1,7 +1,7 @@
 import { todayIso } from "@/lib/constants";
 import type { BusinessType, PaymentMode } from "@/lib/types";
 
-export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings";
+export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings" | "notifications";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
 export type DateFilterKey = "approval" | "transaction";
 export type TransactionFilter = "all" | "cash_in" | "cash_out" | "pending" | "transactions";
@@ -52,7 +52,7 @@ export type AppViewState = {
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 
-const appTabs = ["home", "payments", "library_students", "closing", "settings"] as const;
+const appTabs = ["home", "payments", "library_students", "closing", "settings", "notifications"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
 const dateFilterKeys = ["approval", "transaction"] as const;
 const transactionFilters = ["all", "cash_in", "cash_out", "pending", "transactions"] as const;

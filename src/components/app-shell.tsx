@@ -16,6 +16,7 @@ import {
   CalendarDays,
   Camera,
   Check,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   Copy,
@@ -63,7 +64,7 @@ import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } fr
 import { clearPersistedQueryCache } from "@/components/query-provider";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentDetailPayload, StudentHistoryPage, StudentRosterPayload } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentCollectionPage, StudentDetailPayload, StudentHistoryPage, StudentRosterPayload } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -141,6 +142,16 @@ type CourseStudentRecord = {
   aadharPhotoUrl: string | null;
   aadharBackPhotoUrl: string | null;
   active: boolean;
+};
+type StudentRosterCardViewModel = {
+  id: string;
+  displayName: string;
+  rollNumber: string;
+  imageUrl: string | null;
+  phoneNumber: string | null;
+  meta: string;
+  expiryLabel: string;
+  expired: boolean;
 };
 type NormalizedDateRange = {
   from: string;
@@ -236,6 +247,8 @@ function getTabIcon(id: Tab) {
       return <ClipboardList size={21} />;
     case "settings":
       return <Settings size={21} />;
+    case "notifications":
+      return <Bell size={21} />;
   }
 }
 
@@ -1172,8 +1185,9 @@ function documentAppBusy() {
 }
 
 function mutationRefreshDetail(action: ClientAction, formData: FormData): MutationRefreshDetail {
-  const isLibraryPayment = action === createPaymentAction && formData.get("business_type") === "library";
-  if (libraryRefreshActions.has(action) || isLibraryPayment) {
+  const isStudentPayment = action === createPaymentAction
+    && (formData.get("business_type") === "library" || formData.get("business_type") === "course");
+  if (libraryRefreshActions.has(action) || isStudentPayment) {
     return {
       scope: "dashboard-library",
       savingMessageKey: action === createPaymentAction ? "savingTransaction" : "savingChanges",
@@ -1945,23 +1959,6 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
   };
 }
 
-function dashboardFromAppData(data: AppData): DashboardPayload {
-  return {
-    libraryStudents: data.libraryStudents,
-    courseStudents: data.courseStudents,
-    studentPayments: data.studentPayments,
-    payments: data.payments,
-    expenses: data.expenses,
-    movements: data.movements,
-    ledger: data.ledger,
-    closingSummaries: data.closingSummaries,
-    cashBalances: data.cashBalances,
-    changeRequests: data.changeRequests,
-    agentSettlements: data.agentSettlements,
-    notifications: data.notifications,
-  };
-}
-
 function emptyDashboardPayload(): DashboardPayload {
   return {
     libraryStudents: [],
@@ -2224,7 +2221,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
   const [notificationOverrides, setNotificationOverrides] = useState<AppNotification[] | null>(null);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -2234,19 +2230,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [pending, startTransition] = useTransition();
   const [actionBusyMessageKey, setActionBusyMessageKey] = useState<string | null>(null);
   const queryClient = useQueryClient();
-  const initialDashboardData = useMemo(() => dashboardFromAppData(data), [data]);
-  const initialDashboardParams = dashboardDataSearchParams(
-    initialTab,
-    initialViewState.dashboardFilters,
-    initialTransactionFilters,
-    initialViewState.closingFilters,
-    initialStudentFilters,
-  ).toString();
   const dashboardParams = useMemo(
     () => dashboardDataSearchParams(tab, dashboardFilters, transactionFilters, closingFilters, studentFilters).toString(),
     [closingFilters, dashboardFilters, studentFilters, tab, transactionFilters],
   );
-  const initialOperationalPage = operationalPageName(initialTab);
   const activeOperationalPage = operationalPageName(tab);
   const lastOperationalTabStorageKey = `lenden:last-operational-tab:${cacheScope}`;
   const bootstrapQuery = useQuery({
@@ -2262,32 +2249,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       `/api/businesses/${businessId}/operational/${activeOperationalPage}?${dashboardParams}`,
       signal,
     )),
-    initialData: activeOperationalPage === initialOperationalPage && dashboardParams === initialDashboardParams
-      ? () => initialDashboardData
-      : undefined,
     placeholderData: (previousDashboard, previousQuery) =>
       previousQuery?.queryKey[2] === activeOperationalPage ? previousDashboard : undefined,
-    staleTime: activeOperationalPage === "students" ? 120_000 : 30_000,
-  });
-  const needsCollectionRoster = actionModal === "positive" && (selectedPositive === "library" || selectedPositive === "course");
-  const collectionRosterQuery = useQuery({
-    queryKey: ["collection-roster", cacheScope, selectedPositive, data.courses.map((course) => course.id).join(",")],
-    queryFn: async ({ signal }) => {
-      const sources = selectedPositive === "library"
-        ? ["library"]
-        : data.courses.filter((course) => course.active).map(studentRecordSourceId);
-      const pages = await Promise.all(sources.flatMap((sourceId) => (["active", "inactive"] as const).map((status) => {
-        const params = new URLSearchParams({ tab: "library_students", studentSource: sourceId, studentStatus: status, limit: "200" });
-        return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
-      })));
-      return {
-        ...emptyDashboardPayload(),
-        libraryStudents: pages.flatMap((page) => page.libraryStudents),
-        courseStudents: pages.flatMap((page) => page.courseStudents),
-      };
-    },
-    enabled: needsCollectionRoster,
-    staleTime: 120_000,
+    staleTime: activeOperationalPage === "students" ? 300_000 : 30_000,
+    enabled: tab !== "notifications" && tab !== "library_students",
   });
   const prefetchOperationalFilters = useCallback((
     nextTab: AppTab,
@@ -2311,16 +2276,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           `/api/businesses/${businessId}/operational/${page}?${params}`,
           signal,
         )),
-        staleTime: page === "students" ? 120_000 : 30_000,
+        staleTime: page === "students" ? 300_000 : 30_000,
       }));
   }, [businessId, cacheScope, queryClient, studentFilters]);
   const emptyOperationalData = useMemo(() => emptyDashboardPayload(), []);
-  const fallbackDashboardData = activeOperationalPage === initialOperationalPage
-    ? initialDashboardData
-    : emptyOperationalData;
   const appData = useMemo(
-    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? fallbackDashboardData),
-    [bootstrapQuery.data, dashboardQuery.data, fallbackDashboardData],
+    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? emptyOperationalData),
+    [bootstrapQuery.data, dashboardQuery.data, emptyOperationalData],
   );
   const t = useMemo(() => (key: string) => messages[language][key] ?? messages.en[key] ?? key, [language]);
   const notifications = notificationOverrides ?? appData.notifications ?? [];
@@ -2469,6 +2431,17 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       setDocumentAppBusy(false);
     }
 
+    function refreshStudentCaches(refetchType: "active" | "none" = "active") {
+      return Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["student-roster", cacheScope], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["student-picker", cacheScope], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["student-collection-defaults", cacheScope], refetchType: "none" }),
+        queryClient.invalidateQueries({ queryKey: ["student-detail", cacheScope], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope], refetchType }),
+        queryClient.invalidateQueries({ queryKey: ["course-student-history", cacheScope], refetchType }),
+      ]);
+    }
+
     async function refreshCachedData(detail: MutationRefreshDetail) {
       const refreshes: Promise<unknown>[] = [];
       if (detail.scope === "dashboard" || detail.scope === "dashboard-library" || detail.scope === "bootstrap") {
@@ -2490,7 +2463,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         );
       }
       if (detail.scope === "dashboard-library") {
-        refreshes.push(queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }));
+        refreshes.push(refreshStudentCaches());
       }
       await Promise.all(refreshes);
     }
@@ -2528,11 +2501,9 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         savingMessageKey: "savingChanges",
       };
       if (detail.patch && applyPatchToCachedRanges(detail.patch)) {
-        if (detail.patch.type === "student") {
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope], refetchType: "none" }),
-            queryClient.invalidateQueries({ queryKey: ["course-student-history", cacheScope], refetchType: "none" }),
-          ]);
+        if (detail.patch.type === "student" || detail.scope === "dashboard-library") {
+          void refreshStudentCaches().then(endBusy, endBusy);
+          return;
         }
         endBusy();
         return;
@@ -2565,7 +2536,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
         await Promise.all([
           queryClient.refetchQueries({ queryKey: ["bootstrap", cacheScope], exact: true, type: "active" }),
           queryClient.refetchQueries({ queryKey: ["operational", cacheScope, activeOperationalPage, dashboardParams], exact: true, type: "active" }),
+          queryClient.invalidateQueries({ queryKey: ["student-roster", cacheScope] }),
+          queryClient.invalidateQueries({ queryKey: ["student-picker", cacheScope], refetchType: "none" }),
+          queryClient.invalidateQueries({ queryKey: ["student-detail", cacheScope] }),
           queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }),
+          queryClient.invalidateQueries({ queryKey: ["course-student-history", cacheScope] }),
         ]);
       } catch (error) {
         pushNotice({
@@ -2777,10 +2752,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     }
   }
 
-  function toggleNotifications() {
-    const nextOpen = !notificationsOpen;
-    setNotificationsOpen(nextOpen);
-    if (!nextOpen || unreadNotifications === 0) return;
+  function openNotificationsPage() {
+    setTab("notifications");
+    setFilterDrawerOpen(false);
+    setSidebarOpen(false);
+    if (unreadNotifications === 0) return;
 
     const notificationsBeforeRead = notifications;
     const readAt = new Date().toISOString();
@@ -3031,7 +3007,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     } else {
       setTab(nextTab);
     }
-    setNotificationsOpen(false);
     setFilterDrawerOpen(false);
     setSidebarOpen(false);
   }
@@ -3053,9 +3028,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }
 
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
-  const focusedPage = tab === "library_students";
+  const focusedPage = tab === "library_students" || tab === "notifications";
   const showOperationalFilters = tab === "home" || tab === "payments" || tab === "closing";
-  const currentPageTitle = t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
+  const currentPageTitle = tab === "notifications"
+    ? t("notifications")
+    : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
   const dateBasisLabel = (key: DateFilterKey) => key === "approval" ? t("approvalDate") : t("transactionDate");
   const transactionActivityLabel = (activity: TransactionFilter) => {
     if (activity === "cash_in") return t("cashIn");
@@ -3104,8 +3081,9 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     : pending
       ? t("saving")
       : null;
-  const operationalPagePending = dashboardQuery.isPending && !dashboardQuery.data;
-  const operationalPageRefreshing = hasHydrated && dashboardQuery.isFetching && !operationalPagePending;
+  const pageUsesOperationalQuery = tab !== "notifications" && tab !== "library_students";
+  const operationalPagePending = pageUsesOperationalQuery && dashboardQuery.isPending && !dashboardQuery.data;
+  const operationalPageRefreshing = pageUsesOperationalQuery && hasHydrated && dashboardQuery.isFetching && !operationalPagePending;
   const operationalPageBusy = hasHydrated && (operationalPagePending || operationalPageRefreshing);
   const workspaceReturnParams = applyAppViewStateToSearchParams(
     new URLSearchParams(),
@@ -3174,7 +3152,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           <button
             type="button"
             className="header-icon-button notification-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 relative cursor-pointer"
-            onClick={toggleNotifications}
+            onClick={openNotificationsPage}
             aria-label={t("notifications")}
           >
             {unreadNotifications > 0 ? <BellRing size={22} /> : <Bell size={22} />}
@@ -3359,13 +3337,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 </div>
               </div>
             ) : null}
-            {notificationsOpen ? (
-              <NotificationSheet
-                notifications={notifications}
-                profiles={appData.profiles}
-                close={() => setNotificationsOpen(false)}
-              />
-            ) : null}
             {filterDrawerOpen && showOperationalFilters ? (
               <OperationalFilterDrawer
                 key={tab}
@@ -3459,6 +3430,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
+            {tab === "notifications" ? (
+              <NotificationsView
+                notifications={notifications}
+                profiles={appData.profiles}
+              />
+            ) : null}
+
             {!operationalPagePending && tab === "closing" ? (
               <ClosingView
                 key={`${closingDate}-${closingFilters.dateFilterKey}`}
@@ -3503,6 +3481,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
       {actionModal && !currentUserIsSalesAgent ? (
         <ActionSheet
+          businessId={businessId}
+          cacheScope={cacheScope}
           actionModal={actionModal}
           selectedPositive={selectedPositive}
           selectedNegative={selectedNegative}
@@ -3513,9 +3493,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           mainCourses={mainCourses}
           skillCourses={skillCourses}
           referrals={appData.referrals}
-          courseStudents={collectionRosterQuery.data?.courseStudents ?? appData.courseStudents}
-          libraryStudents={collectionRosterQuery.data?.libraryStudents ?? appData.libraryStudents}
-          studentOptionsLoading={needsCollectionRoster && collectionRosterQuery.isPending}
+          courseStudents={appData.courseStudents}
+          libraryStudents={appData.libraryStudents}
           receiveMoneyProfiles={receiveMoneyProfiles}
           sendMoneyProfiles={sendMoneyProfiles}
           settlementDate={dashboardFilters.dateRange.to}
@@ -3598,50 +3577,49 @@ function formatNotificationTime(value: string) {
   }).format(date);
 }
 
-function NotificationSheet({
+function NotificationsView({
   notifications,
   profiles,
-  close,
 }: {
   notifications: AppNotification[];
   profiles: Profile[];
-  close: () => void;
 }) {
   const { t } = useLanguage();
 
   return (
-    <div className="notification-layer">
-      <button className="notification-scrim" type="button" aria-label={t("closeModal")} onClick={close} />
-      <aside className="notification-sheet" aria-label={t("notifications")}>
-        <header>
-          <div>
-            <p className="eyebrow">{t("unreadNotifications")}</p>
-            <h2>{t("notifications")}</h2>
-          </div>
-          <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={close}>
-            <X size={18} />
-          </button>
-        </header>
-        <div className="notification-list">
-          {notifications.length > 0 ? (
-            notifications.map((notification) => (
-              <article className={`notification-item tone-${notification.tone}`} key={notification.id}>
-                <span className="notification-dot" />
-                <div>
-                  <strong>{notification.title}</strong>
-                  <p>{notification.body}</p>
-                  <small>
-                    {profileName(profiles, notification.actor_id, t)} · {formatNotificationTime(notification.created_at)}
-                  </small>
-                </div>
-              </article>
-            ))
-          ) : (
-            <p className="muted">{t("noNotifications")}</p>
-          )}
+    <section className="notifications-page" aria-label={t("notifications")}>
+      <header className="notifications-page-heading">
+        <div>
+          <p className="eyebrow">{t("unreadNotifications")}</p>
+          <h2>{t("notifications")}</h2>
         </div>
-      </aside>
-    </div>
+        <span>{notifications.length}</span>
+      </header>
+      <div className="notification-list">
+        {notifications.length > 0 ? (
+          notifications.map((notification) => (
+            <article
+              className={`notification-item tone-${notification.tone} ${notification.read_at ? "read" : "unread"}`}
+              key={notification.id}
+            >
+              <span className="notification-dot" />
+              <div>
+                <strong>{notification.title}</strong>
+                <p>{notification.body}</p>
+                <small>
+                  {profileName(profiles, notification.actor_id, t)} · {formatNotificationTime(notification.created_at)}
+                </small>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="operational-filter-empty">
+            <Bell size={26} />
+            <p className="muted">{t("noNotifications")}</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -6069,46 +6047,6 @@ function libraryStudentRollKey(student: LibraryStudent) {
   return libraryRollKey(studentDisplayRollNumber(student));
 }
 
-function nextLibraryRollNumber(students: LibraryStudent[]) {
-  let largestValue = -1;
-  let largestWidth = 0;
-
-  students.forEach((student) => {
-    const rollNumber = normalizeLibraryRollNumberForView(studentDisplayRollNumber(student));
-    if (!rollNumber || !/^\d+$/.test(rollNumber)) return;
-    const numericRoll = Number(rollNumber);
-    if (!Number.isSafeInteger(numericRoll)) return;
-    if (numericRoll > largestValue || (numericRoll === largestValue && rollNumber.length > largestWidth)) {
-      largestValue = numericRoll;
-      largestWidth = rollNumber.length;
-    }
-  });
-
-  if (largestValue < 0) return "";
-  const nextRollNumber = String(largestValue + 1);
-  return nextRollNumber.padStart(largestWidth, "0");
-}
-
-function nextCourseRollNumber(records: CourseStudentRecord[]) {
-  let largestValue = -1;
-  let largestWidth = 0;
-
-  records.forEach((record) => {
-    const rollNumber = normalizeLibraryRollNumberForView(record.rollNumber);
-    if (!rollNumber || !/^\d+$/.test(rollNumber)) return;
-    const numericRoll = Number(rollNumber);
-    if (!Number.isSafeInteger(numericRoll)) return;
-    if (numericRoll > largestValue || (numericRoll === largestValue && rollNumber.length > largestWidth)) {
-      largestValue = numericRoll;
-      largestWidth = rollNumber.length;
-    }
-  });
-
-  if (largestValue < 0) return "1";
-  const nextRollNumber = String(largestValue + 1);
-  return nextRollNumber.padStart(largestWidth, "0");
-}
-
 function isNumericLibraryRoll(value: string | null | undefined) {
   const normalized = normalizeLibraryRollNumberForView(value);
   return Boolean(normalized && /^\d+$/.test(normalized));
@@ -6542,6 +6480,56 @@ function LibraryStudentSummaryCard({
   );
 }
 
+function StudentRosterCard({
+  student,
+  selected,
+  showCallAction,
+  onOpen,
+}: {
+  student: StudentRosterCardViewModel;
+  selected: boolean;
+  showCallAction: boolean;
+  onOpen: () => void;
+}) {
+  const { t } = useLanguage();
+  const callHref = showCallAction ? studentPhoneHref(student.phoneNumber) : null;
+
+  return (
+    <article
+      className={`library-student-list-card ${selected ? "selected" : ""} ${student.expired ? "expired" : ""} ${callHref ? "" : "without-call"}`}
+    >
+      <span className={`library-expiry-chip library-list-expiry ${student.expired ? "expired" : ""}`}>
+        {student.expiryLabel}
+      </span>
+      <button
+        type="button"
+        onClick={onOpen}
+        className={`library-student-list-main ${callHref ? "" : "without-call"}`}
+        aria-label={`${student.displayName}, ${t("rollNumber")} ${student.rollNumber}, ${student.meta}, ${student.expiryLabel}`}
+      >
+        <div className="library-list-avatar-wrap">
+          <StudentAvatar displayName={student.displayName} imageUrl={student.imageUrl} className="list" />
+          <span className="library-list-roll-badge">#{student.rollNumber}</span>
+        </div>
+        <div className="library-list-info">
+          <strong>{student.displayName}</strong>
+          <span>{student.meta}</span>
+        </div>
+      </button>
+      {callHref ? (
+        <a
+          className="library-list-call-button"
+          href={callHref}
+          aria-label={`${t("callStudent")}: ${student.displayName}`}
+          title={t("callStudent")}
+        >
+          <PhoneCall size={22} />
+        </a>
+      ) : null}
+    </article>
+  );
+}
+
 function StudentDetailItem({
   label,
   value,
@@ -6767,6 +6755,7 @@ function compareCourseStudentRecordsByExpiry(a: CourseStudentRecord, b: CourseSt
 function LibraryStudentsView({
   businessId,
   cacheScope,
+  variant = "page",
   students,
   courseStudentRows,
   payments,
@@ -6781,6 +6770,7 @@ function LibraryStudentsView({
 }: {
   businessId: string;
   cacheScope: string;
+  variant?: "page" | "collection";
   students: LibraryStudent[];
   courseStudentRows: CourseStudent[];
   payments: Payment[];
@@ -6803,6 +6793,7 @@ function LibraryStudentsView({
   const [confirmingStatus, setConfirmingStatus] = useState(false);
   const drawerPanelRef = useRef<HTMLElement>(null);
   const drawerOriginRef = useRef<HTMLElement | null>(null);
+  const rosterLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const today = todayIso();
   const selectedSource = useMemo(
     () => studentSources.find((source) => source.id === selectedSourceId) ?? studentSources[0] ?? { id: "library", type: "library", label: t("library") } satisfies StudentRecordSource,
@@ -6812,22 +6803,38 @@ function LibraryStudentsView({
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
     return () => window.clearTimeout(timeout);
   }, [query]);
+  const rosterPageSize = variant === "collection" ? 15 : 100;
   const rosterQuery = useInfiniteQuery({
-    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery],
+    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize],
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({
         tab: "library_students",
         studentSource: selectedSource.id,
         studentStatus: listMode,
         cursor: String(pageParam),
+        limit: String(rosterPageSize),
       });
       if (debouncedQuery) params.set("studentSearch", debouncedQuery);
       return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
     },
     initialPageParam: "0",
     getNextPageParam: (lastPage) => lastPage.result.nextCursor ?? undefined,
-    staleTime: 120_000,
+    staleTime: 300_000,
   });
+  const fetchNextRosterPage = rosterQuery.fetchNextPage;
+  const rosterHasNextPage = rosterQuery.hasNextPage;
+  const rosterIsFetchingNextPage = rosterQuery.isFetchingNextPage;
+  useEffect(() => {
+    const target = rosterLoadMoreRef.current;
+    if (variant !== "collection" || !target || !rosterHasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !rosterIsFetchingNextPage) {
+        void fetchNextRosterPage();
+      }
+    }, { rootMargin: "160px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [fetchNextRosterPage, rosterHasNextPage, rosterIsFetchingNextPage, variant]);
   const remoteLibraryStudents = useMemo(
     () => rosterQuery.data?.pages.flatMap((page) => page.libraryStudents) ?? [],
     [rosterQuery.data?.pages],
@@ -6896,7 +6903,7 @@ function LibraryStudentsView({
       signal,
     ),
     enabled: Boolean(selectedId),
-    staleTime: 60_000,
+    staleTime: 300_000,
   });
   const baseSelectedStudent = useMemo(
     () => rawSelectedStudent && studentDetailQuery.data?.source === "library"
@@ -7059,34 +7066,43 @@ function LibraryStudentsView({
       ? t("active")
       : t("inactiveStudents");
   const drawerStatusClass = drawerExpired ? "status-pending" : drawerActive ? "status-approved" : "status-rejected";
+  const showSourceSelector = variant === "page" || studentSources.length > 1;
+  const showStatusFilters = variant === "page";
+  const allowCallActions = variant === "page";
   return (
-    <section className="library-students-view">
-      <section className="library-student-source-bar" aria-label={t("studentStatus")}>
-        <label className="library-student-source-select">
-          <BookOpen size={20} aria-hidden="true" />
-          <span className="sr-only">{t("studentSource")}</span>
-          <select
-            aria-label={t("studentSource")}
-            value={selectedSource.id}
-            onChange={(event) => setSelectedSourceId(event.target.value)}
-          >
-            {studentSources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}
-          </select>
-        </label>
-        <div className="library-student-filter-row" role="group" aria-label={t("studentStatus")}>
-          {(["active", "live", "inactive"] as LibraryStudentListMode[]).map((status) => (
-            <button
-              aria-pressed={listMode === status}
-              className={`filter-chip ${listMode === status ? "active" : ""}`}
-              key={status}
-              type="button"
-              onClick={() => setListMode(status)}
-            >
-              {status === "live" ? "LIVE" : status === "inactive" ? t("inactive") : t("active")}
-            </button>
-          ))}
-        </div>
-      </section>
+    <section className={`library-students-view ${variant === "collection" ? "collection-student-browser" : ""}`}>
+      {showSourceSelector || showStatusFilters ? (
+        <section className="library-student-source-bar" aria-label={t("studentStatus")}>
+          {showSourceSelector ? (
+            <label className="library-student-source-select">
+              <BookOpen size={20} aria-hidden="true" />
+              <span className="sr-only">{t("studentSource")}</span>
+              <select
+                aria-label={t("studentSource")}
+                value={selectedSource.id}
+                onChange={(event) => setSelectedSourceId(event.target.value)}
+              >
+                {studentSources.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {showStatusFilters ? (
+            <div className="library-student-filter-row" role="group" aria-label={t("studentStatus")}>
+              {(["active", "live", "inactive"] as LibraryStudentListMode[]).map((status) => (
+                <button
+                  aria-pressed={listMode === status}
+                  className={`filter-chip ${listMode === status ? "active" : ""}`}
+                  key={status}
+                  type="button"
+                  onClick={() => setListMode(status)}
+                >
+                  {status === "live" ? "LIVE" : status === "inactive" ? t("inactive") : t("active")}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <section className="library-student-list-panel">
         <label className="form-grid block">
           <span className="mb-2 block text-sm font-bold text-on-surface-variant">{t("studentSearch")}</span>
@@ -7120,43 +7136,27 @@ function LibraryStudentsView({
               );
             }
 
-            const callHref = studentPhoneHref(student.phone_number);
             const expiryLabel = libraryExpiryStatusLabel(student, today, t);
             const displayName = studentDisplayName(student, t);
             const rollNumber = studentDisplayRollNumber(student);
             const slotTime = displayTimeRange(student.start_time, student.end_time);
             return (
-              <article
+              <StudentRosterCard
                 key={student.id}
-                className={`library-student-list-card ${selectedStudent?.id === student.id ? "selected" : ""} ${expired(student) ? "expired" : ""} ${callHref ? "" : "without-call"}`}
-              >
-                <span className={`library-expiry-chip library-list-expiry ${expired(student) ? "expired" : ""}`}>{expiryLabel}</span>
-                <button
-                  type="button"
-                  onClick={() => openStudentDetails(student.id)}
-                  className={`library-student-list-main ${callHref ? "" : "without-call"}`}
-                  aria-label={`${displayName}, ${t("rollNumber")} ${rollNumber}, ${t("timing")} ${slotTime}, ${expiryLabel}`}
-                >
-                  <div className="library-list-avatar-wrap">
-                    <StudentPhoto student={student} displayName={displayName} className="list" />
-                    <span className="library-list-roll-badge">#{rollNumber}</span>
-                  </div>
-                  <div className="library-list-info">
-                    <strong>{displayName}</strong>
-                    <span>{student.phone_number ?? t("unknown")} · {t("seat")} {student.seat_number ?? "-"} · {slotTime}</span>
-                  </div>
-                </button>
-                {callHref ? (
-                  <a
-                    className="library-list-call-button"
-                    href={callHref}
-                    aria-label={`${t("callStudent")}: ${displayName}`}
-                    title={t("callStudent")}
-                  >
-                    <PhoneCall size={22} />
-                  </a>
-                ) : null}
-              </article>
+                student={{
+                  id: student.id,
+                  displayName,
+                  rollNumber,
+                  imageUrl: student.photo_url,
+                  phoneNumber: student.phone_number,
+                  meta: `${student.phone_number ?? t("unknown")} · ${t("seat")} ${student.seat_number ?? "-"} · ${slotTime}`,
+                  expiryLabel,
+                  expired: expired(student),
+                }}
+                selected={selectedStudent?.id === student.id}
+                showCallAction={allowCallActions}
+                onOpen={() => openStudentDetails(student.id)}
+              />
             );
           })}
           {visibleCourseStudents.map((record) => {
@@ -7171,40 +7171,47 @@ function LibraryStudentsView({
             ].filter(Boolean).join(" · ");
 
             return (
-              <article
+              <StudentRosterCard
                 key={record.id}
-                className={`library-student-list-card without-call ${selectedCourseStudent?.id === record.id ? "selected" : ""} ${courseExpired ? "expired" : ""}`}
-              >
-                <span className={`library-expiry-chip library-list-expiry ${courseExpired ? "expired" : ""}`}>{expiryLabel}</span>
-                <button
-                  type="button"
-                  onClick={() => openStudentDetails(record.id)}
-                  className="library-student-list-main without-call"
-                  aria-label={`${displayName}, ${record.courseName}, ${expiryLabel}`}
-                >
-                  <div className="library-list-avatar-wrap">
-                    <StudentAvatar displayName={displayName} imageUrl={record.photoUrl} className="list" />
-                    <span className="library-list-roll-badge">#{record.rollNumber ?? "-"}</span>
-                  </div>
-                  <div className="library-list-info">
-                    <strong>{displayName}</strong>
-                    <span>{meta}</span>
-                  </div>
-                </button>
-              </article>
+                student={{
+                  id: record.id,
+                  displayName,
+                  rollNumber: record.rollNumber ?? "-",
+                  imageUrl: record.photoUrl,
+                  phoneNumber: record.phoneNumber,
+                  meta,
+                  expiryLabel,
+                  expired: courseExpired,
+                }}
+                selected={selectedCourseStudent?.id === record.id}
+                showCallAction={false}
+                onOpen={() => openStudentDetails(record.id)}
+              />
             );
           })}
-          {rosterQuery.hasNextPage ? (
-            <button
-              className="secondary-button student-roster-load-more"
-              type="button"
-              onClick={() => void rosterQuery.fetchNextPage()}
-              disabled={rosterQuery.isFetchingNextPage}
-            >
-              {rosterQuery.isFetchingNextPage ? t("saving") : t("loadOlder")}
+          {rosterQuery.isPending ? (
+            <div className="student-picker-loading" role="status" aria-label="Loading students">
+              <span /><span /><span />
+            </div>
+          ) : null}
+          {rosterQuery.isError ? (
+            <button className="secondary-button" type="button" onClick={() => void rosterQuery.refetch()}>
+              Retry loading students
             </button>
           ) : null}
-          {(showingLibraryStudents ? visibleStudents.length : visibleCourseStudents.length) === 0 ? (
+          {rosterQuery.hasNextPage ? (
+            <div className="student-picker-pagination" ref={rosterLoadMoreRef}>
+              <button
+                className="secondary-button student-roster-load-more"
+                type="button"
+                onClick={() => void rosterQuery.fetchNextPage()}
+                disabled={rosterQuery.isFetchingNextPage}
+              >
+                {rosterQuery.isFetchingNextPage ? t("saving") : t("loadOlder")}
+              </button>
+            </div>
+          ) : null}
+          {!rosterQuery.isPending && !rosterQuery.isError && (showingLibraryStudents ? visibleStudents.length : visibleCourseStudents.length) === 0 ? (
             <div className="operational-filter-empty">
               <p className="text-sm text-on-surface-variant">{t("noRecords")}</p>
               {query.trim() ? (
@@ -7283,7 +7290,9 @@ function LibraryStudentsView({
                 <div className="student-drawer-quick-facts">
                   <div>
                     <span>{t("phone")}</span>
-                    {drawerPhoneHref ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a> : <strong>{t("notAdded")}</strong>}
+                    {allowCallActions && drawerPhoneHref
+                      ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a>
+                      : <strong>{drawerPhoneNumber ?? t("notAdded")}</strong>}
                   </div>
                   <div>
                     <span>{t("expiresOn")}</span>
@@ -7411,7 +7420,10 @@ function LibraryStudentsView({
                   <section className="student-drawer-section">
                     <div className="student-drawer-section-heading"><h3>{t("studentProfile")}</h3></div>
                     <div className="student-drawer-detail-grid">
-                      <StudentDetailItem label={t("phone")} value={drawerPhoneHref ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a> : t("notAdded")} />
+                      <StudentDetailItem
+                        label={t("phone")}
+                        value={allowCallActions && drawerPhoneHref ? <a href={drawerPhoneHref}>{drawerPhoneNumber}</a> : drawerPhoneNumber ?? t("notAdded")}
+                      />
                       <StudentDetailItem label={t("address")} value={displayTextValue(drawerAddress)} className="wide" />
                       <StudentDetailItem label={t("aadharNumber")} value={displayTextValue(drawerAadharNumber)} />
                       {selectedStudent ? <StudentDetailItem label={t("seatNumber")} value={displayTextValue(selectedStudent.seat_number)} /> : null}
@@ -7457,6 +7469,8 @@ function LibraryStudentsView({
                   </div>
                   <PaymentForm
                     key={`drawer-library-subscription-${selectedStudent.id}-${selectedStudent.last_payment_id ?? selectedStudent.updated_at}`}
+                    businessId={businessId}
+                    cacheScope={cacheScope}
                     type="library"
                     rooms={[]}
                     mainCourses={[]}
@@ -7480,6 +7494,8 @@ function LibraryStudentsView({
                   </div>
                   <PaymentForm
                     key={`drawer-course-subscription-${selectedCourseStudent.id}-${selectedCourseStudent.paymentId ?? "new"}`}
+                    businessId={businessId}
+                    cacheScope={cacheScope}
                     type="course"
                     rooms={[]}
                     mainCourses={courses.filter((course) => course.kind === "main")}
@@ -7520,7 +7536,116 @@ function LibraryStudentsView({
   );
 }
 
+function StudentCollectionFlow({
+  businessId,
+  cacheScope,
+  type,
+  mainCourses,
+  skillCourses,
+  referrals,
+  courseStudents,
+  libraryStudents,
+  setNotice,
+  startTransition,
+  onSuccess,
+}: {
+  businessId: string;
+  cacheScope: string;
+  type: "library" | "course";
+  mainCourses: Course[];
+  skillCourses: Course[];
+  referrals: Pick<ReferralCode, "code">[];
+  courseStudents: CourseStudent[];
+  libraryStudents: LibraryStudent[];
+  setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
+  onSuccess: () => void;
+}) {
+  const { t } = useLanguage();
+  const [memberMode, setMemberMode] = useState<LibraryMemberMode | null>(null);
+  const studentSources = useMemo(
+    () => type === "library"
+      ? [{ id: "library", type: "library", label: t("library") } satisfies StudentRecordSource]
+      : studentRecordSources([...mainCourses, ...skillCourses], t, false, true),
+    [mainCourses, skillCourses, t, type],
+  );
+  const [selectedSourceId, setSelectedSourceId] = useState(studentSources[0]?.id ?? "");
+  const selectedCourseSource = studentSources.find(
+    (source): source is CourseStudentRecordSource => source.id === selectedSourceId && source.type !== "library",
+  ) ?? null;
+  const sourceReady = type === "library" || Boolean(selectedCourseSource);
+
+  return (
+    <div className="collection-student-flow">
+      <div className="library-member-mode" role="group" aria-label={t("memberType")}>
+        <button
+          type="button"
+          className={memberMode === "new" ? "selected" : ""}
+          aria-pressed={memberMode === "new"}
+          onClick={() => setMemberMode("new")}
+        >
+          <UserPlus size={18} />
+          <span>{t("newStudent")}</span>
+        </button>
+        <button
+          type="button"
+          className={memberMode === "existing" ? "selected" : ""}
+          aria-pressed={memberMode === "existing"}
+          onClick={() => setMemberMode("existing")}
+        >
+          <UserCheck size={18} />
+          <span>{t("existingMember")}</span>
+        </button>
+      </div>
+
+      {memberMode === "new" && sourceReady ? (
+        <PaymentForm
+          key={`new-${type}-${selectedSourceId}`}
+          businessId={businessId}
+          cacheScope={cacheScope}
+          type={type}
+          rooms={[]}
+          mainCourses={mainCourses}
+          skillCourses={skillCourses}
+          referrals={referrals}
+          courseStudents={courseStudents}
+          libraryStudents={libraryStudents}
+          initialMemberMode="new"
+          initialCourseSource={selectedCourseSource}
+          setNotice={setNotice}
+          startTransition={startTransition}
+          onSuccess={onSuccess}
+        />
+      ) : null}
+
+      {memberMode === "existing" && sourceReady ? (
+        <LibraryStudentsView
+          key={`existing-${type}`}
+          businessId={businessId}
+          cacheScope={cacheScope}
+          variant="collection"
+          students={libraryStudents}
+          courseStudentRows={courseStudents}
+          payments={[]}
+          courses={[...mainCourses, ...skillCourses]}
+          studentSources={studentSources}
+          selectedSourceId={selectedSourceId}
+          setSelectedSourceId={setSelectedSourceId}
+          listMode="active"
+          setListMode={() => undefined}
+          setNotice={setNotice}
+          startTransition={startTransition}
+        />
+      ) : null}
+
+      {memberMode && !sourceReady ? <p className="empty-state">{t("noRecords")}</p> : null}
+    </div>
+  );
+}
+
 function ActionSheet({
+  businessId,
+  cacheScope,
   actionModal,
   selectedPositive,
   selectedNegative,
@@ -7533,7 +7658,6 @@ function ActionSheet({
   referrals,
   courseStudents,
   libraryStudents,
-  studentOptionsLoading,
   receiveMoneyProfiles,
   sendMoneyProfiles,
   settlementDate,
@@ -7543,6 +7667,8 @@ function ActionSheet({
   setNotice,
   startTransition,
 }: {
+  businessId: string;
+  cacheScope: string;
   actionModal: Exclude<ActionModal, null>;
   selectedPositive: PositiveFlow | null;
   selectedNegative: NegativeFlow | null;
@@ -7555,7 +7681,6 @@ function ActionSheet({
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
-  studentOptionsLoading: boolean;
   receiveMoneyProfiles: Profile[];
   sendMoneyProfiles: Profile[];
   settlementDate: string;
@@ -7619,30 +7744,50 @@ function ActionSheet({
           </div>
         ) : null}
 
-        {actionModal === "positive" && selectedPositive && selectedPositive !== "receive_money" ? (
+        {actionModal === "positive" && (selectedPositive === "library" || selectedPositive === "course") ? (
           <>
             <button className="back-link" type="button" onClick={() => setSelectedPositive(null)}>
               {t("selectAnotherType")}
             </button>
-            {studentOptionsLoading ? (
-              <div className="operational-inline-loading" role="status">
-                <span className="saving-dot" aria-hidden="true" />
-                <p>Loading student records…</p>
-              </div>
-            ) : (
-              <PaymentForm
-                type={selectedPositive}
-                rooms={rooms}
-                mainCourses={mainCourses}
-                skillCourses={skillCourses}
-                referrals={referrals}
-                courseStudents={courseStudents}
-                libraryStudents={libraryStudents}
-                setNotice={setNotice}
-                startTransition={startTransition}
-                onSuccess={closeAction}
-              />
-            )}
+            <StudentCollectionFlow
+              businessId={businessId}
+              cacheScope={cacheScope}
+              type={selectedPositive}
+              mainCourses={mainCourses}
+              skillCourses={skillCourses}
+              referrals={referrals}
+              courseStudents={courseStudents}
+              libraryStudents={libraryStudents}
+              setNotice={setNotice}
+              startTransition={startTransition}
+              onSuccess={closeAction}
+            />
+          </>
+        ) : null}
+
+        {actionModal === "positive"
+        && selectedPositive
+        && selectedPositive !== "receive_money"
+        && selectedPositive !== "library"
+        && selectedPositive !== "course" ? (
+          <>
+            <button className="back-link" type="button" onClick={() => setSelectedPositive(null)}>
+              {t("selectAnotherType")}
+            </button>
+            <PaymentForm
+              businessId={businessId}
+              cacheScope={cacheScope}
+              type={selectedPositive}
+              rooms={rooms}
+              mainCourses={mainCourses}
+              skillCourses={skillCourses}
+              referrals={referrals}
+              courseStudents={courseStudents}
+              libraryStudents={libraryStudents}
+              setNotice={setNotice}
+              startTransition={startTransition}
+              onSuccess={closeAction}
+            />
           </>
         ) : null}
 
@@ -7706,6 +7851,8 @@ function ActionSheet({
 }
 
 function PaymentForm({
+  businessId,
+  cacheScope,
   type,
   rooms,
   mainCourses,
@@ -7713,6 +7860,7 @@ function PaymentForm({
   referrals,
   courseStudents,
   libraryStudents,
+  initialMemberMode,
   initialLibraryStudent,
   initialCourseStudent,
   initialCourseSource,
@@ -7720,6 +7868,8 @@ function PaymentForm({
   startTransition,
   onSuccess,
 }: {
+  businessId: string;
+  cacheScope: string;
   type: BusinessType;
   rooms: { id: string; room_number: string; label: string | null }[];
   mainCourses: Course[];
@@ -7727,6 +7877,7 @@ function PaymentForm({
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
+  initialMemberMode?: LibraryMemberMode;
   initialLibraryStudent?: LibraryStudent | null;
   initialCourseStudent?: CourseStudentRecord | null;
   initialCourseSource?: CourseStudentRecordSource | null;
@@ -7746,8 +7897,7 @@ function PaymentForm({
       ? mainCourses.find((course) => course.name === "Skills") ?? null
       : initialCourseSource.course
     : null;
-  const defaultNewLibraryRollNumber = type === "library" ? nextLibraryRollNumber(libraryStudents) : "";
-  const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : null);
+  const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : initialMemberMode ?? null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
   const [paid, setPaid] = useState(initialLibraryDueAmount > 0 ? String(initialLibraryDueAmount) : "");
   const [amount, setAmount] = useState("");
@@ -7758,13 +7908,17 @@ function PaymentForm({
   const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? initialCoursePrefill?.endTime ?? "07:00");
   const [selectedCourseId, setSelectedCourseId] = useState(initialCourseMainCourse?.id ?? "");
   const [selectedSkillCourseId, setSelectedSkillCourseId] = useState(initialCourseSource?.type === "skillCourse" ? initialCourseSource.course.id : "");
-  const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(initialCoursePrefill ? "existing" : null);
+  const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(initialCoursePrefill ? "existing" : initialMemberMode ?? null);
   const [courseSearch, setCourseSearch] = useState(initialCoursePrefill?.searchLabel ?? "");
+  const [debouncedCourseSearch, setDebouncedCourseSearch] = useState("");
   const [selectedCourseStudentId, setSelectedCourseStudentId] = useState(initialCoursePrefill?.id ?? "");
   const [librarySearch, setLibrarySearch] = useState(initialLibraryPrefill?.searchLabel ?? "");
+  const [debouncedLibrarySearch, setDebouncedLibrarySearch] = useState("");
   const [selectedLibraryStudentId, setSelectedLibraryStudentId] = useState(initialLibraryPrefill?.id ?? "");
+  const libraryLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const courseLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const [studentName, setStudentName] = useState(initialLibraryPrefill?.name ?? initialCoursePrefill?.name ?? "");
-  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? initialCoursePrefill?.rollNumber ?? defaultNewLibraryRollNumber);
+  const [rollNumber, setRollNumber] = useState(initialLibraryPrefill?.rollNumber ?? initialCoursePrefill?.rollNumber ?? "");
   const [phoneNumber, setPhoneNumber] = useState(initialLibraryPrefill?.phoneNumber ?? "");
   const [address, setAddress] = useState(initialLibraryPrefill?.address ?? "");
   const [aadharNumber, setAadharNumber] = useState(initialCoursePrefill?.aadharNumber ?? "");
@@ -7772,10 +7926,6 @@ function PaymentForm({
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? initialCourseRenewalRange?.startDate ?? todayIso());
   const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? initialCourseRenewalRange?.endDate ?? addMonthsIso());
-  const selectedLibraryStudent = useMemo(() => {
-    if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
-    return libraryStudents.find((student) => student.id === selectedLibraryStudentId) ?? null;
-  }, [initialLibraryStudent, libraryStudents, selectedLibraryStudentId]);
   const selectedMainCourse = useMemo(
     () => mainCourses.find((course) => course.id === selectedCourseId) ?? null,
     [mainCourses, selectedCourseId],
@@ -7804,10 +7954,111 @@ function PaymentForm({
       course: selectedMainCourse,
     };
   }, [courseNeedsSkill, selectedMainCourse, selectedSkillCourse, t]);
-  const courseStudentRecords = useMemo(
-    () => selectedCourseSource ? courseStudentRecordsForSource(courseStudents, selectedCourseSource) : [],
-    [courseStudents, selectedCourseSource],
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedLibrarySearch(librarySearch.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [librarySearch]);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedCourseSearch(courseSearch.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [courseSearch]);
+
+  const libraryCollectionQuery = useInfiniteQuery({
+    queryKey: ["student-picker", cacheScope, "library", debouncedLibrarySearch],
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({
+        source: "library",
+        intent: "existing",
+        cursor: String(pageParam),
+      });
+      if (debouncedLibrarySearch) params.set("q", debouncedLibrarySearch);
+      return fetchJson<StudentCollectionPage>(
+        `/api/businesses/${businessId}/student-collection?${params}`,
+        signal,
+      );
+    },
+    initialPageParam: "0",
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: type === "library" && libraryMemberMode === "existing" && !selectedLibraryStudentId && !initialLibraryStudent,
+    staleTime: 300_000,
+  });
+  const courseCollectionQuery = useInfiniteQuery({
+    queryKey: ["student-picker", cacheScope, selectedCourseSource?.id ?? "", debouncedCourseSearch],
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({
+        source: selectedCourseSource?.id ?? "",
+        intent: "existing",
+        cursor: String(pageParam),
+      });
+      if (debouncedCourseSearch) params.set("q", debouncedCourseSearch);
+      return fetchJson<StudentCollectionPage>(
+        `/api/businesses/${businessId}/student-collection?${params}`,
+        signal,
+      );
+    },
+    initialPageParam: "0",
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    enabled: type === "course" && courseMemberMode === "existing" && Boolean(selectedCourseSource) && !selectedCourseStudentId && !initialCourseStudent,
+    staleTime: 300_000,
+  });
+  const libraryDefaultsQuery = useQuery({
+    queryKey: ["student-collection-defaults", cacheScope, "library"],
+    queryFn: ({ signal }) => fetchJson<StudentCollectionPage>(
+      `/api/businesses/${businessId}/student-collection?source=library&intent=new_defaults`,
+      signal,
+    ),
+    enabled: type === "library" && libraryMemberMode === "new" && !initialLibraryStudent,
+    staleTime: 60_000,
+  });
+  const courseDefaultsQuery = useQuery({
+    queryKey: ["student-collection-defaults", cacheScope, selectedCourseSource?.id ?? ""],
+    queryFn: ({ signal }) => {
+      const params = new URLSearchParams({
+        source: selectedCourseSource?.id ?? "",
+        intent: "new_defaults",
+      });
+      return fetchJson<StudentCollectionPage>(
+        `/api/businesses/${businessId}/student-collection?${params}`,
+        signal,
+      );
+    },
+    enabled: type === "course" && courseMemberMode === "new" && Boolean(selectedCourseSource) && !initialCourseStudent,
+    staleTime: 60_000,
+  });
+  const suggestedRollNumber = type === "library" && libraryMemberMode === "new"
+    ? libraryDefaultsQuery.data?.nextRollNumber ?? ""
+    : type === "course" && courseMemberMode === "new"
+      ? courseDefaultsQuery.data?.nextRollNumber ?? ""
+      : "";
+  const effectiveRollNumber = rollNumber || suggestedRollNumber;
+
+  const collectionLibraryStudents = useMemo(
+    () => libraryCollectionQuery.data?.pages.flatMap((page) =>
+      page.items.flatMap((item) => item.source === "library" ? [item.student] : []),
+    ) ?? [],
+    [libraryCollectionQuery.data?.pages],
   );
+  const collectionCourseStudents = useMemo(
+    () => courseCollectionQuery.data?.pages.flatMap((page) =>
+      page.items.flatMap((item) => item.source === "course" ? [item.student] : []),
+    ) ?? [],
+    [courseCollectionQuery.data?.pages],
+  );
+  const selectedLibraryStudent = useMemo(() => {
+    if (initialLibraryStudent && initialLibraryStudent.id === selectedLibraryStudentId) return initialLibraryStudent;
+    return collectionLibraryStudents.find((student) => student.id === selectedLibraryStudentId)
+      ?? libraryStudents.find((student) => student.id === selectedLibraryStudentId)
+      ?? null;
+  }, [collectionLibraryStudents, initialLibraryStudent, libraryStudents, selectedLibraryStudentId]);
+  const courseStudentRecords = useMemo(() => {
+    if (!selectedCourseSource) return [];
+    const rows = new Map<string, CourseStudent>();
+    courseStudents
+      .filter((student) => student.source_course_id === selectedCourseSource.course.id)
+      .forEach((student) => rows.set(student.id, student));
+    collectionCourseStudents.forEach((student) => rows.set(student.id, student));
+    return [...rows.values()].map((student) => courseStudentRecordFromStudent(student, selectedCourseSource));
+  }, [collectionCourseStudents, courseStudents, selectedCourseSource]);
   const sortedCourseStudentRecords = useMemo(
     () => [...courseStudentRecords].sort((a, b) => compareCourseStudentRecordsByExpiry(a, b, t)),
     [courseStudentRecords, t],
@@ -7819,6 +8070,34 @@ function PaymentForm({
     },
     [initialCourseStudent, selectedCourseStudentId, sortedCourseStudentRecords],
   );
+  const fetchNextLibraryPage = libraryCollectionQuery.fetchNextPage;
+  const libraryHasNextPage = libraryCollectionQuery.hasNextPage;
+  const libraryIsFetchingNextPage = libraryCollectionQuery.isFetchingNextPage;
+  useEffect(() => {
+    const target = libraryLoadMoreRef.current;
+    if (!target || !libraryHasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !libraryIsFetchingNextPage) {
+        void fetchNextLibraryPage();
+      }
+    }, { rootMargin: "160px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [fetchNextLibraryPage, libraryHasNextPage, libraryIsFetchingNextPage]);
+  const fetchNextCoursePage = courseCollectionQuery.fetchNextPage;
+  const courseHasNextPage = courseCollectionQuery.hasNextPage;
+  const courseIsFetchingNextPage = courseCollectionQuery.isFetchingNextPage;
+  useEffect(() => {
+    const target = courseLoadMoreRef.current;
+    if (!target || !courseHasNextPage) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && !courseIsFetchingNextPage) {
+        void fetchNextCoursePage();
+      }
+    }, { rootMargin: "160px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [courseHasNextPage, courseIsFetchingNextPage, fetchNextCoursePage]);
   const libraryDueAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.dues_amount ?? 0), 0) : 0;
   const libraryPaidAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.paid_amount ?? 0), 0) : 0;
   const collectingLibraryDues = type === "library" && libraryMemberMode === "existing" && Boolean(selectedLibraryStudent) && libraryDueAmount > 0;
@@ -7837,59 +8116,30 @@ function PaymentForm({
   const libraryPaymentFieldsReady = type !== "library" || (!libraryMemberChoicePending && !libraryExistingMemberPending);
   const coursePaymentFieldsReady = type !== "course" || Boolean(selectedCourseSource && courseMemberMode && (courseMemberMode !== "existing" || selectedCourseStudent));
   const paymentFieldsReady = libraryPaymentFieldsReady && coursePaymentFieldsReady;
-  const searchableLibraryStudents = useMemo(() => {
-    if (type !== "library") return [];
-    const query = librarySearch.trim().toLowerCase();
-    return libraryStudents
-      .filter((student) => {
-        if (student.placeholder) return false;
-        if (!query) return !student.placeholder;
-        return [studentDisplayRollNumber(student), studentDisplayName(student, t), student.phone_number, student.address, student.seat_number]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(query));
-      })
-      .slice(0, 40);
-  }, [librarySearch, libraryStudents, t, type]);
-  const selectedLibrarySearchLabel = selectedLibraryStudent ? libraryStudentPrefill(selectedLibraryStudent, t).searchLabel : "";
-  const showLibrarySearchResults = libraryMemberMode === "existing" && (!selectedLibraryStudent || librarySearch !== selectedLibrarySearchLabel);
-  const searchableCourseStudents = useMemo(() => {
-    if (type !== "course" || !selectedCourseSource) return [];
-    const query = courseSearch.trim().toLowerCase();
-    return sortedCourseStudentRecords
-      .filter((record) => {
-        if (!query) return true;
-        return [
-          record.rollNumber,
-          courseStudentDisplayName(record, t),
-          record.courseName,
-          record.seatNumber,
-          displayTimeRange(record.startTime, record.endTime),
-        ]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(query));
-      })
-      .slice(0, 40);
-  }, [courseSearch, selectedCourseSource, sortedCourseStudentRecords, t, type]);
-  const selectedCourseSearchLabel = selectedCourseStudent ? courseStudentPrefill(selectedCourseStudent, t).searchLabel : "";
-  const showCourseSearchResults = courseMemberMode === "existing" && (!selectedCourseStudent || courseSearch !== selectedCourseSearchLabel);
+  const searchableLibraryStudents = type === "library" ? collectionLibraryStudents : [];
+  const showLibrarySearchResults = libraryMemberMode === "existing" && !selectedLibraryStudent;
+  const searchableCourseStudents = type === "course" && selectedCourseSource
+    ? collectionCourseStudents.map((student) => courseStudentRecordFromStudent(student, selectedCourseSource))
+    : [];
+  const showCourseSearchResults = courseMemberMode === "existing" && !selectedCourseStudent;
   const duplicateLibraryRollStudent = useMemo(() => {
     if (type !== "library") return null;
-    const rollKey = libraryRollKey(rollNumber);
+    const rollKey = libraryRollKey(effectiveRollNumber);
     if (!rollKey) return null;
 
     return libraryStudents.find((student) => {
       if (libraryStudentRollKey(student) !== rollKey) return false;
       return !selectedLibraryStudentId || !libraryStudentMatchesSelection(student, selectedLibraryStudentId);
     }) ?? null;
-  }, [libraryStudents, rollNumber, selectedLibraryStudentId, type]);
+  }, [effectiveRollNumber, libraryStudents, selectedLibraryStudentId, type]);
   const duplicateLibraryRollError = duplicateLibraryRollStudent ? t("rollNumberAlreadyExist") : "";
   const duplicateCourseRollStudent = useMemo(() => {
     if (type !== "course" || courseMemberMode !== "new") return null;
-    const rollKey = libraryRollKey(rollNumber);
+    const rollKey = libraryRollKey(effectiveRollNumber);
     if (!rollKey) return null;
 
     return courseStudentRecords.find((record) => libraryRollKey(record.rollNumber) === rollKey) ?? null;
-  }, [courseMemberMode, courseStudentRecords, rollNumber, type]);
+  }, [courseMemberMode, courseStudentRecords, effectiveRollNumber, type]);
   const duplicateCourseRollError = duplicateCourseRollStudent ? t("rollNumberAlreadyExist") : "";
 
   function handlePaymentSubmit(event: FormEvent<HTMLFormElement>) {
@@ -7910,7 +8160,7 @@ function PaymentForm({
   function resetLibraryFieldsForNewStudent() {
     setSelectedLibraryStudentId("");
     setStudentName("");
-    setRollNumber(defaultNewLibraryRollNumber);
+    setRollNumber("");
     setPhoneNumber("");
     setAddress("");
     setAadharNumber("");
@@ -7985,7 +8235,7 @@ function PaymentForm({
     const student = libraryStudents.find((item) => item.id === studentId);
     if (!student) {
       setStudentName("");
-      setRollNumber(defaultNewLibraryRollNumber);
+      setRollNumber("");
       setPhoneNumber("");
       setAddress("");
       setSeatNumber("");
@@ -8010,39 +8260,11 @@ function PaymentForm({
     }
   }
 
-  function courseSourceForIds(courseId: string, skillCourseId: string): CourseStudentRecordSource | null {
-    const mainCourse = mainCourses.find((course) => course.id === courseId) ?? null;
-    if (!mainCourse) return null;
-
-    if (mainCourse.name === "Skills") {
-      const skillCourse = skillCourses.find((course) => course.id === skillCourseId) ?? null;
-      if (!skillCourse) return null;
-      return {
-        id: studentRecordSourceId(skillCourse),
-        type: "skillCourse",
-        label: `${skillCourse.name} (${t("skill")})`,
-        course: skillCourse,
-      };
-    }
-
-    return {
-      id: studentRecordSourceId(mainCourse),
-      type: "mainCourse",
-      label: mainCourse.name,
-      course: mainCourse,
-    };
-  }
-
-  function nextCourseRollNumberForSource(source: CourseStudentRecordSource | null) {
-    if (!source) return "";
-    return nextCourseRollNumber(courseStudentRecordsForSource(courseStudents, source));
-  }
-
-  function resetCourseFieldsForNewStudent(source: CourseStudentRecordSource | null) {
+  function resetCourseFieldsForNewStudent() {
     setSelectedCourseStudentId("");
     setCourseSearch("");
     setStudentName("");
-    setRollNumber(nextCourseRollNumberForSource(source));
+    setRollNumber("");
     setPhoneNumber("");
     setAddress("");
     setAadharNumber("");
@@ -8080,26 +8302,26 @@ function PaymentForm({
     setMode("cash");
   }
 
-  function resetCourseMemberFlow(source: CourseStudentRecordSource | null) {
+  function resetCourseMemberFlow() {
     setCourseMemberMode(null);
-    resetCourseFieldsForNewStudent(source);
+    resetCourseFieldsForNewStudent();
   }
 
   function handleCourseChange(courseId: string) {
     setSelectedCourseId(courseId);
     setSelectedSkillCourseId("");
-    resetCourseMemberFlow(courseSourceForIds(courseId, ""));
+    resetCourseMemberFlow();
   }
 
   function handleSkillCourseChange(skillCourseId: string) {
     setSelectedSkillCourseId(skillCourseId);
-    resetCourseMemberFlow(courseSourceForIds(selectedCourseId, skillCourseId));
+    resetCourseMemberFlow();
   }
 
   function chooseCourseMemberMode(mode: LibraryMemberMode) {
     setCourseMemberMode(mode);
     if (mode === "new") {
-      resetCourseFieldsForNewStudent(selectedCourseSource);
+      resetCourseFieldsForNewStudent();
       return;
     }
     clearExistingCourseSelection();
@@ -8263,24 +8485,26 @@ function PaymentForm({
         </>
       ) : type === "library" ? (
         <>
-          <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
-            <button
-              type="button"
-              className={libraryMemberMode === "new" ? "selected" : ""}
-              onClick={() => chooseLibraryMemberMode("new")}
-            >
-              <UserPlus size={18} />
-              <span>{t("newStudent")}</span>
-            </button>
-            <button
-              type="button"
-              className={libraryMemberMode === "existing" ? "selected" : ""}
-              onClick={() => chooseLibraryMemberMode("existing")}
-            >
-              <UserCheck size={18} />
-              <span>{t("existingMember")}</span>
-            </button>
-          </div>
+          {!initialMemberMode ? (
+            <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
+              <button
+                type="button"
+                className={libraryMemberMode === "new" ? "selected" : ""}
+                onClick={() => chooseLibraryMemberMode("new")}
+              >
+                <UserPlus size={18} />
+                <span>{t("newStudent")}</span>
+              </button>
+              <button
+                type="button"
+                className={libraryMemberMode === "existing" ? "selected" : ""}
+                onClick={() => chooseLibraryMemberMode("existing")}
+              >
+                <UserCheck size={18} />
+                <span>{t("existingMember")}</span>
+              </button>
+            </div>
+          ) : null}
           {libraryMemberMode === "existing" ? (
             <>
               <label className="full-span">
@@ -8297,7 +8521,7 @@ function PaymentForm({
               </label>
               {showLibrarySearchResults ? (
                 <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
-                  {searchableLibraryStudents.slice(0, 8).map((student) => (
+                  {searchableLibraryStudents.map((student) => (
                     <button
                       key={student.id}
                       type="button"
@@ -8317,7 +8541,29 @@ function PaymentForm({
                       {!student.active ? <em>{t("inactiveStudents")}</em> : null}
                     </button>
                   ))}
-                  {librarySearch.trim() && searchableLibraryStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                  {libraryCollectionQuery.isPending ? (
+                    <div className="student-picker-loading" role="status" aria-label="Loading students">
+                      <span /><span /><span />
+                    </div>
+                  ) : null}
+                  {libraryCollectionQuery.isError ? (
+                    <button className="secondary-button" type="button" onClick={() => void libraryCollectionQuery.refetch()}>
+                      Retry loading students
+                    </button>
+                  ) : null}
+                  {!libraryCollectionQuery.isPending && searchableLibraryStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                  {libraryCollectionQuery.hasNextPage ? (
+                    <div className="student-picker-pagination" ref={libraryLoadMoreRef}>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void libraryCollectionQuery.fetchNextPage()}
+                        disabled={libraryCollectionQuery.isFetchingNextPage}
+                      >
+                        {libraryCollectionQuery.isFetchingNextPage ? t("saving") : t("loadOlder")}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </>
@@ -8334,6 +8580,18 @@ function PaymentForm({
                       expired={isExpiredLibraryStudent(selectedLibraryStudent, todayIso())}
                       compact
                     />
+                    {!initialLibraryStudent ? (
+                      <button
+                        className="student-picker-change"
+                        type="button"
+                        onClick={() => {
+                          clearExistingLibrarySelection();
+                          setLibraryMemberMode("existing");
+                        }}
+                      >
+                        Change student
+                      </button>
+                    ) : null}
                   </div>
                   <input type="hidden" name="customer_name" value={studentName} />
                   <input type="hidden" name="roll_number" value={rollNumber} />
@@ -8354,7 +8612,7 @@ function PaymentForm({
                     {t("rollNumber")}
                     <input
                       name="roll_number"
-                      value={rollNumber}
+                      value={effectiveRollNumber}
                       onChange={(event) => setRollNumber(event.target.value)}
                       aria-invalid={duplicateLibraryRollStudent ? "true" : undefined}
                       aria-describedby={duplicateLibraryRollStudent ? "library-roll-number-error" : undefined}
@@ -8365,6 +8623,7 @@ function PaymentForm({
                         {duplicateLibraryRollError}
                       </span>
                     ) : null}
+                    {libraryDefaultsQuery.isPending && !effectiveRollNumber ? <small className="muted">Loading next roll number…</small> : null}
                   </label>
                   <label>
                     {t("phone")}
@@ -8495,6 +8754,7 @@ function PaymentForm({
         <>
           {initialCourseStudent && initialCourseSource ? (
             <>
+              <input type="hidden" name="course_student_id" value={initialCourseStudent.id} />
               <input type="hidden" name="course_id" value={initialCourseMainCourse?.id ?? ""} />
               {initialCourseSource.type === "skillCourse" ? (
                 <input type="hidden" name="skill_course_id" value={initialCourseSource.course.id} />
@@ -8540,7 +8800,7 @@ function PaymentForm({
           )}
           {selectedCourseSource ? (
             <>
-              {!initialCourseStudent ? (
+              {!initialCourseStudent && !initialMemberMode ? (
                 <div className="library-member-mode full-span" role="group" aria-label={t("memberType")}>
                   <button
                     type="button"
@@ -8577,7 +8837,7 @@ function PaymentForm({
                   </label>
                   {showCourseSearchResults ? (
                     <div className="library-search-results full-span" role="listbox" aria-label={t("selectStudent")}>
-                      {searchableCourseStudents.slice(0, 8).map((record) => {
+                      {searchableCourseStudents.map((record) => {
                         const displayName = courseStudentDisplayName(record, t);
                         return (
                           <button
@@ -8600,7 +8860,29 @@ function PaymentForm({
                           </button>
                         );
                       })}
-                      {courseSearch.trim() && searchableCourseStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                      {courseCollectionQuery.isPending ? (
+                        <div className="student-picker-loading" role="status" aria-label="Loading students">
+                          <span /><span /><span />
+                        </div>
+                      ) : null}
+                      {courseCollectionQuery.isError ? (
+                        <button className="secondary-button" type="button" onClick={() => void courseCollectionQuery.refetch()}>
+                          Retry loading students
+                        </button>
+                      ) : null}
+                      {!courseCollectionQuery.isPending && searchableCourseStudents.length === 0 ? <p>{t("noRecords")}</p> : null}
+                      {courseCollectionQuery.hasNextPage ? (
+                        <div className="student-picker-pagination" ref={courseLoadMoreRef}>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => void courseCollectionQuery.fetchNextPage()}
+                            disabled={courseCollectionQuery.isFetchingNextPage}
+                          >
+                            {courseCollectionQuery.isFetchingNextPage ? t("saving") : t("loadOlder")}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -8619,6 +8901,16 @@ function PaymentForm({
                               #{selectedCourseStudent.rollNumber ?? "-"} · {selectedCourseStudent.courseName}
                             </small>
                           </span>
+                          <button
+                            className="student-picker-change"
+                            type="button"
+                            onClick={() => {
+                              clearExistingCourseSelection();
+                              setCourseMemberMode("existing");
+                            }}
+                          >
+                            Change student
+                          </button>
                         </div>
                       ) : null}
                       <input type="hidden" name="customer_name" value={studentName} />
@@ -8638,7 +8930,7 @@ function PaymentForm({
                         {t("rollNumber")}
                         <input
                           name="roll_number"
-                          value={rollNumber}
+                          value={effectiveRollNumber}
                           onChange={(event) => setRollNumber(event.target.value)}
                           aria-invalid={duplicateCourseRollStudent ? "true" : undefined}
                           aria-describedby={duplicateCourseRollStudent ? "course-roll-number-error" : undefined}
@@ -8649,6 +8941,7 @@ function PaymentForm({
                             {duplicateCourseRollError}
                           </span>
                         ) : null}
+                        {courseDefaultsQuery.isPending && !effectiveRollNumber ? <small className="muted">Loading next roll number…</small> : null}
                       </label>
                       <label>
                         {t("phone")}
@@ -9057,49 +9350,143 @@ function SearchableProfileSelect({
   includeEmptyOption?: boolean;
 }) {
   const { t } = useLanguage();
-  const selectId = useId();
+  const inputId = useId();
+  const listboxId = `${inputId}-listbox`;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const [search, setSearch] = useState("");
-  const [internalSelectedProfileId, setInternalSelectedProfileId] = useState(value ?? profiles[0]?.id ?? "");
+  const [internalSelectedProfileId, setInternalSelectedProfileId] = useState(
+    value ?? (includeEmptyOption ? "" : profiles[0]?.id ?? ""),
+  );
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const selectedProfileId = value ?? internalSelectedProfileId;
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleProfiles = profiles.filter((profile) => {
-    if (profile.id === selectedProfileId) return true;
     if (!normalizedSearch) return true;
     const role = profileRoleLabel(profile, t);
     return `${profile.full_name} ${profile.email} ${role}`.toLocaleLowerCase().includes(normalizedSearch);
   });
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+  const selectedLabel = selectedProfile
+    ? `${selectedProfile.full_name} · ${profileRoleLabel(selectedProfile, t)}`
+    : "";
+  const safeActiveIndex = Math.min(activeIndex, Math.max(visibleProfiles.length - 1, 0));
+
+  const chooseProfile = useCallback((profile: Profile) => {
+    setInternalSelectedProfileId(profile.id);
+    onChange?.(profile.id);
+    setSearch("");
+    setOpen(false);
+    setActiveIndex(0);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, [onChange]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.setCustomValidity(selectedProfileId ? "" : t("selectUser"));
+  }, [selectedProfileId, t]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
 
   return (
-    <div className="searchable-profile-select">
-      <label htmlFor={selectId}>{label}</label>
-      <span className="input-with-icon">
+    <div className="searchable-profile-select" ref={containerRef}>
+      <label htmlFor={inputId}>{label}</label>
+      <div className={`profile-combobox ${open ? "open" : ""}`}>
         <Search size={16} />
         <input
+          ref={inputRef}
+          id={inputId}
           type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-activedescendant={open && visibleProfiles[safeActiveIndex] ? `${listboxId}-${visibleProfiles[safeActiveIndex].id}` : undefined}
+          value={open ? search : selectedLabel}
+          onFocus={() => {
+            setSearch("");
+            setOpen(true);
+          }}
+          onClick={() => setOpen(true)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setInternalSelectedProfileId("");
+            onChange?.("");
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((current) => Math.min(current + 1, Math.max(visibleProfiles.length - 1, 0)));
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((current) => Math.max(current - 1, 0));
+            } else if (event.key === "Enter" && open && visibleProfiles[safeActiveIndex]) {
+              event.preventDefault();
+              chooseProfile(visibleProfiles[safeActiveIndex]);
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              setOpen(false);
+              setSearch("");
+            } else if (event.key === "Tab") {
+              setOpen(false);
+              setSearch("");
+            }
+          }}
           placeholder={t("searchUser")}
-          aria-label={t("searchUser")}
         />
-      </span>
-      <select
-        id={selectId}
-        name={name}
-        required
-        value={selectedProfileId}
-        onChange={(event) => {
-          setInternalSelectedProfileId(event.target.value);
-          onChange?.(event.target.value);
-        }}
-      >
-        {includeEmptyOption ? <option value="">{t("selectUser")}</option> : null}
-        {visibleProfiles.map((profile) => (
-          <option key={profile.id} value={profile.id}>
-            {profile.full_name} · {profileRoleLabel(profile, t)}
-          </option>
-        ))}
-        {visibleProfiles.length === 0 ? <option value="" disabled>{t("noRecords")}</option> : null}
-      </select>
+        <button
+          type="button"
+          aria-label={open ? `Close ${label}` : t("selectUser")}
+          onClick={() => {
+            setSearch("");
+            setOpen((current) => !current);
+            window.requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        >
+          <ChevronDown size={17} />
+        </button>
+        {open ? (
+          <div className="profile-combobox-options" id={listboxId} role="listbox" aria-label={label}>
+            {visibleProfiles.map((profile, index) => (
+              <button
+                id={`${listboxId}-${profile.id}`}
+                key={profile.id}
+                type="button"
+                role="option"
+                aria-selected={profile.id === selectedProfileId}
+                className={index === safeActiveIndex ? "active" : ""}
+                onPointerMove={() => setActiveIndex(index)}
+                onClick={() => chooseProfile(profile)}
+              >
+                <img alt="" src={getProfileImage(profile.full_name, profile.avatar_url)} />
+                <span>
+                  <strong>{profile.full_name}</strong>
+                  <small>{profile.email} · {profileRoleLabel(profile, t)}</small>
+                </span>
+                {profile.id === selectedProfileId ? <Check size={16} /> : null}
+              </button>
+            ))}
+            {visibleProfiles.length === 0 ? <p>{t("noRecords")}</p> : null}
+          </div>
+        ) : null}
+      </div>
+      <input type="hidden" name={name} value={selectedProfileId} />
     </div>
   );
 }

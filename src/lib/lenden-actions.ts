@@ -1451,6 +1451,7 @@ const handlers = {
     const roomId = asString(formData, "room_id");
     const courseId = asString(formData, "course_id");
     const skillCourseId = asString(formData, "skill_course_id");
+    const requestedCourseStudentId = asString(formData, "course_student_id");
     const referralCodeText = asString(formData, "referral_code");
     let libraryStudentId: string | null = null;
     let libraryStudentFields: LibraryStudentFormFields | null = null;
@@ -1509,6 +1510,7 @@ const handlers = {
           }
           throw new Error(studentResponse.error?.message ?? "Could not load library student.");
         }
+        if (studentRecord.active !== true) return fail("This student is inactive. Reactivate the student before collecting payment.");
 
         const currentFields = fieldsFromLibraryStudentRecord(studentRecord);
         const previousDue = asNumber(formData, "previous_due_amount") ?? currentFields.duesAmount ?? 0;
@@ -1531,6 +1533,21 @@ const handlers = {
         const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
         if (!parsedStudent.ok) return parsedStudent.result;
         libraryStudentFields = parsedStudent.fields;
+        libraryStudentId = normalizeLibraryStudentId(asString(formData, "library_student_id"));
+        if (libraryStudentId) {
+          const existingStudentResponse = await admin
+            .from("library_students")
+            .select("id,active")
+            .eq("business_id", profile.businessId)
+            .eq("id", libraryStudentId)
+            .maybeSingle();
+          if (existingStudentResponse.error && !isMissingLibraryStudentSchemaError(existingStudentResponse.error)) {
+            throw new Error(existingStudentResponse.error.message);
+          }
+          const existingStudent = typedData<{ id: string; active: boolean }>(existingStudentResponse);
+          if (!existingStudent) return fail("The selected library student was not found.");
+          if (!existingStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
+        }
         const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey);
         if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
           return uploadedStudentPhoto;
@@ -1538,7 +1555,7 @@ const handlers = {
         libraryStudentPhotoUrl = typeof uploadedStudentPhoto === "string" ? uploadedStudentPhoto : null;
         try {
           libraryStudentId = await saveLibraryStudentRecord(admin, {
-            id: normalizeLibraryStudentId(asString(formData, "library_student_id")),
+            id: libraryStudentId,
             fields: libraryStudentFields,
             active: true,
             photoUrl: libraryStudentPhotoUrl,
@@ -1594,6 +1611,22 @@ const handlers = {
     if (business === "course") {
       const sourceCourseId = skillCourseId ?? courseId;
       if (!sourceCourseId) return fail("Choose a main or skill course.");
+      if (requestedCourseStudentId) {
+        const existingStudentResponse = await admin
+          .from("course_students")
+          .select("id,active,source_course_id")
+          .eq("business_id", profile.businessId)
+          .eq("id", requestedCourseStudentId)
+          .maybeSingle();
+        if (existingStudentResponse.error && !isMissingCourseStudentSchemaError(existingStudentResponse.error)) {
+          throw new Error(existingStudentResponse.error.message);
+        }
+        const existingStudent = typedData<{ id: string; active: boolean; source_course_id: string }>(existingStudentResponse);
+        if (!existingStudent || existingStudent.source_course_id !== sourceCourseId) {
+          return fail("The selected course student was not found.");
+        }
+        if (!existingStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
+      }
       courseStudent = await upsertCourseStudentRecord(admin, {
         businessId: profile.businessId,
         sourceCourseId,

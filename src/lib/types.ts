@@ -332,6 +332,23 @@ export type StudentHistoryPage = {
   total: number;
 };
 
+export type StudentCollectionOption =
+  | {
+      source: "library";
+      student: LibraryStudent;
+    }
+  | {
+      source: "course";
+      student: CourseStudent;
+    };
+
+export type StudentCollectionPage = {
+  items: StudentCollectionOption[];
+  nextCursor: string | null;
+  total: number;
+  nextRollNumber: string | null;
+};
+
 export type Expense = {
   id: string;
   business_id: string;

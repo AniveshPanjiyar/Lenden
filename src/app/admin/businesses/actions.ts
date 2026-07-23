@@ -89,10 +89,8 @@ export async function createBusinessAction(
   _previousState: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  let createdBusinessId: string | null = null;
-
   try {
-    const { user } = await requirePlatformAdmin();
+    await requirePlatformAdmin();
     const name = value(formData, "name");
     const slug = slugify(value(formData, "slug") || name);
     const timezone = value(formData, "timezone") || "Asia/Kolkata";
@@ -109,85 +107,41 @@ export async function createBusinessAction(
     if (modules.length === 0) fieldErrors.modules = "Enable at least one module.";
     if (Object.keys(fieldErrors).length > 0) return fieldFailure("Review the highlighted details.", fieldErrors);
 
-    const admin = createAdminClient();
-    const [{ data: duplicate, error: duplicateError }, { data: existingProfile, error: profileError }] = await Promise.all([
-      admin.from("businesses").select("id").eq("slug", slug).maybeSingle(),
-      admin
-        .from("profiles")
-        .select("id,email,full_name,active,account_status")
-        .ilike("email", ownerEmail)
-        .maybeSingle(),
-    ]);
-    if (duplicateError) throw new Error(duplicateError.message);
-    if (duplicate) return fieldFailure("That business URL is already in use.", { slug: "Choose a different URL slug." });
-    if (profileError) throw new Error(profileError.message);
-    if (!existingProfile) {
-      return fieldFailure("The Owner must create their own Lenden account first.", {
-        owner_email: "No registered account was found. Ask this person to sign up, then retry.",
-      });
-    }
-    if (!existingProfile.active || existingProfile.account_status !== "active") {
-      return fieldFailure("This existing Lenden account is inactive.", {
-        owner_email: "Reactivate the global account before assigning it as an Owner.",
-      });
-    }
-
-    const { data: business, error: businessError } = await admin
-      .from("businesses")
-      .insert({ name, slug, timezone, currency, status: "active", created_by: user.id })
-      .select("id")
-      .single();
-    if (businessError || !business) throw new Error(businessError?.message ?? "Could not create business.");
-    createdBusinessId = business.id;
-
-    const { error: modulesError } = await admin.from("business_modules").insert(
-      modules.map((module) => ({ business_id: business.id, module, enabled: true, configured_by: user.id })),
-    );
-    if (modulesError) throw new Error(modulesError.message);
-
-    const ownerId = existingProfile.id;
-
-    const { data: membership, error: membershipError } = await admin
-      .from("business_memberships")
-      .insert({
-        business_id: business.id,
-        profile_id: ownerId,
-        role: "primary_owner",
-        status: "active",
-        invited_by: user.id,
-        joined_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-    if (membershipError || !membership) throw new Error(membershipError?.message ?? "Could not assign the Owner.");
-
-    const { error: auditError } = await admin.from("audit_events").insert({
-      business_id: business.id,
-      actor_profile_id: user.id,
-      event_type: "business_created",
-      entity_type: "business",
-      entity_id: business.id,
-      after_data: {
-        name,
-        slug,
-        modules,
-        initial_owner_profile_id: ownerId,
-        owner_account: "existing",
-      },
+    const client = await createClient();
+    const { data: businessId, error: createError } = await client.rpc("create_business_with_owner", {
+      final_name: name,
+      final_slug: slug,
+      final_timezone: timezone,
+      final_currency: currency,
+      final_modules: modules,
+      target_owner_email: ownerEmail,
     });
-    if (auditError) throw new Error(auditError.message);
+    if (createError || typeof businessId !== "string") {
+      const message = createError?.message ?? "Could not create business.";
+      if (message.includes("business URL")) {
+        return fieldFailure("That business URL is already in use.", { slug: "Choose a different URL slug." });
+      }
+      if (message.includes("No registered Lenden account")) {
+        return fieldFailure("The Owner must create their own Lenden account first.", {
+          owner_email: "No registered account was found. Ask this person to sign up, then retry.",
+        });
+      }
+      if (message.includes("Owner account")) {
+        return fieldFailure("This existing Lenden account is inactive.", {
+          owner_email: "Reactivate the global account before assigning it as an Owner.",
+        });
+      }
+      throw new Error(message);
+    }
 
-    createdBusinessId = null;
-    revalidateBusinessAdmin(business.id, slug);
+    revalidateBusinessAdmin(businessId, slug);
     return {
       ok: true,
       message: "Business created. The registered Lenden account is now the Owner; its password was not changed.",
-      entityId: business.id,
-      href: `/admin/businesses/${business.id}`,
+      entityId: businessId,
+      href: `/admin/businesses/${businessId}`,
     };
   } catch (error) {
-    const admin = createAdminClient();
-    if (createdBusinessId) await admin.from("businesses").delete().eq("id", createdBusinessId);
     return actionError(error, "Could not create business.");
   }
 }

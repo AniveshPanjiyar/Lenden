@@ -195,4 +195,58 @@ begin
 end;
 $$;
 
+select public.create_business_with_owner(
+  'Admin Created Business',
+  'admin-created-business-test',
+  'Asia/Kolkata',
+  'INR',
+  array['library'::public.payment_business, 'general'::public.payment_business],
+  'granted-user@test.invalid'
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.businesses b
+    join public.business_memberships bm on bm.business_id = b.id
+    join public.audit_events ae on ae.business_id = b.id
+    where b.slug = 'admin-created-business-test'
+      and bm.profile_id = '81000000-0000-4000-8000-000000000004'
+      and bm.role = 'primary_owner'
+      and bm.status = 'active'
+      and ae.event_type = 'business_created'
+  ) then
+    raise exception 'Admin creation did not atomically create ownership and audit history';
+  end if;
+  if (
+    select count(*)
+    from public.business_modules modules
+    join public.businesses b on b.id = modules.business_id
+    where b.slug = 'admin-created-business-test'
+      and modules.enabled
+  ) <> 2 then
+    raise exception 'Admin creation did not enable the selected modules';
+  end if;
+end;
+$$;
+
+select set_config('request.jwt.claim.sub', '81000000-0000-4000-8000-000000000006', true);
+do $$
+begin
+  begin
+    perform public.create_business_with_owner(
+      'Unauthorized Business',
+      'unauthorized-business-test',
+      'Asia/Kolkata',
+      'INR',
+      array['general'::public.payment_business],
+      'requester@test.invalid'
+    );
+    raise exception 'A non-platform administrator unexpectedly created a business';
+  exception when insufficient_privilege then null;
+  end;
+end;
+$$;
+
 rollback;

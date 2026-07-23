@@ -28,6 +28,7 @@ import type {
   ReferralCode,
   Room,
   StaffPermission,
+  StudentCollectionPage,
   StudentDetailPayload,
   StudentRosterPayload,
 } from "@/lib/types";
@@ -629,6 +630,147 @@ function rosterSearchTerm(value: string | null) {
   return value?.trim().replace(/[%_,().]/g, " ").replace(/\s+/g, " ").slice(0, 80) ?? "";
 }
 
+function collectionDisplayRollNumber(student: Pick<LibraryStudent, "roll_number" | "student_name">) {
+  const rollNumber = student.roll_number?.trim().replace(/\.0+$/, "") ?? "";
+  const studentName = student.student_name?.trim().replace(/\.0+$/, "") ?? "";
+  if (rollNumber && studentName && !/^\d+$/.test(rollNumber) && /^\d+$/.test(studentName) && /[a-z]/i.test(rollNumber)) {
+    return studentName;
+  }
+  return rollNumber;
+}
+
+function nextCollectionRollNumber(values: Array<string | null | undefined>) {
+  let largestValue = -1;
+  let largestWidth = 0;
+  values.forEach((value) => {
+    const normalized = value?.trim().replace(/\.0+$/, "") ?? "";
+    if (!/^\d+$/.test(normalized)) return;
+    const numericValue = Number(normalized);
+    if (!Number.isSafeInteger(numericValue)) return;
+    if (numericValue > largestValue || (numericValue === largestValue && normalized.length > largestWidth)) {
+      largestValue = numericValue;
+      largestWidth = normalized.length;
+    }
+  });
+  if (largestValue < 0) return "1";
+  return String(largestValue + 1).padStart(largestWidth, "0");
+}
+
+export async function getStudentCollectionPage(
+  businessContext: BusinessContext,
+  options: {
+    sourceId: string;
+    intent: "existing" | "new_defaults";
+    cursor?: string | null;
+    search?: string | null;
+  },
+): Promise<StudentCollectionPage> {
+  const role = businessContext.membership?.role;
+  const ownerish = businessContext.accessMode === "support" || isBusinessOwner(role);
+  const accessible = accessibleBusinessTypes(role, businessContext.permissions);
+  const canUseLibrary = !isBusinessSalesAgent(role)
+    && businessContext.enabledModules.includes("library")
+    && (ownerish || accessible.has("library"));
+  const canUseCourse = !isBusinessSalesAgent(role)
+    && businessContext.enabledModules.includes("course")
+    && (ownerish || accessible.has("course"));
+  const sourceId = options.sourceId;
+  const isLibrary = sourceId === "library";
+  const [, sourceCourseId] = sourceId.split(":", 2);
+  if ((isLibrary && !canUseLibrary) || (!isLibrary && (!canUseCourse || !sourceCourseId))) {
+    return { items: [], nextCursor: null, total: 0, nextRollNumber: null };
+  }
+
+  const supabase = await createClient({ businessId: businessContext.business.id });
+  if (options.intent === "new_defaults") {
+    if (isLibrary) {
+      const result = await supabase
+        .from("library_students")
+        .select("roll_number,student_name")
+        .eq("business_id", businessContext.business.id)
+        .eq("placeholder", false);
+      if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
+      const rolls = ((result.data ?? []) as Array<Pick<LibraryStudent, "roll_number" | "student_name">>)
+        .map(collectionDisplayRollNumber);
+      return { items: [], nextCursor: null, total: 0, nextRollNumber: nextCollectionRollNumber(rolls) };
+    }
+
+    const result = await supabase
+      .from("course_students")
+      .select("roll_number")
+      .eq("business_id", businessContext.business.id)
+      .eq("source_course_id", sourceCourseId);
+    if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
+    return {
+      items: [],
+      nextCursor: null,
+      total: 0,
+      nextRollNumber: nextCollectionRollNumber((result.data ?? []).map((student) => student.roll_number)),
+    };
+  }
+
+  const offset = Math.max(Number.parseInt(options.cursor ?? "0", 10) || 0, 0);
+  const limit = 15;
+  const search = rosterSearchTerm(options.search ?? null);
+  if (isLibrary) {
+    let query = supabase
+      .from("library_students")
+      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
+      .eq("business_id", businessContext.business.id)
+      .eq("active", true)
+      .eq("placeholder", false);
+    if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
+    const result = await query
+      .order("subscription_end_date", { ascending: true, nullsFirst: false })
+      .order("roll_number")
+      .order("id")
+      .range(offset, offset + limit - 1);
+    if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
+    const students = ((result.data ?? []) as LibraryStudent[]).map((student) => ({
+      ...student,
+      photo_url: null,
+      aadhar_photo_url: null,
+      aadhar_back_photo_url: null,
+      status_note: null,
+      metadata: {},
+    }));
+    const total = result.count ?? students.length;
+    return {
+      items: students.map((student) => ({ source: "library" as const, student })),
+      nextCursor: offset + students.length < total ? String(offset + students.length) : null,
+      total,
+      nextRollNumber: null,
+    };
+  }
+
+  let query = supabase
+    .from("course_students")
+    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
+    .eq("business_id", businessContext.business.id)
+    .eq("source_course_id", sourceCourseId)
+    .eq("active", true);
+  if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
+  const result = await query
+    .order("subscription_end_date", { ascending: true, nullsFirst: false })
+    .order("roll_number")
+    .order("id")
+    .range(offset, offset + limit - 1);
+  if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
+  const students = ((result.data ?? []) as CourseStudent[]).map((student) => ({
+    ...student,
+    photo_url: null,
+    aadhar_photo_url: null,
+    aadhar_back_photo_url: null,
+  }));
+  const total = result.count ?? students.length;
+  return {
+    items: students.map((student) => ({ source: "course" as const, student })),
+    nextCursor: offset + students.length < total ? String(offset + students.length) : null,
+    total,
+    nextRollNumber: null,
+  };
+}
+
 export async function getStudentRosterPage(
   businessContext: BusinessContext,
   viewState: AppViewState,
@@ -640,7 +782,7 @@ export async function getStudentRosterPage(
   const ownerish = businessContext.accessMode === "support" || isBusinessOwner(role);
   const accessible = accessibleBusinessTypes(role, businessContext.permissions);
   const offset = Math.max(Number.parseInt(options.cursor ?? "0", 10) || 0, 0);
-  const limit = Math.min(Math.max(options.limit ?? 100, 25), 200);
+  const limit = Math.min(Math.max(options.limit ?? 100, 15), 200);
   const search = rosterSearchTerm(options.search ?? null);
   const active = status !== "inactive";
   const supabase = await createClient({ businessId: businessContext.business.id });
@@ -720,5 +862,22 @@ export function mergeAppData(bootstrap: BootstrapPayload, dashboard: DashboardPa
     ...bootstrap,
     ...dashboard,
     notifications: bootstrap.notifications ?? [],
+  };
+}
+
+export function emptyDashboardData(): DashboardPayload {
+  return {
+    libraryStudents: [],
+    courseStudents: [],
+    studentPayments: [],
+    payments: [],
+    expenses: [],
+    movements: [],
+    ledger: [],
+    closingSummaries: [],
+    cashBalances: [],
+    changeRequests: [],
+    agentSettlements: [],
+    notifications: [],
   };
 }

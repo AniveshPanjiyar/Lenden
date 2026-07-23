@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { getAppData } from "@/lib/data";
+import { emptyDashboardData, getBootstrapData, mergeAppData } from "@/lib/data";
 import { BusinessAccessError, resolveBusinessContext } from "@/lib/tenancy";
 import { parseAppViewState } from "@/lib/view-state";
 
@@ -38,8 +38,7 @@ export default async function BusinessHome({
   let initialViewState;
   try {
     const { identity, context } = await resolveBusinessContext({ slug: businessSlug });
-    const dashboardViewState = parseAppViewState(resolvedSearchParams, "");
-    data = await getAppData(context, identity, dashboardViewState);
+    data = mergeAppData(await getBootstrapData(context, identity), emptyDashboardData());
     initialViewState = parseAppViewState(
       resolvedSearchParams,
       identity.id,

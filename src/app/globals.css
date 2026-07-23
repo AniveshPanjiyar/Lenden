@@ -1558,7 +1558,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loading-dots > span {
+  .loading-dots > span,
+  .student-picker-loading span {
     animation: none;
     opacity: 0.7;
   }
@@ -1797,6 +1798,122 @@ form[aria-busy="true"] textarea {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.profile-combobox {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.profile-combobox.open,
+.profile-combobox:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(47, 111, 94, 0.12);
+}
+
+.profile-combobox > svg {
+  margin-left: 12px;
+  color: var(--muted);
+}
+
+.profile-combobox > input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.profile-combobox > input:focus {
+  box-shadow: none;
+}
+
+.profile-combobox > button {
+  width: 42px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.profile-combobox.open > button svg {
+  transform: rotate(180deg);
+}
+
+.profile-combobox-options {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--surface-container);
+  padding: 6px;
+  box-shadow: var(--shadow-floating);
+}
+
+.profile-combobox-options > button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--foreground);
+  padding: 9px;
+  text-align: left;
+}
+
+.profile-combobox-options > button.active,
+.profile-combobox-options > button:hover {
+  background: rgba(47, 111, 94, 0.11);
+}
+
+.profile-combobox-options img {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.profile-combobox-options span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.profile-combobox-options strong,
+.profile-combobox-options small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-combobox-options small,
+.profile-combobox-options > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-combobox-options > p {
+  padding: 12px;
 }
 
 .form-grid input,
@@ -2389,6 +2506,62 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
 }
 
 /* ── Notification Panel ── */
+.notifications-page {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+  padding: 4px 0 32px;
+}
+
+.notifications-page-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.notifications-page-heading h2,
+.notifications-page-heading p {
+  margin: 0;
+}
+
+.notifications-page-heading h2 {
+  margin-top: 4px;
+  font-family: var(--font-headline);
+  font-size: clamp(24px, 5vw, 34px);
+}
+
+.notifications-page-heading > span {
+  min-width: 34px;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--brand);
+  color: white;
+  font-weight: 900;
+}
+
+.notifications-page .notification-list {
+  gap: 12px;
+}
+
+.notifications-page .notification-item {
+  border-radius: 16px;
+  padding: 16px;
+  background: var(--surface-container);
+}
+
+.notifications-page .notification-item.read {
+  opacity: 0.78;
+}
+
+.notifications-page .notification-item.unread {
+  border-left-width: 4px;
+  box-shadow: var(--shadow-card);
+}
+
 .notification-layer {
   position: fixed;
   inset: 0;
@@ -6586,9 +6759,29 @@ summary::-webkit-details-marker {
   color: var(--brand);
 }
 
+.collection-student-flow {
+  display: grid;
+  gap: 14px;
+}
+
+.collection-student-browser .library-student-list-panel {
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+
+.collection-student-browser .library-student-list-scroll {
+  max-height: min(480px, 52vh);
+  padding: 10px 4px 4px 0;
+}
+
 .library-search-results {
   display: grid;
   gap: 8px;
+  max-height: min(420px, 52vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .library-search-results button {
@@ -6643,12 +6836,57 @@ summary::-webkit-details-marker {
   font-weight: 800;
 }
 
+.student-picker-loading {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.student-picker-loading span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--brand);
+  animation: loading-dot-pulse 900ms ease-in-out infinite;
+}
+
+.student-picker-loading span:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.student-picker-loading span:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+.student-picker-pagination {
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+}
+
+.student-picker-pagination .secondary-button {
+  width: 100%;
+}
+
+.student-picker-change {
+  justify-self: start;
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  padding: 3px 0;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .library-selected-profile {
   padding: 12px;
 }
 
 .library-selected-profile.with-photo {
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -6841,7 +7079,6 @@ summary::-webkit-details-marker {
   .library-student-detail-grid,
   .library-student-money-grid,
   .library-profile-panel,
-  .library-member-mode,
   .subscription-history-row,
   .segmented,
   .settings-columns {
