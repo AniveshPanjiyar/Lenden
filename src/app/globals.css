@@ -7148,9 +7148,11 @@ summary::-webkit-details-marker {
 
   .closing-workspace,
   .closing-review-detail {
+    width: 100%;
+    min-width: 0;
     border-radius: 0;
-    margin: -24px -16px 0;
-    padding: 16px 16px 24px;
+    margin: -24px 0 0;
+    padding: 16px 0 24px;
   }
 
   .closing-overview-grid,
