@@ -3,6 +3,7 @@ const blockedReturnPrefixes = [
   "/signup",
   "/forgot-password",
   "/reset-password",
+  "/resend-confirmation",
   "/change-password",
   "/auth",
 ];

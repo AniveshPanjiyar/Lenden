@@ -1,5 +1,7 @@
 import "server-only";
 
+const DEFAULT_CUSTOMER_FROM_EMAIL = "Lenden <support@margdarshakss.com>";
+
 type EmailResult =
   | { ok: true; providerId: string | null }
   | { ok: false; error: string };
@@ -21,8 +23,8 @@ async function sendEmail(input: {
   idempotencyKey: string;
 }): Promise<EmailResult> {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!apiKey || !from) return { ok: false, error: "Resend is not configured." };
+  const from = process.env.RESEND_FROM_EMAIL?.trim() || DEFAULT_CUSTOMER_FROM_EMAIL;
+  if (!apiKey) return { ok: false, error: "Resend is not configured." };
 
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -79,4 +81,3 @@ export function sendBusinessAccessGrantedEmail(input: {
     html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;color:#21332b"><h1>Business access granted</h1><p>You can now open <strong>${escapeHtml(input.businessName)}</strong> on Lenden as <strong>${escapeHtml(input.roleLabel)}</strong>.</p><p><a href="${escapeHtml(input.businessUrl)}" style="display:inline-block;background:#2f6f5e;color:white;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:700">Open business</a></p><p style="color:#63736c;font-size:13px">This access is separate from your login and other business memberships.</p></div>`,
   });
 }
-

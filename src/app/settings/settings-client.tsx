@@ -179,7 +179,7 @@ function ProfileSection({
     const { data, error } = await supabase.auth.linkIdentity({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        redirectTo: `${window.location.origin}/auth/callback?flow=oauth&next=${encodeURIComponent(next)}`,
       },
     });
     if (error) {

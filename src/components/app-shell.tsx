@@ -5353,6 +5353,7 @@ function TransactionsView({
   const selectedExpense = selectedTransactionActionRecord?.recordType === "expense"
     ? expenses.find((expense) => expense.id === (selectedTransactionActionRecord.sourceId ?? selectedTransactionActionRecord.id)) ?? null
     : null;
+  const selectedTransactionSourceId = selectedTransactionActionRecord?.sourceId ?? selectedTransactionActionRecord?.id ?? "";
   const attachmentRecord = selectedPayment?.photo_path
     ? { type: "payment" as const, id: selectedPayment.id }
     : selectedExpense?.photo_path
@@ -5679,7 +5680,7 @@ function TransactionsView({
                 className="form-grid"
                 onSubmit={(event) => submitAndClose(event, requestPaymentTransferAction, setNotice, startTransition, closeTransactionAction)}
               >
-                <input type="hidden" name="payment_id" value={selectedTransactionActionRecord.id} />
+                <input type="hidden" name="payment_id" value={selectedTransactionSourceId} />
                 <SearchableProfileSelect
                   label={t("transferToStaff")}
                   name="to_profile_id"
@@ -5699,7 +5700,7 @@ function TransactionsView({
                 onSubmit={(event) => submitAndClose(event, updateRecordAction, setNotice, startTransition, closeTransactionAction)}
               >
                 <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
-                <input type="hidden" name="id" value={selectedTransactionActionRecord.id} />
+                <input type="hidden" name="id" value={selectedTransactionSourceId} />
                 <label>
                   {t("amount")}
                   <input name="amount" type="number" min="1" step="0.01" defaultValue={selectedTransactionActionRecord.editAmount} required />
@@ -5730,7 +5731,7 @@ function TransactionsView({
                 onSubmit={(event) => submitAndClose(event, cancelRecordAction, setNotice, startTransition, closeTransactionAction)}
               >
                 <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
-                <input type="hidden" name="id" value={selectedTransactionActionRecord.id} />
+                <input type="hidden" name="id" value={selectedTransactionSourceId} />
                 <label className="full-span">
                   {t("reasonRequired")}
                   <input name="reason" placeholder={t("reasonRequired")} required autoFocus />

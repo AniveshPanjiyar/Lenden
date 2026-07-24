@@ -5,7 +5,7 @@ import { LoginForm } from "@/app/login/login-form";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; next?: string }>;
+  searchParams: Promise<{ confirmation?: string; error?: string; next?: string }>;
 }) {
   const params = await searchParams;
 
@@ -21,7 +21,16 @@ export default async function LoginPage({
             <h1>Sign in to Lenden</h1>
           </div>
         </div>
-        {params.error ? <p className="form-error">{decodeURIComponent(params.error)}</p> : null}
+        {params.error ? (
+          <div className="auth-confirmation-error" role="alert">
+            <p className="form-error">{params.error}</p>
+            {params.confirmation === "failed" ? (
+              <a className="secondary-button" href={params.next ? `/resend-confirmation?next=${encodeURIComponent(params.next)}` : "/resend-confirmation"}>
+                Resend verification email
+              </a>
+            ) : null}
+          </div>
+        ) : null}
         <form action={signInWithGoogleAction}>
           {params.next ? <input type="hidden" name="next" value={params.next} /> : null}
           <button className="google-auth-button" type="submit"><span aria-hidden="true">G</span> Continue with Google</button>

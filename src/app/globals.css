@@ -1073,6 +1073,7 @@ button.business-person-open { cursor: pointer; }
 .admin-action-stack.compact { display: contents; }
 .admin-action-message { width: fit-content; max-width: 100%; margin: 0; border-radius: 9px; padding: .55rem .7rem; font-size: .76rem; font-weight: 750; line-height: 1.4; }
 .admin-action-message.success { background: #e6f6ec; color: #176b3a; }
+.admin-action-message.status { background: #edf4ff; color: #285a8f; }
 .admin-action-message.error { background: #fff1ee; color: #9b352b; }
 .admin-action-message ul { margin: .4rem 0 0; padding-left: 1.1rem; }
 .admin-warning-text { color: #9b5c13 !important; font-weight: 800; }
@@ -1109,6 +1110,9 @@ button.business-person-open { cursor: pointer; }
 .admin-wizard-form label { display: grid; gap: .38rem; color: var(--foreground); font-size: .78rem; font-weight: 800; }
 .admin-settings-form label > span,
 .admin-wizard-form label > span { color: var(--muted); font-size: .7rem; font-weight: 600; line-height: 1.4; }
+.admin-wizard-form input[aria-invalid="true"] { border-color: rgba(182, 69, 53, .75); background: #fff9f7; box-shadow: 0 0 0 3px rgba(182, 69, 53, .1); }
+.admin-wizard-form .admin-inline-field-error,
+.admin-inline-field-error { margin: 0; color: var(--bad); font-size: .72rem; font-weight: 750; line-height: 1.4; }
 .admin-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; }
 .admin-module-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; margin: 0; border: 0; padding: 0; }
 .admin-module-choice-grid > label { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: .7rem; border: 1px solid var(--line); border-radius: 14px; background: #fffdf8; padding: .9rem; cursor: pointer; }
@@ -1653,6 +1657,15 @@ form[aria-busy="true"] textarea {
 .auth-secondary-copy { margin: .2rem 0 0; color: var(--muted); font-size: .78rem; text-align: center; }
 .auth-secondary-copy a, .auth-inline-links a { color: var(--brand-strong); }
 .auth-field-errors { margin: 0; padding-left: 1.1rem; color: var(--bad); font-size: .74rem; }
+.auth-verification-sent { display: grid; gap: 1rem; }
+.auth-verification-sent > div:first-child { display: grid; gap: .35rem; border: 1px solid rgba(47, 111, 94, .24); border-radius: 12px; background: var(--soft-good); padding: .9rem; }
+.auth-verification-sent strong { color: var(--good); }
+.auth-verification-sent p { margin: 0; color: var(--foreground); font-size: .8rem; line-height: 1.45; }
+.auth-verification-sent span { overflow-wrap: anywhere; color: var(--muted); font-size: .76rem; font-weight: 750; }
+.auth-resend-compact { gap: .65rem; }
+.auth-confirmation-error { display: grid; gap: .65rem; margin: .8rem 0; }
+.auth-confirmation-error .form-error { margin: 0; }
+.auth-confirmation-error .secondary-button { justify-self: start; }
 .invitation-panel { display: grid; gap: 1rem; }
 .invitation-summary { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .45rem .8rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-container-low); padding: .85rem; }
 .invitation-summary span { color: var(--muted); font-size: .72rem; }

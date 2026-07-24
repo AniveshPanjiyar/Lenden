@@ -32,10 +32,33 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 APP_BASE_URL=http://localhost:4000
 SUPPORT_EMAIL=support@margdarshakss.com
 RESEND_API_KEY=your_resend_api_key
-RESEND_FROM_EMAIL=Lenden <access@your-verified-domain.example>
+RESEND_FROM_EMAIL=Lenden <support@margdarshakss.com>
 ```
 
 The service role key and Resend key are server-only. Configure Google in Supabase Auth, enable Manual Linking, and allow `/auth/callback` for local and production URLs. Financial mutations use the signed-in user&apos;s authenticated Supabase client and remain subject to RLS.
+
+### Authentication email delivery
+
+`RESEND_API_KEY` and `RESEND_FROM_EMAIL` are used by Lenden for business invitations and access notifications. Supabase Auth securely generates and verifies signup and recovery tokens, but production delivery must use the configured Resend SMTP transport rather than Supabase&apos;s default mail service. Configure Supabase **Authentication → Emails → SMTP Settings** with Resend:
+
+- Host: `smtp.resend.com`
+- Port: `465` or `587`
+- Username: `resend`
+- Password: the Resend API key
+- Sender: `Lenden <support@margdarshakss.com>`
+
+Set the deployed app environment to `APP_BASE_URL=https://lenden.margdarshakss.com`. Set the production Supabase Site URL to the same origin and allow these redirect URLs:
+
+- `https://lenden.margdarshakss.com/auth/callback`
+- `http://localhost:4000/auth/callback`
+
+The app callback accepts both Supabase&apos;s default code redirect and direct token-hash links. For a cross-browser-safe custom **Confirm signup** template, use:
+
+```html
+<a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">Verify email</a>
+```
+
+For the **Reset password** template, use the same structure with `type=recovery`. Lenden always supplies a validated `/auth/callback?flow=...&next=...` value as `RedirectTo`.
 
 Run locally:
 

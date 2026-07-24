@@ -9,6 +9,8 @@ export type AuthActionState = {
   ok: boolean | null;
   message: string;
   fieldErrors?: Record<string, string>;
+  email?: string;
+  nextPath?: string;
 };
 
 const emailSchema = z.email("Enter a valid email address.").transform((value) => value.trim().toLowerCase());
@@ -52,12 +54,60 @@ export async function signUpAction(_state: AuthActionState, formData: FormData):
     password: passwordResult.data,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: `${baseUrl}/auth/callback?next=${encodeURIComponent(next)}`,
+      emailRedirectTo: `${baseUrl}/auth/callback?flow=email&next=${encodeURIComponent(next)}`,
     },
   });
   if (error) return { ok: false, message: error.message };
   if (data.session) redirect(next);
-  return { ok: true, message: "Check your email to verify your account, then return to Lenden." };
+  return {
+    ok: true,
+    message: "Open the newest email from Lenden and select Verify email. The link returns you securely to Lenden.",
+    email: emailResult.data,
+    nextPath: next,
+  };
+}
+
+export async function resendSignupConfirmationAction(
+  _state: AuthActionState,
+  formData: FormData,
+): Promise<AuthActionState> {
+  const emailResult = emailSchema.safeParse(text(formData, "email"));
+  const next = safeNextPath(text(formData, "next"), "/settings?section=businesses");
+  if (!emailResult.success) {
+    return {
+      ok: false,
+      message: "Enter the email address used to create the account.",
+      fieldErrors: { email: emailResult.error.issues[0]?.message ?? "Enter a valid email address." },
+      nextPath: next,
+    };
+  }
+
+  const baseUrl = await appBaseUrl();
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: emailResult.data,
+    options: {
+      emailRedirectTo: `${baseUrl}/auth/callback?flow=email&next=${encodeURIComponent(next)}`,
+    },
+  });
+  if (error) {
+    const rateLimited = error.status === 429 || error.code === "over_email_send_rate_limit";
+    return {
+      ok: false,
+      message: rateLimited
+        ? "A verification email was sent recently. Wait about a minute before trying again."
+        : error.message,
+      email: emailResult.data,
+      nextPath: next,
+    };
+  }
+  return {
+    ok: true,
+    message: "A fresh verification email was sent. Open the newest message; older links may have expired.",
+    email: emailResult.data,
+    nextPath: next,
+  };
 }
 
 export async function signInWithGoogleAction(formData: FormData) {
@@ -66,7 +116,7 @@ export async function signInWithGoogleAction(formData: FormData) {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: `${baseUrl}/auth/callback?next=${encodeURIComponent(next)}` },
+    options: { redirectTo: `${baseUrl}/auth/callback?flow=oauth&next=${encodeURIComponent(next)}` },
   });
   if (error || !data.url) redirect(`/login?error=${encodeURIComponent(error?.message ?? "Could not start Google sign in.")}`);
   redirect(data.url);
@@ -78,7 +128,7 @@ export async function requestPasswordResetAction(_state: AuthActionState, formDa
   const baseUrl = await appBaseUrl();
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(emailResult.data, {
-    redirectTo: `${baseUrl}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
+    redirectTo: `${baseUrl}/auth/callback?flow=recovery&next=${encodeURIComponent("/reset-password")}`,
   });
   if (error) return { ok: false, message: error.message };
   return { ok: true, message: "If an account exists for that email, a password reset link has been sent." };
