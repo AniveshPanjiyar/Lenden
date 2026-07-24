@@ -206,6 +206,7 @@ export type Payment = {
   slot_hours: number | null;
   library_student_id: string | null;
   course_student_id: string | null;
+  student_subscription_key: string | null;
   course_id: string | null;
   skill_course_id: string | null;
   referral_code_id: string | null;
@@ -266,6 +267,7 @@ export type LibraryStudent = {
   placeholder: boolean;
   status_note: string | null;
   last_payment_id: string | null;
+  current_subscription_key: string | null;
   last_payment_date: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -321,15 +323,64 @@ export type CourseStudent = {
   advance_amount: number | null;
   active: boolean;
   last_payment_id: string | null;
+  current_subscription_key: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type StudentHistoryPage = {
-  payments: Payment[];
-  events: LibraryStudentSubscriptionEvent[];
+export type TransactionJourneyStep = {
+  id: string;
+  person: string;
+  action: string;
+  role: string | null;
+  state: "complete" | "sent" | "received" | "pending" | "rejected" | "verified";
+  timestamp: string | null;
+};
+
+export type TransactionJourneyLane = {
+  component: "cash" | "online";
+  amount: number;
+  status: ApprovalStatus;
+  steps: TransactionJourneyStep[];
+};
+
+export type StudentSubscriptionTransaction = {
+  id: string;
+  amount: number;
+  paymentDate: string;
+  createdAt: string;
+  collectedBy: string;
+  collectorName: string;
+  mode: PaymentMode;
+  cashAmount: number;
+  onlineAmount: number;
+  approvalStatus: ApprovalStatus;
+  cashApprovalStatus: ApprovalStatus | null;
+  onlineApprovalStatus: ApprovalStatus | null;
+  recordStatus: "active" | "cancelled";
+  cancelReason: string | null;
+};
+
+export type StudentSubscriptionHistoryItem = {
+  subscriptionKey: string;
+  startDate: string | null;
+  endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  slotHours: number | null;
+  feeAmount: number;
+  totalPaid: number;
+  duesAmount: number;
+  advanceAmount: number;
+  transactionCount: number;
+  transactions: StudentSubscriptionTransaction[];
+};
+
+export type StudentSubscriptionHistoryPage = {
+  items: StudentSubscriptionHistoryItem[];
   nextPage: number | null;
-  total: number;
+  totalSubscriptions: number;
+  totalTransactions: number;
 };
 
 export type StudentCollectionOption =
@@ -500,8 +551,19 @@ export type StudentMutationPatch = {
 export type MutationPatch = PaymentTransferMutationPatch | StudentMutationPatch;
 
 export type ActionResult<T extends object = { patch?: MutationPatch }> =
-  | ({ ok: true; message?: string } & T)
-  | { ok: false; message: string };
+  | ({
+      ok: true;
+      message?: string;
+      warning?: string;
+      errorId?: string;
+    } & T)
+  | {
+      ok: false;
+      message: string;
+      fieldErrors?: Record<string, string>;
+      warning?: string;
+      errorId?: string;
+    };
 
 export type AppData = {
   businessContext: BusinessContext;

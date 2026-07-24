@@ -73,7 +73,7 @@ select public.grant_business_access(
   '82000000-0000-4000-8000-000000000001',
   '81000000-0000-4000-8000-000000000004',
   'staff',
-  array['collect_general']
+  array['collect_general', 'transfer_money']
 );
 
 do $$
@@ -84,6 +84,14 @@ begin
       and profile_id = '81000000-0000-4000-8000-000000000004'
       and role = 'staff' and status = 'active'
   ) then raise exception 'Owner grant did not create active staff membership'; end if;
+  if not exists (
+    select 1
+    from public.business_member_permissions bmp
+    join public.business_memberships bm on bm.id = bmp.membership_id
+    where bm.business_id = '82000000-0000-4000-8000-000000000001'
+      and bm.profile_id = '81000000-0000-4000-8000-000000000004'
+      and bmp.permission = 'transfer_money'
+  ) then raise exception 'Owner grant did not preserve transaction-transfer permission'; end if;
 end;
 $$;
 
@@ -95,7 +103,7 @@ insert into public.business_invitations (
   '82000000-0000-4000-8000-000000000001',
   'invited-user@test.invalid',
   'staff',
-  array['collect_general'],
+  array['collect_general', 'transfer_money'],
   repeat('a', 64),
   '81000000-0000-4000-8000-000000000001',
   now() + interval '30 days',
@@ -129,6 +137,14 @@ begin
   if not exists (select 1 from public.business_invitations where id = '83000000-0000-4000-8000-000000000001' and status = 'accepted') then
     raise exception 'Accepted invitation did not transition state';
   end if;
+  if not exists (
+    select 1
+    from public.business_member_permissions bmp
+    join public.business_memberships bm on bm.id = bmp.membership_id
+    where bm.business_id = '82000000-0000-4000-8000-000000000001'
+      and bm.profile_id = '81000000-0000-4000-8000-000000000003'
+      and bmp.permission = 'transfer_money'
+  ) then raise exception 'Accepted invitation did not preserve transaction-transfer permission'; end if;
 end;
 $$;
 

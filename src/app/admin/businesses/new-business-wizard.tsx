@@ -1,8 +1,9 @@
 "use client";
 
 import { ReturnAwareLink } from "@/components/return-aware-link";
-import { useActionState, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { businessLabels } from "@/lib/constants";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import { createBusinessAction, type AdminActionState } from "./actions";
 
 const initialState: AdminActionState = { ok: null, message: "" };
@@ -39,6 +40,12 @@ export default function NewBusinessWizard() {
         <div className="admin-success-mark" aria-hidden="true">✓</div>
         <h2>Business created</h2>
         <p>{state.message}</p>
+        {state.warning ? (
+          <p className="admin-action-message warning" role="status">
+            {state.warning}
+            {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+          </p>
+        ) : null}
         <div className="admin-info-callout"><strong>Registered Owner assigned</strong><p>The Owner&apos;s login and password were not changed.</p></div>
         <div className="admin-form-actions">
           <ReturnAwareLink className="primary-button" href={state.href ?? `/admin/businesses/${state.entityId}`}>Open business</ReturnAwareLink>
@@ -285,6 +292,9 @@ export default function NewBusinessWizard() {
             aria-live={submitStatus.tone === "error" ? "assertive" : "polite"}
           >
             <strong>{submitStatus.message}</strong>
+            {submitStatus.tone === "error" && state.errorId
+              ? <span>{` Reference: ${state.errorId}.`}</span>
+              : null}
             {submitStatus.tone === "error" && state.fieldErrors
               ? <ul>{Object.values(state.fieldErrors).map((error) => <li key={error}>{error}</li>)}</ul>
               : null}

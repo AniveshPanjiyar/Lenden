@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
 import { signInAction, type AuthActionState } from "@/app/auth/actions";
 import { showOfflineDialogEvent } from "@/lib/client-events";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 
 const initialState: AuthActionState = { ok: null, message: "" };
 
@@ -29,7 +29,7 @@ export function LoginForm({ nextPath }: { nextPath?: string }) {
         <input name="password" type="password" autoComplete="current-password" required />
       </label>
       <div className="auth-inline-links"><Link href="/forgot-password">Forgot password?</Link></div>
-      {state.message ? <p className="form-error" role="alert">{state.message}</p> : null}
+      {state.message ? <p className="form-error" role="alert">{state.message}{state.errorId ? ` Reference: ${state.errorId}.` : ""}</p> : null}
       <button className="primary-button" type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
       <p className="auth-secondary-copy">New to Lenden? <Link href={nextPath ? `/signup?next=${encodeURIComponent(nextPath)}` : "/signup"}>Create your account</Link></p>
     </form>

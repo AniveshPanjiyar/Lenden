@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useCallback, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { businessLabels, businessPermissions } from "@/lib/constants";
 import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import {
   createBusinessUserAction,
   resendBusinessInvitationAction,
@@ -99,6 +100,7 @@ function accessSummary(role: BusinessRole, permissions: string[], enabledModules
     return permissions.includes(permission) && enabledModules.includes(module) ? [businessLabels[module]] : [];
   });
   if (permissions.includes("add_expense")) labels.push("Add expenses");
+  if (permissions.includes("transfer_money")) labels.push("Transfer assigned transactions");
   const paused = permissions.filter((permission) => {
     const moduleKey = permissionToModule[permission];
     return moduleKey && !enabledModules.includes(moduleKey);
@@ -124,8 +126,16 @@ function InviteLink({ url }: { url: string }) {
 function ActionMessage({ state }: { state: BusinessUserActionState }) {
   if (!state.message) return null;
   return (
-    <div className={`business-user-action-message ${state.ok ? "success" : "error"}`} role={state.ok ? "status" : "alert"} aria-live="polite">
-      <p>{state.message}</p>
+    <div
+      className={`business-user-action-message ${state.ok ? state.warning ? "warning" : "success" : "error"}`}
+      role={state.ok ? "status" : "alert"}
+      aria-live={state.ok ? "polite" : "assertive"}
+    >
+      <p>
+        {state.message}
+        {state.warning ? ` ${state.warning}` : ""}
+        {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+      </p>
       {state.inviteUrl ? <InviteLink url={state.inviteUrl} /> : null}
     </div>
   );
@@ -201,6 +211,16 @@ function StaffAccessFields({ permissions, setPermissions, enabledModules, preser
           />
           <span><strong>Can add expenses</strong><small>Create business expense records</small></span>
         </label>
+        <label>
+          <input
+            checked={permissions.includes("transfer_money")}
+            name="permissions"
+            onChange={(event) => toggle("transfer_money", event.target.checked)}
+            type="checkbox"
+            value="transfer_money"
+          />
+          <span><strong>Transfer assigned transactions</strong><small>Request a Staff-to-Staff transfer for transactions currently assigned to them</small></span>
+        </label>
       </div>
       {disabledPreserved.length ? (
         <div className="business-paused-access">
@@ -234,9 +254,21 @@ function AccessConfigurationForm({
   const [state, formAction, pending] = useActionState(action, initialActionState);
   const [role, setRole] = useState<EditableRole>(defaultRole);
   const [permissions, setPermissions] = useState(defaultPermissions);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    const firstInvalidField = !state.ok && state.fieldErrors
+      ? Object.keys(state.fieldErrors)[0]
+      : null;
+    if (firstInvalidField) {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstInvalidField)}"]`)
+        ?.focus();
+    }
+  }, [state.fieldErrors, state.ok]);
 
   return (
-    <form action={formAction} className="business-access-editor-form">
+    <form ref={formRef} action={formAction} className="business-access-editor-form">
       {hiddenFields.map((field) => <input key={field.name} name={field.name} type="hidden" value={field.value} />)}
       <RoleCards role={role} setRole={setRole} canCreateManager={canCreateManager} />
       {role === "staff" ? (
@@ -305,8 +337,15 @@ function AddPersonFlow({ canCreateManager, enabledModules, members, onEditMember
   onEditMember: (id: string) => void;
 }) {
   const [lookupState, lookupAction, lookupPending] = useActionState(resolveBusinessUserEmailAction, initialActionState);
+  const lookupFormRef = useRef<HTMLFormElement>(null);
   const existingMember = members.find((member) => member.email.toLowerCase() === lookupState.email?.toLowerCase());
   const canConfigure = lookupState.lookup === "registered" || lookupState.lookup === "invite";
+
+  useEffect(() => {
+    if (!lookupState.ok && lookupState.fieldErrors?.email) {
+      lookupFormRef.current?.querySelector<HTMLInputElement>('[name="email"]')?.focus();
+    }
+  }, [lookupState.fieldErrors, lookupState.ok]);
 
   return (
     <div className="business-add-person-flow">
@@ -314,7 +353,7 @@ function AddPersonFlow({ canCreateManager, enabledModules, members, onEditMember
         <strong>Start with their exact email</strong>
         <p>Lenden checks one exact address. It never exposes a browsable directory of users from other businesses.</p>
       </div>
-      <form action={lookupAction} className="business-user-email-lookup">
+      <form ref={lookupFormRef} action={lookupAction} className="business-user-email-lookup">
         <label>User email<input autoComplete="email" defaultValue={lookupState.email} name="email" placeholder="name@company.com" required type="email" /></label>
         <button className="secondary-button" disabled={lookupPending} type="submit">{lookupPending ? "Checking…" : "Check email"}</button>
       </form>
@@ -512,7 +551,7 @@ function InvitationDirectoryRow({ invitation, enabledModules, onEdit }: {
           </details>
         ) : <span className="business-protected-label">View only</span>}
       </div>
-      {invitation.deliveryError ? <p className="business-invitation-error">{invitation.deliveryError}</p> : null}
+      {invitation.deliveryError ? <p className="business-invitation-error">The invitation email could not be delivered. Send a fresh invitation or copy its link.</p> : null}
     </div>
   );
 }

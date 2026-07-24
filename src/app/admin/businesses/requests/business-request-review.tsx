@@ -1,13 +1,30 @@
 "use client";
 
 import { ReturnAwareLink } from "@/components/return-aware-link";
-import { useActionState } from "react";
 import { businessLabels } from "@/lib/constants";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { BusinessType } from "@/lib/types";
 import type { AdminBusinessRequest } from "../admin-data";
 import { approveBusinessRequestAdminAction, rejectBusinessRequestAdminAction, type AdminActionState } from "../actions";
 
 const initialState: AdminActionState = { ok: null, message: "" };
+
+function AdminMessage({ state }: { state: AdminActionState }) {
+  if (!state.message) return null;
+  return (
+    <div
+      className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+      role={state.ok ? "status" : "alert"}
+    >
+      <p>
+        {state.message}
+        {state.warning ? ` ${state.warning}` : ""}
+        {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+      </p>
+      {state.href ? <ReturnAwareLink href={state.href}>Open business</ReturnAwareLink> : null}
+    </div>
+  );
+}
 
 function RequestCard({ request }: { request: AdminBusinessRequest }) {
   const [approveState, approveAction, approvePending] = useActionState(approveBusinessRequestAdminAction, initialState);
@@ -20,10 +37,10 @@ function RequestCard({ request }: { request: AdminBusinessRequest }) {
       <input type="hidden" name="request_id" value={request.id} />
       <div className="admin-form-grid"><label>Final business name<input name="name" defaultValue={request.requestedName} minLength={2} required /></label><label>URL slug<input name="slug" defaultValue={defaultSlug} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required /></label><label>Timezone<input name="timezone" defaultValue="Asia/Kolkata" required /></label><label>Currency<input name="currency" defaultValue="INR" pattern="[A-Za-z]{3}" maxLength={3} required /></label></div>
       <fieldset className="admin-module-choice-grid"><legend>Enabled modules</legend>{(["library", "guest_house", "course", "general"] as BusinessType[]).map((module) => <label key={module} className={request.requestedModules.includes(module) ? "selected" : ""}><input type="checkbox" name="modules" value={module} defaultChecked={request.requestedModules.includes(module)} /><strong>{businessLabels[module]}</strong></label>)}</fieldset>
-      {approveState.message ? <div className={approveState.ok ? "admin-action-message success" : "admin-action-message error"}><p>{approveState.message}</p>{approveState.href ? <ReturnAwareLink href={approveState.href}>Open business</ReturnAwareLink> : null}</div> : null}
+      <AdminMessage state={approveState} />
       <button className="primary-button" type="submit" disabled={approvePending}>{approvePending ? "Approving…" : "Approve and create business"}</button>
     </form>
-    <form action={rejectAction} className="admin-request-reject-form" onSubmit={(event) => { if (!window.confirm(`Reject the request for ${request.requestedName}?`)) event.preventDefault(); }}><input type="hidden" name="request_id" value={request.id} /><label>Rejection reason<textarea name="reason" minLength={3} required rows={2} /></label><button className="business-user-suspend-button" type="submit" disabled={rejectPending}>{rejectPending ? "Rejecting…" : "Reject request"}</button>{rejectState.message ? <p className={rejectState.ok ? "admin-action-message success" : "admin-action-message error"}>{rejectState.message}</p> : null}</form>
+    <form action={rejectAction} className="admin-request-reject-form" onSubmit={(event) => { if (!window.confirm(`Reject the request for ${request.requestedName}?`)) event.preventDefault(); }}><input type="hidden" name="request_id" value={request.id} /><label>Rejection reason<textarea name="reason" minLength={3} required rows={2} /></label><button className="business-user-suspend-button" type="submit" disabled={rejectPending}>{rejectPending ? "Rejecting…" : "Reject request"}</button><AdminMessage state={rejectState} /></form>
   </article>;
 }
 

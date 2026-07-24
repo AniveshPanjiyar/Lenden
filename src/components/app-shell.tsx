@@ -62,9 +62,10 @@ import {
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { clearPersistedQueryCache } from "@/components/query-provider";
+import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentCollectionPage, StudentDetailPayload, StudentHistoryPage, StudentRosterPayload } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -103,14 +104,6 @@ type MutationRefreshDetail = {
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
 type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
-type TransactionJourneyStep = {
-  id: string;
-  person: string;
-  action: string;
-  role: string | null;
-  state: "complete" | "sent" | "received" | "pending" | "rejected" | "verified";
-  timestamp: string | null;
-};
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive";
 type StudentDrawerView = "details" | "history" | "subscription";
@@ -308,6 +301,7 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayout: "Agent incentive payout",
     agentPayoutLower: "incentive payout",
     amount: "Amount",
+    amountLeft: "Amount left",
     amountReceived: "Amount received",
     approve: "Approve",
     approveCollection: "Approve collection",
@@ -320,10 +314,12 @@ const messages: Record<Language, Record<string, string>> = {
     business: "Business",
     cancel: "Cancel",
     cancelWrongEntry: "Cancel wrong entry",
+    cancelledExcluded: "Cancelled · excluded from totals",
     cash: "Cash",
     cashAndOnline: "Cash and online",
     cashBalances: "Cash balances",
     cashCollection: "Cash collection",
+    cashCustody: "Cash custody moved",
     cashIn: "IN",
     cashInFromOwner: "IN from owner",
     cashInHand: "Cash in hand",
@@ -350,6 +346,7 @@ const messages: Record<Language, Record<string, string>> = {
     collectMoney: "Collect money",
     collections: "Collections",
     totalCollections: "Total collections",
+    totalPaid: "Total paid",
     totalCollectionForBusiness: "Total collection for the business",
     collected: "Collected",
     copyReferralCode: "Copy code",
@@ -405,6 +402,8 @@ const messages: Record<Language, Record<string, string>> = {
     allBusinesses: "All businesses",
     transactionType: "Transaction type",
     paymentMode: "Payment mode",
+    paymentTransactions: "payments",
+    partiallyVerified: "Partially verified",
     studentSource: "Student source",
     studentStatus: "Student status",
     cashTransfers: "Cash transfers",
@@ -491,6 +490,7 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "Notifications",
     online: "Online",
     onlineCollection: "Online collection",
+    operationalAssignment: "Transaction assignment moved",
     onlinePart: "Online part",
     openNavigation: "Open navigation",
     openingCash: "Opening cash",
@@ -554,6 +554,7 @@ const messages: Record<Language, Record<string, string>> = {
     resolveTransferFirst: "Resolve transfer first",
     transferCashAmount: "Transfer cash",
     transferToStaff: "Transfer to staff",
+    transferRequested: "Transfer requested",
     transferTransaction: "Transfer",
     viewPhoto: "View photo",
     reviewAndSettle: "Review",
@@ -703,6 +704,7 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayout: "एजेंट कमिशन भुगतान",
     agentPayoutLower: "कमिशन भुगतान",
     amount: "रकम",
+    amountLeft: "बाकी रकम",
     amountReceived: "मिली रकम",
     approve: "ठीक है",
     approveCollection: "कलेक्शन मंजूर करें",
@@ -715,10 +717,12 @@ const messages: Record<Language, Record<string, string>> = {
     business: "काम",
     cancel: "रद्द करें",
     cancelWrongEntry: "गलत एंट्री हटाएं",
+    cancelledExcluded: "रद्द · कुल रकम में शामिल नहीं",
     cash: "नकद",
     cashAndOnline: "नकद और ऑनलाइन",
     cashBalances: "नकद बाकी",
     cashCollection: "नकद जमा",
+    cashCustody: "नकद जिम्मेदारी बदली",
     cashIn: "IN",
     cashInFromOwner: "मालिक से IN",
     cashInHand: "हाथ में नकद",
@@ -745,6 +749,7 @@ const messages: Record<Language, Record<string, string>> = {
     collectMoney: "पैसा लें",
     collections: "कलेक्शन",
     totalCollections: "कुल कलेक्शन",
+    totalPaid: "कुल जमा",
     totalCollectionForBusiness: "काम का कुल कलेक्शन",
     collected: "जमा",
     copyReferralCode: "कोड कॉपी करें",
@@ -800,6 +805,8 @@ const messages: Record<Language, Record<string, string>> = {
     allBusinesses: "सभी बिज़नेस",
     transactionType: "लेन-देन प्रकार",
     paymentMode: "भुगतान माध्यम",
+    paymentTransactions: "भुगतान",
+    partiallyVerified: "आंशिक रूप से पक्का",
     studentSource: "छात्र स्रोत",
     studentStatus: "छात्र स्थिति",
     cashTransfers: "नकद ट्रांसफर",
@@ -886,6 +893,7 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "सूचनाएं",
     online: "ऑनलाइन",
     onlineCollection: "ऑनलाइन जमा",
+    operationalAssignment: "ट्रांजैक्शन जिम्मेदारी बदली",
     onlinePart: "ऑनलाइन हिस्सा",
     openNavigation: "मेनू खोलें",
     openingCash: "शुरू का नकद",
@@ -949,6 +957,7 @@ const messages: Record<Language, Record<string, string>> = {
     resolveTransferFirst: "पहले ट्रांसफर पूरा करें",
     transferCashAmount: "नकद ट्रांसफर",
     transferToStaff: "स्टाफ को ट्रांसफर करें",
+    transferRequested: "ट्रांसफर मांगा गया",
     transferTransaction: "ट्रांसफर",
     viewPhoto: "फोटो देखें",
     reviewAndSettle: "जांचें",
@@ -1401,6 +1410,22 @@ function clearFormIdempotencyKey(form: HTMLFormElement) {
   delete form.dataset.idempotencyKey;
 }
 
+function focusActionFieldError(form: HTMLFormElement, result: ActionResult) {
+  form.querySelectorAll<HTMLElement>("[aria-invalid=true]").forEach((field) => {
+    field.removeAttribute("aria-invalid");
+  });
+  if (result.ok || !result.fieldErrors) return;
+  const firstName = Object.keys(result.fieldErrors)[0];
+  if (!firstName) return;
+  const field = Array.from(form.elements).find(
+    (element): element is HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement =>
+      element instanceof HTMLElement && "name" in element && element.name === firstName,
+  );
+  if (!field) return;
+  field.setAttribute("aria-invalid", "true");
+  field.focus();
+}
+
 function submitWith(
   event: FormEvent<HTMLFormElement>,
   action: ClientAction,
@@ -1433,6 +1458,7 @@ function submitWith(
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
+      focusActionFieldError(form, result);
       if (result.ok) {
         window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
           detail: { ...refreshDetail, patch: result.patch },
@@ -1446,7 +1472,10 @@ function submitWith(
     } catch (error) {
       setNotice({
         ok: false,
-        message: error instanceof Error ? error.message : "Network error. Please check your connection and try again.",
+        ...normalizeActionError(error, {
+          action: action.name || "client-action",
+          fallback: "Could not complete this action.",
+        }),
       });
       window.dispatchEvent(new CustomEvent(actionEndedEvent));
     } finally {
@@ -1486,6 +1515,7 @@ function submitAndClose(
       const result = await action(formData);
       clearFormIdempotencyKey(form);
       setNotice(result);
+      focusActionFieldError(form, result);
       if (result.ok) {
         window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
           detail: { ...refreshDetail, patch: result.patch },
@@ -1498,7 +1528,10 @@ function submitAndClose(
     } catch (error) {
       setNotice({
         ok: false,
-        message: error instanceof Error ? error.message : "Network error. Please check your connection and try again.",
+        ...normalizeActionError(error, {
+          action: action.name || "client-action",
+          fallback: "Could not complete this action.",
+        }),
       });
       window.dispatchEvent(new CustomEvent(actionEndedEvent));
     } finally {
@@ -1570,89 +1603,76 @@ function transferSummaryLines(transfers: MoneyMovement[], profiles: Profile[], t
   });
 }
 
-function paymentJourneySteps(
+function paymentJourneyLanes(
   payment: Payment,
   transfers: MoneyMovement[],
   profiles: Profile[],
   t: (key: string) => string,
-): TransactionJourneyStep[] {
+): TransactionJourneyLane[] {
   const collector = profiles.find((item) => item.id === payment.collected_by);
   const collectorName = collector?.full_name ?? profileName(profiles, payment.collected_by, t);
-  const steps: TransactionJourneyStep[] = [{
-    id: `${payment.id}-collected`,
-    person: `Collected by ${collectorName}`,
-    action: "",
-    role: null,
-    state: "complete",
-    timestamp: payment.created_at,
-  }];
-
-  transfers.forEach((movement) => {
-    const recipientId = movement.responded_by ?? movement.to_profile_id;
-    const recipient = profiles.find((item) => item.id === recipientId);
-    const recipientName = recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t);
-    steps.push({
-      id: movement.id,
-      person: movement.status === "accepted"
-        ? `Transfer request accepted by ${recipientName}`
-        : movement.status === "rejected"
-          ? `Transfer request rejected by ${recipientName}`
-          : `Transfer request pending with ${recipientName}`,
-      action: "",
-      role: null,
-      state: movement.status === "accepted" ? "complete" : movement.status === "rejected" ? "rejected" : "pending",
-      timestamp: movement.responded_at ?? movement.created_at,
-    });
-  });
-
-  const ownerIds = ownerProfileIdSet(profiles);
-  const approved = isEffectivelyApprovedPayment(payment, ownerIds);
-  const inferredApproverId = payment.approved_by ?? (ownerIds.has(payment.collected_by) ? payment.collected_by : null);
-  const approver = profiles.find((item) => item.id === inferredApproverId);
-  const approverRole = approver ? profileRoleLabel(approver, t) : null;
   const cashAmount = paymentCashAmount(payment);
   const onlineAmount = paymentOnlineAmount(payment);
+  const components = [
+    { component: "cash" as const, amount: cashAmount, approvedAt: payment.cash_approved_at, approvedBy: payment.cash_approved_by },
+    { component: "online" as const, amount: onlineAmount, approvedAt: payment.online_approved_at, approvedBy: payment.online_approved_by },
+  ].filter((item) => item.amount > 0);
 
-  if (cashAmount > 0 && onlineAmount > 0) {
-    const componentSteps: Array<{ component: "cash" | "online"; amount: number; approvedAt: string | null; approvedBy: string | null }> = [
-      { component: "cash", amount: cashAmount, approvedAt: payment.cash_approved_at, approvedBy: payment.cash_approved_by },
-      { component: "online", amount: onlineAmount, approvedAt: payment.online_approved_at, approvedBy: payment.online_approved_by },
-    ];
+  return components.map(({ component, amount, approvedAt, approvedBy }) => {
+    const steps: TransactionJourneyStep[] = [{
+      id: `${payment.id}-${component}-collected`,
+      person: `${t("collectedByStaff")} · ${collectorName}`,
+      action: formatMoney(amount),
+      role: collector ? profileRoleLabel(collector, t) : null,
+      state: "complete",
+      timestamp: payment.created_at,
+    }];
 
-    componentSteps.forEach(({ component, amount, approvedAt, approvedBy }) => {
-      const status = paymentComponentStatus(payment, component) ?? "pending";
-      const componentApproved = status === "approved";
-      const componentRejected = status === "rejected" || status === "cancelled";
-      const componentApprover = profiles.find((item) => item.id === approvedBy);
+    transfers.forEach((movement) => {
+      const requesterName = profileName(profiles, movement.requested_by ?? movement.from_profile_id, t);
+      const recipientId = movement.responded_by ?? movement.to_profile_id;
+      const recipient = profiles.find((item) => item.id === recipientId);
+      const recipientName = recipient?.full_name ?? profileName(profiles, movement.to_profile_id, t);
       steps.push({
-        id: `${payment.id}-${component}-approval`,
-        person: componentApproved && componentApprover
-          ? `${t(component)} · ${t("approvedBy")} ${componentApprover.full_name}`
-          : `${t(component)} · ${labelForStatus(status, t)}`,
-        action: formatMoney(amount),
-        role: componentApprover ? profileRoleLabel(componentApprover, t) : null,
-        state: componentApproved ? "verified" : componentRejected ? "rejected" : "pending",
-        timestamp: componentApproved ? approvedAt : null,
+        id: `${movement.id}-${component}-requested`,
+        person: `${requesterName} → ${profileName(profiles, movement.to_profile_id, t)}`,
+        action: t("transferRequested"),
+        role: null,
+        state: "sent",
+        timestamp: movement.created_at,
+      });
+      steps.push({
+        id: `${movement.id}-${component}-response`,
+        person: movement.status === "accepted"
+          ? `${t("acceptTransfer")} · ${recipientName}`
+          : movement.status === "rejected"
+            ? `${t("reject")} · ${recipientName}`
+            : `${t("approvalPending")} · ${recipientName}`,
+        action: component === "cash" ? t("cashCustody") : t("operationalAssignment"),
+        role: recipient ? profileRoleLabel(recipient, t) : null,
+        state: movement.status === "accepted" ? "received" : movement.status === "rejected" ? "rejected" : "pending",
+        timestamp: movement.responded_at,
       });
     });
 
-    return steps;
-  }
+    const status = paymentComponentStatus(payment, component) ?? "pending";
+    const componentApproverId = approvedBy ?? payment.approved_by;
+    const componentApprover = profiles.find((item) => item.id === componentApproverId);
+    const componentApproved = status === "approved";
+    const componentRejected = status === "rejected" || status === "cancelled";
+    steps.push({
+      id: `${payment.id}-${component}-approval`,
+      person: componentApproved && componentApprover
+        ? `${t("approvedBy")} ${componentApprover.full_name}`
+        : labelForStatus(status, t),
+      action: componentApproved ? t("verified") : t("journeyAwaitingApproval"),
+      role: componentApprover ? profileRoleLabel(componentApprover, t) : null,
+      state: componentApproved ? "verified" : componentRejected ? "rejected" : "pending",
+      timestamp: componentApproved ? approvedAt ?? payment.approved_at : null,
+    });
 
-  steps.push({
-    id: `${payment.id}-approval`,
-    person: approved
-      ? approver
-        ? `${t("approvedBy")} ${approver.full_name} (${approverRole})`
-        : labelForStatus("approved", t)
-      : t("approvalPending"),
-    action: approved ? "" : t("journeyAwaitingApproval"),
-    role: null,
-    state: approved ? "verified" : "pending",
-    timestamp: approved ? payment.approved_at : null,
+    return { component, amount, status, steps };
   });
-
-  return steps;
 }
 
 function expenseJourneySteps(
@@ -3418,7 +3438,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 cacheScope={cacheScope}
                 students={appData.libraryStudents}
                 courseStudentRows={appData.courseStudents}
-                payments={appData.payments}
                 courses={appData.courses}
                 studentSources={studentFilterSources}
                 selectedSourceId={effectiveStudentFilters.sourceId}
@@ -3551,11 +3570,15 @@ function ToastStack({
         </div>
       ) : null}
       {toasts.map((toast) => (
-        <div className={toast.ok ? "toast toast-success" : "toast toast-error"} key={toast.id}>
+        <div className={toast.ok ? toast.warning ? "toast toast-warning" : "toast toast-success" : "toast toast-error"} key={toast.id}>
           <span className="toast-icon">
-            {toast.ok ? <Check size={18} /> : <AlertCircle size={18} />}
+            {toast.ok && !toast.warning ? <Check size={18} /> : <AlertCircle size={18} />}
           </span>
-          <strong>{toast.message}</strong>
+          <strong>
+            {toast.message}
+            {toast.warning ? ` ${toast.warning}` : ""}
+            {toast.errorId ? ` Error ID: ${toast.errorId}.` : ""}
+          </strong>
           <button type="button" aria-label="Dismiss" onClick={() => dismiss(toast.id)}>
             <X size={15} />
           </button>
@@ -4600,18 +4623,21 @@ function HomeView({
 }
 
 function TransactionJourney({
-  steps,
+  steps = [],
+  lanes = [],
   amount,
   children,
 }: {
-  steps: TransactionJourneyStep[];
+  steps?: TransactionJourneyStep[];
+  lanes?: TransactionJourneyLane[];
   amount: number;
   children?: ReactNode;
 }) {
   const { t } = useLanguage();
-  const tone = steps.some((step) => step.state === "rejected")
+  const allSteps = lanes.length > 0 ? lanes.flatMap((lane) => lane.steps) : steps;
+  const tone = allSteps.some((step) => step.state === "rejected")
     ? "rejected"
-    : steps.some((step) => step.state === "pending")
+    : allSteps.some((step) => step.state === "pending")
       ? "pending"
       : amount < 0
         ? "negative"
@@ -4621,28 +4647,47 @@ function TransactionJourney({
 
   return (
     <div
-      className={`transaction-journey ${tone}`}
+      className={`transaction-journey ${lanes.length > 1 ? "has-lanes" : ""} ${tone}`}
       aria-label={t("paymentJourney")}
     >
-      <div className="transaction-journey-track" role="list">
-        {steps.map((step, index) => (
-          <div className="transaction-journey-segment" key={step.id}>
-            {index > 0 ? <ChevronRight className="transaction-journey-arrow" size={16} aria-hidden="true" /> : null}
-            <div className={`transaction-journey-step ${step.state}`} role="listitem">
-              <span className="transaction-journey-icon" aria-hidden="true">
-                {step.state === "verified" ? <ShieldCheck size={16} /> : step.state === "rejected" ? <X size={15} /> : step.state === "pending" ? <MoreHorizontal size={16} /> : step.state === "sent" ? <ArrowUp size={15} /> : step.state === "received" ? <ArrowDown size={15} /> : <Check size={15} />}
-              </span>
-              <span className="transaction-journey-copy">
-                <strong>{step.person}</strong>
-                {step.action || step.role ? <small>{step.action}{step.role ? ` · ${step.role}` : ""}</small> : null}
-                {step.timestamp ? (
-                  <time dateTime={step.timestamp}>
-                    {indiaDateIso(step.timestamp)} · {formatIndiaTime(step.timestamp)}
-                  </time>
-                ) : null}
-              </span>
+      <div className="transaction-journey-lanes">
+        {(lanes.length > 0 ? lanes : [{ component: null, amount, status: "approved" as ApprovalStatus, steps }]).map((lane) => (
+          <section
+            className={`transaction-journey-lane ${lane.component ?? "single"}`}
+            key={lane.component ?? "single"}
+            aria-label={lane.component ? `${t(lane.component)} ${formatMoney(lane.amount)}` : undefined}
+          >
+            {lane.component ? (
+              <header>
+                <span>
+                  {lane.component === "cash" ? <Banknote size={16} /> : <CreditCard size={16} />}
+                  {t(lane.component)}
+                </span>
+                <strong>{formatMoney(lane.amount)}</strong>
+              </header>
+            ) : null}
+            <div className="transaction-journey-track" role="list">
+              {lane.steps.map((step, index) => (
+                <div className="transaction-journey-segment" key={step.id}>
+                  {index > 0 ? <ChevronRight className="transaction-journey-arrow" size={16} aria-hidden="true" /> : null}
+                  <div className={`transaction-journey-step ${step.state}`} role="listitem">
+                    <span className="transaction-journey-icon" aria-hidden="true">
+                      {step.state === "verified" ? <ShieldCheck size={16} /> : step.state === "rejected" ? <X size={15} /> : step.state === "pending" ? <MoreHorizontal size={16} /> : step.state === "sent" ? <ArrowUp size={15} /> : step.state === "received" ? <ArrowDown size={15} /> : <Check size={15} />}
+                    </span>
+                    <span className="transaction-journey-copy">
+                      <strong>{step.person}</strong>
+                      {step.action || step.role ? <small>{step.action}{step.role ? ` · ${step.role}` : ""}</small> : null}
+                      {step.timestamp ? (
+                        <time dateTime={step.timestamp}>
+                          {indiaDateIso(step.timestamp)} · {formatIndiaTime(step.timestamp)}
+                        </time>
+                      ) : null}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          </section>
         ))}
       </div>
       {children}
@@ -4781,6 +4826,7 @@ function TransactionsView({
     kind: TransactionActionKind;
     recordKey: string;
   } | null>(null);
+  const [transactionActionNotice, setTransactionActionNotice] = useState<ActionResult | null>(null);
   useEffect(() => {
     const closeMenuOnOutsideClick = (event: PointerEvent) => {
       const target = event.target;
@@ -4827,6 +4873,7 @@ function TransactionsView({
       canDelete?: boolean;
       transferLines?: string[];
       journey?: TransactionJourneyStep[];
+      journeyLanes?: TransactionJourneyLane[];
       transferRecipients?: Profile[];
       canRequestTransfer?: boolean;
       incomingTransferId?: string | null;
@@ -4859,13 +4906,31 @@ function TransactionsView({
       return [...groups.entries()];
     };
     const collectionStatus = (payment: Payment) => {
+      const cashStatus = paymentComponentStatus(payment, "cash");
+      const onlineStatus = paymentComponentStatus(payment, "online");
+      if (
+        paymentCashAmount(payment) > 0
+        && paymentOnlineAmount(payment) > 0
+        && [cashStatus, onlineStatus].filter((status) => status === "approved").length === 1
+      ) {
+        return t("partiallyVerified");
+      }
       if (payment.approval_status !== "approved") return labelForStatus(payment.approval_status, t);
       return labelForStatus(payment.approval_status, t);
     };
-    const collectionStatusTone = (payment: Payment) =>
-      payment.approval_status === "approved" && paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0
+    const collectionStatusTone = (payment: Payment) => {
+      if (
+        paymentCashAmount(payment) > 0
+        && paymentOnlineAmount(payment) > 0
+        && [paymentComponentStatus(payment, "cash"), paymentComponentStatus(payment, "online")]
+          .filter((status) => status === "approved").length === 1
+      ) {
+        return "reapproval_required";
+      }
+      return payment.approval_status === "approved" && paymentOnlineAmount(payment) > 0 && paymentCashAmount(payment) === 0
         ? "approved"
         : payment.approval_status;
+    };
     const ownerProfileIds = ownerProfileIdSet(profiles);
     const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
     const paymentMatchesSelectedProfile = (payment: Payment) => userMatches(paymentReviewProfileId(payment));
@@ -4901,7 +4966,9 @@ function TransactionsView({
           : [];
         const canRequestTransfer =
           (owner || reviewProfileId === profile.id) &&
-          (effectivePaymentPending || (owner && effectivePaymentApproved)) &&
+          (owner || (permissionsByProfile[profile.id] ?? []).includes("transfer_money")) &&
+          (effectivePaymentPending || (profile.membership_role === "primary_owner" && effectivePaymentApproved)) &&
+          (profile.membership_role === "primary_owner" || !hasApprovedComponent) &&
           !pendingTransfer;
         const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
         const baseRecord = {
@@ -4924,7 +4991,7 @@ function TransactionsView({
           canEdit: (owner || reviewProfileId === profile.id) && effectivePaymentPending && !hasApprovedComponent && !activeTransfer,
           canDelete: owner,
           transferLines: transferSummaryLines(linkedTransfers, profiles, t),
-          journey: paymentJourneySteps(payment, linkedTransfers, profiles, t),
+          journeyLanes: paymentJourneyLanes(payment, linkedTransfers, profiles, t),
           transferRecipients,
           canRequestTransfer,
           incomingTransferId,
@@ -5343,7 +5410,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profiles, t, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, t, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -5368,10 +5435,18 @@ function TransactionsView({
     enabled: transactionAction?.kind === "detail" && Boolean(attachmentRecord),
     staleTime: 300_000,
   });
-  const closeTransactionAction = () => setTransactionAction(null);
+  const closeTransactionAction = () => {
+    setTransactionAction(null);
+    setTransactionActionNotice(null);
+  };
   const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
     trigger.closest("details")?.removeAttribute("open");
+    setTransactionActionNotice(null);
     setTransactionAction({ kind, recordKey });
+  };
+  const setTransactionNotice = (notice: ActionResult | null) => {
+    setTransactionActionNotice(notice);
+    setNotice(notice);
   };
   const matchesSecondaryFilters = useCallback((record: (typeof allTransactionRecords)[number]) => {
     if (recordTypeFilter !== "all" && record.recordCategory !== recordTypeFilter) return false;
@@ -5486,7 +5561,7 @@ function TransactionsView({
                         onlineAmount={record.onlineAmount}
                         tone={record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}
                       />
-                      {!record.journey || record.journey.length === 0 ? (
+                      {(!record.journey || record.journey.length === 0) && (!record.journeyLanes || record.journeyLanes.length === 0) ? (
                         <time className="history-transaction-time" dateTime={record.sortAt}>{formatIndiaTime(record.sortAt)}</time>
                       ) : null}
                     </div>
@@ -5519,9 +5594,9 @@ function TransactionsView({
                         ) : null}
                       </div>
                     </details>
-                    {record.journey && record.journey.length > 0 ? (
+                    {(record.journey && record.journey.length > 0) || (record.journeyLanes && record.journeyLanes.length > 0) ? (
                       <div className="history-card-flow">
-                        <TransactionJourney steps={record.journey} amount={record.amount}>
+                        <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
                           {record.incomingTransferId ? (
                             <div className="history-transfer-actions journey-action-row">
                               <MiniAction
@@ -5658,7 +5733,16 @@ function TransactionsView({
                   {selectedPayment?.description || selectedExpense?.description ? <div className="full"><dt>Purpose</dt><dd>{selectedPayment?.description ?? selectedExpense?.description}</dd></div> : null}
                   {selectedPayment?.remark || selectedExpense?.remark ? <div className="full"><dt>Note</dt><dd>{selectedPayment?.remark ?? selectedExpense?.remark}</dd></div> : null}
                 </dl>
-                {selectedTransactionActionRecord.journey?.length ? <section><h3>Transaction flow</h3><TransactionJourney steps={selectedTransactionActionRecord.journey} amount={selectedTransactionActionRecord.amount} /></section> : null}
+                {selectedTransactionActionRecord.journey?.length || selectedTransactionActionRecord.journeyLanes?.length ? (
+                  <section>
+                    <h3>Transaction flow</h3>
+                    <TransactionJourney
+                      steps={selectedTransactionActionRecord.journey}
+                      lanes={selectedTransactionActionRecord.journeyLanes}
+                      amount={selectedTransactionActionRecord.amount}
+                    />
+                  </section>
+                ) : null}
                 {selectedTransactionActionRecord.transferLines?.length ? <section><h3>Transfer activity</h3><div className="history-transfer-panel">{selectedTransactionActionRecord.transferLines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}</div></section> : null}
                 {attachmentRecord ? (
                   <section>
@@ -5678,8 +5762,19 @@ function TransactionsView({
             {transactionAction.kind === "transfer" ? (
               <form
                 className="form-grid"
-                onSubmit={(event) => submitAndClose(event, requestPaymentTransferAction, setNotice, startTransition, closeTransactionAction)}
+                onSubmit={(event) => submitAndClose(event, requestPaymentTransferAction, setTransactionNotice, startTransition, closeTransactionAction)}
               >
+                {transactionActionNotice ? (
+                  <p
+                    className={transactionActionNotice.ok ? transactionActionNotice.warning ? "form-warning full-span" : "form-success full-span" : "form-error full-span"}
+                    role={transactionActionNotice.ok ? "status" : "alert"}
+                    aria-live={transactionActionNotice.ok ? "polite" : "assertive"}
+                  >
+                    {transactionActionNotice.message}
+                    {transactionActionNotice.warning ? ` ${transactionActionNotice.warning}` : ""}
+                    {transactionActionNotice.errorId ? ` Error ID: ${transactionActionNotice.errorId}.` : ""}
+                  </p>
+                ) : null}
                 <input type="hidden" name="payment_id" value={selectedTransactionSourceId} />
                 <SearchableProfileSelect
                   label={t("transferToStaff")}
@@ -5697,8 +5792,13 @@ function TransactionsView({
             {transactionAction.kind === "edit" ? (
               <form
                 className="form-grid"
-                onSubmit={(event) => submitAndClose(event, updateRecordAction, setNotice, startTransition, closeTransactionAction)}
+                onSubmit={(event) => submitAndClose(event, updateRecordAction, setTransactionNotice, startTransition, closeTransactionAction)}
               >
+                {transactionActionNotice ? (
+                  <p className={transactionActionNotice.ok ? "form-success full-span" : "form-error full-span"} role={transactionActionNotice.ok ? "status" : "alert"}>
+                    {transactionActionNotice.message}{transactionActionNotice.errorId ? ` Error ID: ${transactionActionNotice.errorId}.` : ""}
+                  </p>
+                ) : null}
                 <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
                 <input type="hidden" name="id" value={selectedTransactionSourceId} />
                 <label>
@@ -5728,8 +5828,13 @@ function TransactionsView({
             {transactionAction.kind === "delete" ? (
               <form
                 className="form-grid"
-                onSubmit={(event) => submitAndClose(event, cancelRecordAction, setNotice, startTransition, closeTransactionAction)}
+                onSubmit={(event) => submitAndClose(event, cancelRecordAction, setTransactionNotice, startTransition, closeTransactionAction)}
               >
+                {transactionActionNotice ? (
+                  <p className={transactionActionNotice.ok ? "form-success full-span" : "form-error full-span"} role={transactionActionNotice.ok ? "status" : "alert"}>
+                    {transactionActionNotice.message}{transactionActionNotice.errorId ? ` Error ID: ${transactionActionNotice.errorId}.` : ""}
+                  </p>
+                ) : null}
                 <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
                 <input type="hidden" name="id" value={selectedTransactionSourceId} />
                 <label className="full-span">
@@ -6349,37 +6454,6 @@ function libraryStudentMatchesSelection(student: LibraryStudent, selectedId: str
   return normalizeLibraryRollNumberForView(student.roll_number) === selectedRollNumber;
 }
 
-function paymentMatchesLibraryStudent(payment: Payment, student: LibraryStudent) {
-  if (payment.library_student_id === student.id) return true;
-  const paymentRollNumber = normalizeLibraryRollNumberForView(payment.roll_number);
-  const studentRollNumber = normalizeLibraryRollNumberForView(student.roll_number);
-  return Boolean(paymentRollNumber && studentRollNumber && paymentRollNumber === studentRollNumber);
-}
-
-function libraryPaymentSubscriptionSortKey(payment: Payment) {
-  return [
-    payment.end_date ?? "",
-    payment.start_date ?? "",
-    payment.payment_date,
-    payment.created_at,
-    payment.id,
-  ].join("|");
-}
-
-function libraryStudentSubscriptionSortKey(student: LibraryStudent) {
-  return [
-    student.subscription_end_date ?? "",
-    student.subscription_start_date ?? "",
-    student.last_payment_date ?? "",
-  ].join("|");
-}
-
-function latestLibrarySubscriptionPayment(payments: Payment[]) {
-  return payments
-    .filter((payment) => payment.business_type === "library" && payment.record_status === "active")
-    .sort((a, b) => libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)))[0] ?? null;
-}
-
 function LibraryStudentSummaryCard({
   student,
   expired,
@@ -6548,118 +6622,139 @@ function StudentDetailItem({
   );
 }
 
+function studentSubscriptionTransactionStatus(
+  transaction: StudentSubscriptionTransaction,
+  t: (key: string) => string,
+) {
+  if (transaction.recordStatus === "cancelled") return t("cancelled");
+  if (transaction.mode !== "mixed") return labelForStatus(transaction.approvalStatus, t);
+
+  const statuses = [transaction.cashApprovalStatus, transaction.onlineApprovalStatus].filter(
+    (status): status is ApprovalStatus => Boolean(status),
+  );
+  const approvedCount = statuses.filter((status) => status === "approved").length;
+  if (approvedCount === statuses.length && statuses.length > 0) return t("verified");
+  if (approvedCount > 0) return t("partiallyVerified");
+  if (statuses.some((status) => status === "rejected" || status === "cancelled")) return t("rejected");
+  return t("approvalPending");
+}
+
+function StudentSubscriptionTransactionSummary({
+  transaction,
+  compact = false,
+}: {
+  transaction: StudentSubscriptionTransaction;
+  compact?: boolean;
+}) {
+  const { t } = useLanguage();
+  const status = studentSubscriptionTransactionStatus(transaction, t);
+  const statusTone = transaction.recordStatus === "cancelled"
+    ? "cancelled"
+    : transaction.mode === "mixed"
+      && [transaction.cashApprovalStatus, transaction.onlineApprovalStatus].filter((value) => value === "approved").length === 1
+      ? "reapproval_required"
+      : transaction.approvalStatus;
+
+  return (
+    <article className={`student-subscription-transaction ${compact ? "compact" : ""} ${transaction.recordStatus}`}>
+      {!compact ? <span className="student-history-marker" aria-hidden="true" /> : null}
+      <div className="student-subscription-transaction-main">
+        <div>
+          <strong>{formatMoney(transaction.amount)}</strong>
+          <p>{displayDate(transaction.paymentDate)} · {transaction.collectorName}</p>
+        </div>
+        <span className={`status-chip ${approvalStatusClass(statusTone)}`}>{status}</span>
+      </div>
+      <div className="student-subscription-transaction-mode">
+        {transaction.mode === "mixed" ? (
+          <>
+            <span className="cash"><Banknote size={15} /> {formatMoney(transaction.cashAmount)} · {labelForStatus(transaction.cashApprovalStatus ?? "pending", t)}</span>
+            <span className="online"><CreditCard size={15} /> {formatMoney(transaction.onlineAmount)} · {labelForStatus(transaction.onlineApprovalStatus ?? "pending", t)}</span>
+          </>
+        ) : (
+          <span className={transaction.mode}>
+            {transaction.mode === "cash" ? <Banknote size={15} /> : <CreditCard size={15} />}
+            {labelForMode(transaction.mode, t)}
+          </span>
+        )}
+      </div>
+      {transaction.recordStatus === "cancelled" ? (
+        <small className="student-subscription-cancel-note">
+          {t("cancelledExcluded")}{transaction.cancelReason ? ` · ${transaction.cancelReason}` : ""}
+        </small>
+      ) : null}
+    </article>
+  );
+}
+
 function SubscriptionHistoryTimeline({
-  payments,
-  total,
+  subscriptions,
+  totalSubscriptions,
+  totalTransactions,
   error,
   hasMore,
   loadingMore,
   onLoadOlder,
 }: {
-  payments: Payment[];
-  total: number;
+  subscriptions: StudentSubscriptionHistoryItem[];
+  totalSubscriptions: number;
+  totalTransactions: number;
   error: string | null;
   hasMore: boolean;
   loadingMore: boolean;
   onLoadOlder: () => void;
 }) {
   const { t } = useLanguage();
-  const groupedPayments = useMemo(() => {
-    const groups = new Map<string, Payment[]>();
-    payments.forEach((payment) => {
-      const key = payment.payment_date;
-      groups.set(key, [...(groups.get(key) ?? []), payment]);
-    });
-    return [...groups.entries()];
-  }, [payments]);
 
   return (
     <section className="student-history-panel" aria-label={t("subscriptionHistory")}>
       <div className="student-history-heading">
         <div>
           <p className="eyebrow">{t("subscriptionHistory")}</p>
-          <h3>{total}</h3>
+          <h3>{totalSubscriptions}</h3>
+          <small>{totalTransactions} {t("paymentTransactions")}</small>
         </div>
       </div>
       {error ? <p className="student-history-error">{error}</p> : null}
       <div className="student-history-timeline">
-        {groupedPayments.map(([date, datePayments]) => (
-          <section key={date} className="student-history-date-group">
-            <h4>{displayDate(date)}</h4>
-            <div>
-              {datePayments.map((payment) => (
-                <article key={payment.id} className="student-history-entry">
-                  <span className="student-history-marker" aria-hidden="true" />
-                  <div className="student-history-entry-card">
-                    <div className="student-history-entry-title">
-                      <div>
-                        <strong>{displayDateRange(payment.start_date, payment.end_date, t)}</strong>
-                        <p>{t("timing")} {displayTimeRange(payment.start_time, payment.end_time)}</p>
-                      </div>
-                      <span className={`status-chip ${approvalStatusClass(payment.approval_status)}`}>
-                        {labelForStatus(payment.approval_status, t)}
-                      </span>
-                    </div>
-                    <p>{paymentModeLabel(payment, t)} · {t("paymentDate")} {displayDate(payment.payment_date)}</p>
-                    <div className="student-history-money-grid">
-                      <span>{t("fee")} <strong>{formatMoney(payment.fee_amount ?? payment.amount)}</strong></span>
-                      <span>{t("paid")} <strong>{formatMoney(payment.paid_amount ?? payment.amount)}</strong></span>
-                      <span>{t("dues")} <strong>{formatMoney(payment.dues_amount ?? 0)}</strong></span>
-                      <span>{t("advance")} <strong>{formatMoney(payment.advance_amount ?? 0)}</strong></span>
-                    </div>
-                  </div>
-                </article>
-              ))}
+        {subscriptions.map((subscription) => (
+          <article key={subscription.subscriptionKey} className="student-subscription-history-card">
+            <div className="student-history-entry-title">
+              <div>
+                <strong>{displayDateRange(subscription.startDate, subscription.endDate, t)}</strong>
+                <p>{t("timing")} {displayTimeRange(subscription.startTime, subscription.endTime)}</p>
+              </div>
+              <span className="student-subscription-payment-count">
+                {subscription.transactionCount} {t("paymentTransactions")}
+              </span>
             </div>
-          </section>
+            <div className="student-history-money-grid">
+              <span>{t("fee")} <strong>{formatMoney(subscription.feeAmount)}</strong></span>
+              <span>{t("totalPaid")} <strong>{formatMoney(subscription.totalPaid)}</strong></span>
+              <span>{t("amountLeft")} <strong>{formatMoney(subscription.duesAmount)}</strong></span>
+              {subscription.advanceAmount > 0 ? (
+                <span>{t("advance")} <strong>{formatMoney(subscription.advanceAmount)}</strong></span>
+              ) : null}
+            </div>
+            {subscription.transactions.length > 1 ? (
+              <div className="student-subscription-transaction-tree" aria-label={t("paymentTransactions")}>
+                {subscription.transactions.map((transaction) => (
+                  <StudentSubscriptionTransactionSummary key={transaction.id} transaction={transaction} />
+                ))}
+              </div>
+            ) : subscription.transactions[0] ? (
+              <StudentSubscriptionTransactionSummary transaction={subscription.transactions[0]} compact />
+            ) : null}
+          </article>
         ))}
       </div>
-      {payments.length === 0 && !error ? <p className="student-history-empty">{t("noRecords")}</p> : null}
+      {subscriptions.length === 0 && !error ? <p className="student-history-empty">{t("noRecords")}</p> : null}
       {hasMore ? (
         <button className="secondary-button student-history-load-more" type="button" onClick={onLoadOlder} disabled={loadingMore}>
           {loadingMore ? t("saving") : t("loadOlder")}
         </button>
       ) : null}
     </section>
-  );
-}
-
-function libraryStudentWithLatestSubscription(student: LibraryStudent, payments: Payment[]) {
-  const latestPayment = latestLibrarySubscriptionPayment(payments);
-  if (!latestPayment) return student;
-
-  const paymentDate = latestPayment.payment_date.slice(0, 10);
-  if (libraryStudentSubscriptionSortKey(student) > libraryPaymentSubscriptionSortKey(latestPayment)) return student;
-
-  return {
-    ...student,
-    student_name: latestPayment.customer_name ?? student.student_name,
-    roll_number: normalizeLibraryRollNumberForView(latestPayment.roll_number) ?? student.roll_number,
-    aadhar_photo_url: latestPayment.aadhar_photo_url ?? student.aadhar_photo_url,
-    aadhar_back_photo_url: latestPayment.aadhar_back_photo_url ?? student.aadhar_back_photo_url,
-    seat_number: latestPayment.seat_number ?? student.seat_number,
-    start_time: latestPayment.start_time ?? student.start_time,
-    end_time: latestPayment.end_time ?? student.end_time,
-    slot_hours: latestPayment.slot_hours ?? student.slot_hours,
-    subscription_start_date: latestPayment.start_date ?? student.subscription_start_date,
-    subscription_end_date: latestPayment.end_date ?? student.subscription_end_date,
-    fee_amount: latestPayment.fee_amount ?? student.fee_amount,
-    paid_amount: latestPayment.paid_amount ?? student.paid_amount,
-    dues_amount: latestPayment.dues_amount ?? student.dues_amount,
-    advance_amount: latestPayment.advance_amount ?? student.advance_amount,
-    placeholder: false,
-    last_payment_id: latestPayment.id,
-    last_payment_date: paymentDate,
-    updated_at: latestPayment.created_at,
-  };
-}
-
-function mergePaymentHistory(...groups: Payment[][]) {
-  const rows = new Map<string, Payment>();
-  groups.flat().forEach((payment) => rows.set(payment.id, payment));
-
-  return [...rows.values()].sort((a, b) =>
-    libraryPaymentSubscriptionSortKey(b).localeCompare(libraryPaymentSubscriptionSortKey(a)),
   );
 }
 
@@ -6759,7 +6854,6 @@ function LibraryStudentsView({
   variant = "page",
   students,
   courseStudentRows,
-  payments,
   courses,
   studentSources,
   selectedSourceId,
@@ -6774,7 +6868,6 @@ function LibraryStudentsView({
   variant?: "page" | "collection";
   students: LibraryStudent[];
   courseStudentRows: CourseStudent[];
-  payments: Payment[];
   courses: Course[];
   studentSources: StudentRecordSource[];
   selectedSourceId: string;
@@ -6975,49 +7068,21 @@ function LibraryStudentsView({
 
   const historyQuery = useInfiniteQuery({
     queryKey: ["library-student-history", cacheScope, baseSelectedStudent?.id ?? ""],
-    queryFn: ({ pageParam }) => fetchJson<StudentHistoryPage>(`/api/businesses/${businessId}/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments?page=${pageParam}`),
+    queryFn: ({ pageParam }) => fetchJson<StudentSubscriptionHistoryPage>(`/api/businesses/${businessId}/library-students/${encodeURIComponent(baseSelectedStudent?.id ?? "")}/payments?page=${pageParam}`),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextPage ?? undefined,
     enabled: Boolean(baseSelectedStudent?.id),
+    staleTime: 300_000,
   });
-  const localHistoryPayments = useMemo(
-    () => baseSelectedStudent ? payments.filter((payment) => paymentMatchesLibraryStudent(payment, baseSelectedStudent)) : [],
-    [baseSelectedStudent, payments],
-  );
-  const historyPayments = useMemo(
-    () => mergePaymentHistory(historyQuery.data?.pages.flatMap((page) => page.payments) ?? [], localHistoryPayments),
-    [historyQuery.data?.pages, localHistoryPayments],
-  );
-  const selectedStudent = useMemo(
-    () => {
-      if (!baseSelectedStudent) return null;
-      const latest = libraryStudentWithLatestSubscription(baseSelectedStudent, historyPayments);
-      return {
-        ...latest,
-        photo_url: baseSelectedStudent.photo_url,
-        aadhar_photo_url: baseSelectedStudent.aadhar_photo_url,
-        aadhar_back_photo_url: baseSelectedStudent.aadhar_back_photo_url,
-      };
-    },
-    [baseSelectedStudent, historyPayments],
-  );
+  const selectedStudent = baseSelectedStudent;
   const courseHistoryQuery = useInfiniteQuery({
     queryKey: ["course-student-history", cacheScope, selectedCourseStudent?.id ?? ""],
-    queryFn: ({ pageParam }) => fetchJson<StudentHistoryPage>(`/api/businesses/${businessId}/course-students/${encodeURIComponent(selectedCourseStudent?.id ?? "")}/payments?page=${pageParam}`),
+    queryFn: ({ pageParam }) => fetchJson<StudentSubscriptionHistoryPage>(`/api/businesses/${businessId}/course-students/${encodeURIComponent(selectedCourseStudent?.id ?? "")}/payments?page=${pageParam}`),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.nextPage ?? undefined,
     enabled: Boolean(selectedCourseStudent?.id),
+    staleTime: 300_000,
   });
-  const localCourseHistoryPayments = useMemo(
-    () => selectedCourseStudent
-      ? payments.filter((payment) => payment.course_student_id === selectedCourseStudent.id)
-      : [],
-    [payments, selectedCourseStudent],
-  );
-  const courseHistoryPayments = useMemo(
-    () => mergePaymentHistory(courseHistoryQuery.data?.pages.flatMap((page) => page.payments) ?? [], localCourseHistoryPayments),
-    [courseHistoryQuery.data?.pages, localCourseHistoryPayments],
-  );
   const drawerKind = selectedStudent ? "library" : selectedCourseStudent ? "course" : null;
   const drawerName = selectedStudent
     ? studentDisplayName(selectedStudent, t)
@@ -7034,12 +7099,11 @@ function LibraryStudentsView({
   const drawerExpired = selectedStudent
     ? expired(selectedStudent)
     : Boolean(selectedCourseStudent?.subscriptionEndDate && selectedCourseStudent.subscriptionEndDate < today);
-  const drawerHistoryPayments = selectedStudent ? historyPayments : courseHistoryPayments;
   const drawerHistoryQuery = selectedStudent ? historyQuery : courseHistoryQuery;
-  const drawerHistoryTotal = Math.max(
-    drawerHistoryPayments.length,
-    drawerHistoryQuery.data?.pages[0]?.total ?? 0,
-  );
+  const drawerHistorySubscriptions = drawerHistoryQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const drawerHistoryTotal = drawerHistoryQuery.data?.pages[0]?.totalSubscriptions ?? drawerHistorySubscriptions.length;
+  const drawerHistoryTransactionTotal = drawerHistoryQuery.data?.pages[0]?.totalTransactions
+    ?? drawerHistorySubscriptions.reduce((sum, item) => sum + item.transactionCount, 0);
   const drawerHistoryError = drawerHistoryQuery.error instanceof Error
     ? drawerHistoryQuery.error.message
     : drawerHistoryQuery.error
@@ -7453,8 +7517,9 @@ function LibraryStudentsView({
 
               {!editingStudent && drawerView === "history" ? (
                 <SubscriptionHistoryTimeline
-                  payments={drawerHistoryPayments}
-                  total={drawerHistoryTotal}
+                  subscriptions={drawerHistorySubscriptions}
+                  totalSubscriptions={drawerHistoryTotal}
+                  totalTransactions={drawerHistoryTransactionTotal}
                   error={drawerHistoryError}
                   hasMore={drawerHasMoreHistory}
                   loadingMore={drawerLoadingMoreHistory}
@@ -7491,7 +7556,7 @@ function LibraryStudentsView({
                 <section className="student-subscription-step">
                   <div className="student-subscription-step-intro">
                     <Plus size={18} />
-                    <div><h3>{t("addSubscription")}</h3><p>#{drawerRollNumber} · {drawerName}</p></div>
+                    <div><h3>{Number(selectedCourseStudent.duesAmount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}</h3><p>#{drawerRollNumber} · {drawerName}</p></div>
                   </div>
                   <PaymentForm
                     key={`drawer-course-subscription-${selectedCourseStudent.id}-${selectedCourseStudent.paymentId ?? "new"}`}
@@ -7525,7 +7590,10 @@ function LibraryStudentsView({
                   }}
                 >
                   <Plus size={18} />
-                  {selectedStudent && Number(selectedStudent.dues_amount ?? 0) > 0 ? t("collectDue") : t("addSubscription")}
+                  {(selectedStudent && Number(selectedStudent.dues_amount ?? 0) > 0)
+                    || (selectedCourseStudent && Number(selectedCourseStudent.duesAmount ?? 0) > 0)
+                    ? t("collectDue")
+                    : t("addSubscription")}
                 </button>
               </footer>
             ) : null}
@@ -7627,7 +7695,6 @@ function StudentCollectionFlow({
           variant="collection"
           students={libraryStudents}
           courseStudentRows={courseStudents}
-          payments={[]}
           courses={[...mainCourses, ...skillCourses]}
           studentSources={studentSources}
           selectedSourceId={selectedSourceId}
@@ -7893,6 +7960,7 @@ function PaymentForm({
   const initialLibraryDueAmount = type === "library" && initialLibraryStudent ? Math.max(Number(initialLibraryStudent.dues_amount ?? 0), 0) : 0;
   const initialCoursePrefill = type === "course" && initialCourseStudent ? courseStudentPrefill(initialCourseStudent, t) : null;
   const initialCourseRenewalRange = type === "course" && initialCourseStudent ? courseRenewalDateRange(initialCourseStudent) : null;
+  const initialCourseDueAmount = type === "course" && initialCourseStudent ? Math.max(Number(initialCourseStudent.duesAmount ?? 0), 0) : 0;
   const initialCourseMainCourse = type === "course" && initialCourseSource
     ? initialCourseSource.type === "skillCourse"
       ? mainCourses.find((course) => course.name === "Skills") ?? null
@@ -7900,7 +7968,13 @@ function PaymentForm({
     : null;
   const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : initialMemberMode ?? null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
-  const [paid, setPaid] = useState(initialLibraryDueAmount > 0 ? String(initialLibraryDueAmount) : "");
+  const [paid, setPaid] = useState(
+    initialLibraryDueAmount > 0
+      ? String(initialLibraryDueAmount)
+      : initialCourseDueAmount > 0
+        ? String(initialCourseDueAmount)
+        : "",
+  );
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("cash");
   const [cashCollection, setCashCollection] = useState("");
@@ -8102,15 +8176,19 @@ function PaymentForm({
   const libraryDueAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.dues_amount ?? 0), 0) : 0;
   const libraryPaidAmount = type === "library" && libraryMemberMode === "existing" ? Math.max(Number(selectedLibraryStudent?.paid_amount ?? 0), 0) : 0;
   const collectingLibraryDues = type === "library" && libraryMemberMode === "existing" && Boolean(selectedLibraryStudent) && libraryDueAmount > 0;
+  const courseDueAmount = type === "course" && courseMemberMode === "existing" ? Math.max(Number(selectedCourseStudent?.duesAmount ?? 0), 0) : 0;
+  const collectingCourseDues = type === "course" && courseMemberMode === "existing" && Boolean(selectedCourseStudent) && courseDueAmount > 0;
+  const collectingStudentDues = collectingLibraryDues || collectingCourseDues;
+  const currentDueAmount = collectingLibraryDues ? libraryDueAmount : collectingCourseDues ? courseDueAmount : 0;
   const feeNumber = Number(fee || 0);
   const paidNumber = Number(paid || 0);
   const amountNumber = Number(amount || 0);
   const splitCollectionNumber = Number(cashCollection || 0) + Number(onlineCollection || 0);
   const collectedNumber = mode === "mixed" ? splitCollectionNumber : paidNumber;
-  const splitTotal = collectingLibraryDues ? libraryDueAmount : type === "library" || type === "course" ? feeNumber : amountNumber;
+  const splitTotal = collectingStudentDues ? currentDueAmount : type === "library" || type === "course" ? feeNumber : amountNumber;
   const splitRemaining = Math.max(splitTotal - splitCollectionNumber, 0);
-  const dues = collectingLibraryDues ? Math.max(libraryDueAmount - collectedNumber, 0) : Math.max(feeNumber - collectedNumber, 0);
-  const advance = collectingLibraryDues ? Math.max(collectedNumber - libraryDueAmount, 0) : Math.max(collectedNumber - feeNumber, 0);
+  const dues = collectingStudentDues ? Math.max(currentDueAmount - collectedNumber, 0) : Math.max(feeNumber - collectedNumber, 0);
+  const advance = collectingStudentDues ? Math.max(collectedNumber - currentDueAmount, 0) : Math.max(collectedNumber - feeNumber, 0);
   const slotHours = Math.max((Number(endTime.slice(0, 2)) || 0) - (Number(startTime.slice(0, 2)) || 0), 0);
   const libraryMemberChoicePending = type === "library" && !initialLibraryStudent && !libraryMemberMode;
   const libraryExistingMemberPending = type === "library" && libraryMemberMode === "existing" && !selectedLibraryStudentId;
@@ -8331,6 +8409,7 @@ function PaymentForm({
   function applyCourseStudentPrefill(record: CourseStudentRecord) {
     const values = courseStudentPrefill(record, t);
     const renewalRange = courseRenewalDateRange(record);
+    const pendingDue = Math.max(Number(record.duesAmount ?? 0), 0);
     setSelectedCourseStudentId(values.id);
     setStudentName(values.name);
     setRollNumber(values.rollNumber);
@@ -8344,7 +8423,7 @@ function PaymentForm({
     setFee(values.fee);
     setSubscriptionStartDate(renewalRange.startDate);
     setSubscriptionEndDate(renewalRange.endDate);
-    setPaid("");
+    setPaid(pendingDue > 0 ? String(pendingDue) : "");
     setCashCollection("");
     setOnlineCollection("");
     setMode("cash");
@@ -8753,6 +8832,7 @@ function PaymentForm({
 
       {type === "course" ? (
         <>
+          <input type="hidden" name="course_payment_kind" value={collectingCourseDues ? "dues" : "renewal"} />
           {initialCourseStudent && initialCourseSource ? (
             <>
               <input type="hidden" name="course_student_id" value={initialCourseStudent.id} />
@@ -8979,69 +9059,89 @@ function PaymentForm({
                       />
                     </>
                   ) : null}
-                  <label>
-                    {t("paymentDate")}
-                    <input name="payment_date" type="date" defaultValue={today} required />
-                  </label>
-                  <label>
-                    {t("startDate")}
-                    <input
-                      name="start_date"
-                      type="date"
-                      value={subscriptionStartDate}
-                      onChange={(event) => setSubscriptionStartDate(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("endDate")}
-                    <input
-                      name="end_date"
-                      type="date"
-                      value={subscriptionEndDate}
-                      onChange={(event) => setSubscriptionEndDate(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("startTime")}
-                    <input
-                      name="start_time"
-                      type="time"
-                      min="06:00"
-                      max="22:00"
-                      step="3600"
-                      value={startTime}
-                      onChange={(event) => setStartTime(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("endTime")}
-                    <input
-                      name="end_time"
-                      type="time"
-                      min="06:00"
-                      max="22:00"
-                      step="3600"
-                      value={endTime}
-                      onChange={(event) => setEndTime(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("slotHours")}
-                    <input name="slot_hours" value={slotHours} readOnly />
-                  </label>
-                  <label>
-                    {t("referralCode")}
-                    <input name="referral_code" list="referral-codes" />
-                    <datalist id="referral-codes">
-                      {referrals.map((referral) => (
-                        <option key={referral.code} value={referral.code} />
-                      ))}
-                    </datalist>
-                  </label>
+                  {collectingCourseDues ? (
+                    <>
+                      <input type="hidden" name="start_date" value={selectedCourseStudent?.subscriptionStartDate ?? ""} />
+                      <input type="hidden" name="end_date" value={selectedCourseStudent?.subscriptionEndDate ?? ""} />
+                      <input type="hidden" name="start_time" value={selectedCourseStudent?.startTime?.slice(0, 5) ?? ""} />
+                      <input type="hidden" name="end_time" value={selectedCourseStudent?.endTime?.slice(0, 5) ?? ""} />
+                      <label>
+                        {t("paymentDate")}
+                        <input name="payment_date" type="date" defaultValue={today} required />
+                      </label>
+                      <div className="library-due-collection-card full-span">
+                        <span>{t("pendingDues")}</span>
+                        <strong>{formatMoney(courseDueAmount)}</strong>
+                        <small>{t("duesCollectionHelp")}</small>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        {t("paymentDate")}
+                        <input name="payment_date" type="date" defaultValue={today} required />
+                      </label>
+                      <label>
+                        {t("startDate")}
+                        <input
+                          name="start_date"
+                          type="date"
+                          value={subscriptionStartDate}
+                          onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        {t("endDate")}
+                        <input
+                          name="end_date"
+                          type="date"
+                          value={subscriptionEndDate}
+                          onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        {t("startTime")}
+                        <input
+                          name="start_time"
+                          type="time"
+                          min="06:00"
+                          max="22:00"
+                          step="3600"
+                          value={startTime}
+                          onChange={(event) => setStartTime(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        {t("endTime")}
+                        <input
+                          name="end_time"
+                          type="time"
+                          min="06:00"
+                          max="22:00"
+                          step="3600"
+                          value={endTime}
+                          onChange={(event) => setEndTime(event.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        {t("slotHours")}
+                        <input name="slot_hours" value={slotHours} readOnly />
+                      </label>
+                      <label>
+                        {t("referralCode")}
+                        <input name="referral_code" list="referral-codes" />
+                        <datalist id="referral-codes">
+                          {referrals.map((referral) => (
+                            <option key={referral.code} value={referral.code} />
+                          ))}
+                        </datalist>
+                      </label>
+                    </>
+                  )}
                 </>
               ) : null}
             </>
@@ -9049,7 +9149,8 @@ function PaymentForm({
         </>
       ) : null}
 
-      {type === "library" && libraryPaymentFieldsReady && collectingLibraryDues ? (
+      {((type === "library" && libraryPaymentFieldsReady && collectingLibraryDues)
+        || (type === "course" && coursePaymentFieldsReady && collectingCourseDues)) ? (
         <>
           <input type="hidden" name="fee_amount" value={fee} />
           {mode === "mixed" ? (
@@ -9079,7 +9180,8 @@ function PaymentForm({
         </>
       ) : null}
 
-      {(type === "course" && coursePaymentFieldsReady) || (type === "library" && libraryPaymentFieldsReady && !collectingLibraryDues) ? (
+      {(type === "course" && coursePaymentFieldsReady && !collectingCourseDues)
+        || (type === "library" && libraryPaymentFieldsReady && !collectingLibraryDues) ? (
         <>
           <label>
             {t("fee")}
@@ -9183,7 +9285,7 @@ function PaymentForm({
             <textarea name="remark" rows={3} />
           </label>
           <button className="primary-button full-span" type="submit" disabled={Boolean(duplicateLibraryRollStudent || duplicateCourseRollStudent)}>
-            {collectingLibraryDues ? t("collectDue") : t("collectPayment")}
+            {collectingStudentDues ? t("collectDue") : t("collectPayment")}
           </button>
         </>
       ) : null}
@@ -9929,6 +10031,7 @@ function ClosingReviewDetail({
     note: string;
     transferLines: string[];
     journey: TransactionJourneyStep[];
+    journeyLanes?: TransactionJourneyLane[];
     hasPendingTransfer: boolean;
     canReview: boolean;
     isMixedPayment: boolean;
@@ -9966,7 +10069,8 @@ function ClosingReviewDetail({
       onlineStatus: paymentComponentStatus(payment, "online"),
       note: paymentReference(payment, t),
       transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
-      journey: paymentJourneySteps(payment, paymentTransfers(movements, payment.id), profiles, t),
+      journey: [],
+      journeyLanes: paymentJourneyLanes(payment, paymentTransfers(movements, payment.id), profiles, t),
       hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
       canReview: false,
       isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
@@ -10005,7 +10109,8 @@ function ClosingReviewDetail({
         onlineStatus: paymentComponentStatus(payment, "online"),
         note: paymentReference(payment, t),
         transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
-        journey: paymentJourneySteps(payment, paymentTransfers(movements, payment.id), profiles, t),
+        journey: [],
+        journeyLanes: paymentJourneyLanes(payment, paymentTransfers(movements, payment.id), profiles, t),
         hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
         canReview: true,
         isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
@@ -10295,7 +10400,7 @@ function ClosingReviewDetail({
                   </div>
                 </details>
                 <div className="history-card-flow">
-                  <TransactionJourney steps={record.journey} amount={record.amount}>
+                  <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
                     <div className="journey-action-row closing-history-approval-actions">
                       {isMixedPayment ? (
                         <>
@@ -10317,6 +10422,10 @@ function ClosingReviewDetail({
                           ) : null}
                           {record.onlineStatus === "approved" ? (
                             <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
+                          ) : record.hasPendingTransfer ? (
+                            <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                              {t("approve")} {t("online")}
+                            </button>
                           ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
                             <MiniAction
                               hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}

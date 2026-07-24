@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { profileForBusiness, resolveBusinessContextFromRequest } from "@/lib/tenancy";
+import { actionWarning, normalizeActionError, type UserActionStateBase } from "@/lib/action-errors";
 import type { ActionResult } from "@/lib/types";
 import {
   executeLendenAction,
@@ -87,7 +88,12 @@ async function invokeLendenAction(action: LendenActionName, formData = new FormD
   } catch (error) {
     const result = {
       ok: false,
-      message: error instanceof Error ? error.message : "Could not process request.",
+      ...normalizeActionError(error, {
+        action,
+        fallback: "Could not process request.",
+        businessId: profile?.businessId,
+        userId: profile?.id,
+      }),
     } satisfies ActionResult;
     logActionTiming(action, profile, startedAt, result);
     return result;
@@ -95,7 +101,6 @@ async function invokeLendenAction(action: LendenActionName, formData = new FormD
 }
 
 export async function loginAction(formData: FormData) {
-  const supabase = await createClient();
   const email = asString(formData, "email");
   const password = asString(formData, "password");
   const requestedNext = asString(formData, "next");
@@ -105,9 +110,20 @@ export async function loginAction(formData: FormData) {
     redirect(`/login?error=missing&next=${encodeURIComponent(nextPath)}`);
   }
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}&next=${encodeURIComponent(nextPath)}`);
+  let signInError: unknown = null;
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    signInError = error;
+  } catch (error) {
+    signInError = error;
+  }
+  if (signInError) {
+    const normalized = normalizeActionError(signInError, {
+      action: "loginAction",
+      fallback: "Could not sign in.",
+    });
+    redirect(`/login?error=${encodeURIComponent(normalized.message)}&next=${encodeURIComponent(nextPath)}`);
   }
 
   revalidatePath(appPath);
@@ -115,26 +131,85 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function logoutAction() {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
+  let signOutError: unknown = null;
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.signOut();
+    signOutError = error;
+  } catch (error) {
+    signOutError = error;
+  }
+  if (signOutError) {
+    const normalized = normalizeActionError(signOutError, {
+      action: "logoutAction",
+      fallback: "Could not sign out.",
+    });
+    redirect(`/login?error=${encodeURIComponent(normalized.message)}`);
+  }
   redirect("/login");
 }
 
-export async function changeOwnPasswordAction(formData: FormData) {
-  const supabase = await createClient();
+export type PasswordSetupActionState = UserActionStateBase;
+
+export async function changeOwnPasswordAction(
+  _state: PasswordSetupActionState,
+  formData: FormData,
+): Promise<PasswordSetupActionState> {
   const password = asString(formData, "password");
   const confirmation = asString(formData, "password_confirmation");
-  if (!password || password.length < 8 || password !== confirmation) {
-    redirect("/change-password?error=Passwords%20must%20match%20and%20contain%20at%20least%208%20characters.");
+  if (!password || password.length < 8) {
+    return {
+      ok: false,
+      message: "Use a password with at least 8 characters.",
+      fieldErrors: { password: "Use at least 8 characters." },
+    };
   }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-  const { error } = await supabase.auth.updateUser({ password });
-  if (error) redirect(`/change-password?error=${encodeURIComponent(error.message)}`);
-  await createAdminClient().from("profiles").update({ must_change_password: false }).eq("id", user.id);
-  redirect("/");
+  if (password !== confirmation) {
+    return {
+      ok: false,
+      message: "Passwords do not match.",
+      fieldErrors: { password_confirmation: "Enter the same password again." },
+    };
+  }
+
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { ok: false, message: "Your session expired. Sign in and try again." };
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+    const { error: profileError } = await createAdminClient()
+      .from("profiles")
+      .update({ must_change_password: false })
+      .eq("id", user.id);
+    if (profileError) {
+      return {
+        ok: true,
+        message: "Password updated.",
+        ...actionWarning(
+          profileError,
+          {
+            action: "changeOwnPasswordAction.profile",
+            fallback: "Could not finish password setup.",
+            userId: user.id,
+          },
+          "The password changed, but account setup could not finish. Try submitting once more.",
+        ),
+      };
+    }
+    revalidatePath(appPath);
+    return { ok: true, message: "Password updated." };
+  } catch (error) {
+    return {
+      ok: false,
+      ...normalizeActionError(error, {
+        action: "changeOwnPasswordAction",
+        fallback: "Could not update your password.",
+      }),
+    };
+  }
 }
 
 export async function setupOwnerAction(formData: FormData): Promise<ActionResult> {
@@ -144,8 +219,15 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
     const password = asString(formData, "password");
     const fullName = asString(formData, "full_name") ?? "Owner";
 
-    if (!email || !password || password.length < 8) {
-      return { ok: false, message: "Enter an email and a password with at least 8 characters." };
+    const fieldErrors: Record<string, string> = {};
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.email = "Enter a valid email address.";
+    if (!password || password.length < 8) fieldErrors.password = "Use at least 8 characters.";
+    if (fullName.length < 2) fieldErrors.full_name = "Enter the Owner's name.";
+    if (Object.keys(fieldErrors).length > 0) {
+      return { ok: false, message: "Review the highlighted details.", fieldErrors };
+    }
+    if (!email || !password) {
+      return { ok: false, message: "Review the highlighted details." };
     }
 
     const { data: existingProfile, error: existingProfileError } = await admin
@@ -158,7 +240,8 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
       return { ok: true, message: "Owner created. You can log in now." };
     }
 
-    const { count } = await admin.from("profiles").select("id", { count: "exact", head: true });
+    const { count, error: countError } = await admin.from("profiles").select("id", { count: "exact", head: true });
+    if (countError) throw countError;
 
     if ((count ?? 0) > 0) {
       return { ok: false, message: "Setup is closed because at least one profile already exists." };
@@ -206,7 +289,13 @@ export async function setupOwnerAction(formData: FormData): Promise<ActionResult
     revalidatePath(appPath);
     return { ok: true, message: "Owner created. You can log in now." };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Setup failed." };
+    return {
+      ok: false,
+      ...normalizeActionError(error, {
+        action: "setupOwnerAction",
+        fallback: "Could not create the Owner account.",
+      }),
+    };
   }
 }
 
@@ -302,6 +391,10 @@ export async function deleteRoomAction(formData: FormData): Promise<ActionResult
   return invokeLendenAction("deleteRoom", formData);
 }
 
+export async function setRoomActiveAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setRoomActive", formData);
+}
+
 export async function saveCourseAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("saveCourse", formData);
 }
@@ -310,10 +403,18 @@ export async function deleteCourseAction(formData: FormData): Promise<ActionResu
   return invokeLendenAction("deleteCourse", formData);
 }
 
+export async function setCourseActiveAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setCourseActive", formData);
+}
+
 export async function saveReferralAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("saveReferral", formData);
 }
 
 export async function deleteReferralAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("deleteReferral", formData);
+}
+
+export async function setReferralActiveAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setReferralActive", formData);
 }

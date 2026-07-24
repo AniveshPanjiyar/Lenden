@@ -3,7 +3,9 @@
 import { FormEvent, useState, useTransition } from "react";
 import { Landmark } from "lucide-react";
 import { setupOwnerAction } from "@/app/actions";
+import { normalizeActionError } from "@/lib/action-errors";
 import { showOfflineDialogEvent } from "@/lib/client-events";
+import type { ActionResult } from "@/lib/types";
 
 const actionIdempotencyField = "_action_idempotency_key";
 
@@ -16,7 +18,7 @@ function createActionRequestKey() {
 
 export default function SetupPage() {
   const [pending, startTransition] = useTransition();
-  const [state, setState] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [state, setState] = useState<ActionResult | null>(null);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -37,8 +39,25 @@ export default function SetupPage() {
     setState(null);
     startTransition(async () => {
       try {
-        setState(await setupOwnerAction(formData));
-        delete form.dataset.idempotencyKey;
+        const result = await setupOwnerAction(formData);
+        setState(result);
+        if (result.ok) delete form.dataset.idempotencyKey;
+        const firstInvalidField = !result.ok && result.fieldErrors
+          ? Object.keys(result.fieldErrors)[0]
+          : null;
+        if (firstInvalidField) {
+          form
+            .querySelector<HTMLElement>(`[name="${CSS.escape(firstInvalidField)}"]`)
+            ?.focus();
+        }
+      } catch (error) {
+        setState({
+          ok: false,
+          ...normalizeActionError(error, {
+            action: "setupOwnerAction",
+            fallback: "Could not create the Owner account.",
+          }),
+        });
       } finally {
         form.dataset.submitting = "false";
         form.setAttribute("aria-busy", "false");
@@ -63,7 +82,11 @@ export default function SetupPage() {
           SUPABASE_SERVICE_ROLE_KEY in the server environment.
         </p>
         {state?.message ? (
-          <p className={state.ok ? "form-success" : "form-error"}>{state.message}</p>
+          <p className={state.ok ? state.warning ? "form-warning" : "form-success" : "form-error"}>
+            {state.message}
+            {state.warning ? ` ${state.warning}` : ""}
+            {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+          </p>
         ) : null}
         {pending ? (
           <div className="toast-stack auth-toast-stack" aria-live="polite" aria-atomic="true">
@@ -74,9 +97,13 @@ export default function SetupPage() {
           </div>
         ) : state?.message ? (
           <div className="toast-stack auth-toast-stack" aria-live="polite" aria-atomic="true">
-            <div className={state.ok ? "toast toast-success" : "toast toast-error"}>
+            <div className={state.ok ? state.warning ? "toast toast-warning" : "toast toast-success" : "toast toast-error"}>
               <span className="toast-icon" />
-              <strong>{state.message}</strong>
+              <strong>
+                {state.message}
+                {state.warning ? ` ${state.warning}` : ""}
+                {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+              </strong>
             </div>
           </div>
         ) : null}

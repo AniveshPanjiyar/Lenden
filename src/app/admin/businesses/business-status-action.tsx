@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import { setBusinessStatusAction, type AdminActionState } from "./actions";
 
 const initialState: AdminActionState = { ok: null, message: "" };
@@ -42,8 +42,13 @@ export default function BusinessStatusAction({
         </button>
       </form>
       {state.message ? (
-        <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">
+        <p
+          className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+          role={state.ok ? "status" : "alert"}
+        >
           {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
         </p>
       ) : null}
     </div>

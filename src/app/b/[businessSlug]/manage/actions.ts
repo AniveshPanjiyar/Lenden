@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { actionFailure, actionWarning, type UserActionStateBase } from "@/lib/action-errors";
 import {
   saveStaffPermissionsAction as saveStaffPermissionsAppAction,
 } from "@/app/actions";
@@ -11,15 +12,13 @@ import {
   resolveExactBusinessEmail,
   revokeBusinessInvitation,
 } from "@/lib/business-access-service";
-import { businessPermissions } from "@/lib/constants";
+import { businessPermissions, staffPermissionValues } from "@/lib/constants";
 import { sendBusinessAccessGrantedEmail } from "@/lib/email";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContextFromRequest } from "@/lib/tenancy";
 import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
 
-export type BusinessUserActionState = {
-  ok: boolean | null;
-  message: string;
+export type BusinessUserActionState = UserActionStateBase & {
   lookup?: "registered" | "invite" | "suspended" | "already_active";
   email?: string;
   fullName?: string;
@@ -28,8 +27,15 @@ export type BusinessUserActionState = {
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const staffPermissions = new Set(["collect_guest_house", "collect_library", "collect_course", "collect_general", "add_expense"]);
+const staffPermissions = staffPermissionValues;
 const modulePermissions = new Set(Object.values(businessPermissions));
+
+function businessActionError(error: unknown, fallback: string): BusinessUserActionState {
+  return actionFailure<BusinessUserActionState>(error, {
+    action: fallback,
+    fallback,
+  });
+}
 
 function read(formData: FormData, key: string) {
   const entry = formData.get(key);
@@ -68,7 +74,12 @@ async function constrainedStaffPermissions(input: {
       .map((module) => businessPermissions[module.module as BusinessType]),
   );
   const permissions = new Set(
-    input.submitted.filter((permission) => permission === "add_expense" || enabledPermissions.has(permission)),
+    input.submitted.filter(
+      (permission) =>
+        permission === "add_expense" ||
+        permission === "transfer_money" ||
+        enabledPermissions.has(permission),
+    ),
   );
 
   for (const permission of input.preserved ?? []) {
@@ -103,55 +114,99 @@ async function currentAccessPermissions(input: {
   return (data?.permissions ?? []) as string[];
 }
 
-export async function saveBusinessModulesAction(formData: FormData) {
-  const { identity, context } = await resolveBusinessContextFromRequest();
-  if (context.accessMode !== "support" && !isPrimaryOwner(context.membership?.role)) {
-    throw new Error("Only the Owner can change business settings.");
-  }
-  const client = await createClient({ businessId: context.business.id });
-  const enabled = new Set(formData.getAll("modules").filter((item): item is string => typeof item === "string"));
-  const modules: BusinessType[] = ["library", "guest_house", "course", "general"];
-  const { error } = await client.from("business_modules").upsert(
-    modules.map((module) => ({
+export async function saveBusinessModulesAction(
+  _state: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  try {
+    const { identity, context } = await resolveBusinessContextFromRequest();
+    if (context.accessMode !== "support" && !isPrimaryOwner(context.membership?.role)) {
+      return { ok: false, message: "Only the Owner can change business settings." };
+    }
+    const client = await createClient({ businessId: context.business.id });
+    const enabled = new Set(formData.getAll("modules").filter((item): item is string => typeof item === "string"));
+    if (enabled.size === 0) return { ok: false, message: "Keep at least one business module enabled." };
+    const modules: BusinessType[] = ["library", "guest_house", "course", "general"];
+    const { error } = await client.from("business_modules").upsert(
+      modules.map((module) => ({
+        business_id: context.business.id,
+        module,
+        enabled: enabled.has(module),
+        configured_by: identity.id,
+        configured_at: new Date().toISOString(),
+      })),
+      { onConflict: "business_id,module" },
+    );
+    if (error) throw error;
+    const { error: auditError } = await client.from("audit_events").insert({
       business_id: context.business.id,
-      module,
-      enabled: enabled.has(module),
-      configured_by: identity.id,
-      configured_at: new Date().toISOString(),
-    })),
-    { onConflict: "business_id,module" },
-  );
-  if (error) throw new Error(error.message);
-  await client.from("audit_events").insert({
-    business_id: context.business.id,
-    actor_profile_id: identity.id,
-    event_type: "business_modules_updated",
-    entity_type: "business",
-    entity_id: context.business.id,
-    after_data: { enabled_modules: [...enabled] },
-  });
-  revalidatePath(`/b/${context.business.slug}`);
-  revalidatePath(`/b/${context.business.slug}/manage`);
+      actor_profile_id: identity.id,
+      event_type: "business_modules_updated",
+      entity_type: "business",
+      entity_id: context.business.id,
+      after_data: { enabled_modules: [...enabled] },
+    });
+    revalidatePath(`/b/${context.business.slug}`);
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return {
+      ok: true,
+      message: "Business modules updated.",
+      ...(auditError
+        ? actionWarning(
+            auditError,
+            {
+              action: "saveBusinessModulesAction.audit",
+              fallback: "Could not record the audit event.",
+              businessId: context.business.id,
+              userId: identity.id,
+            },
+            "The settings were saved, but the audit record could not be written.",
+          )
+        : {}),
+    };
+  } catch (error) {
+    return businessActionError(error, "Could not update business modules.");
+  }
 }
 
-export async function transferPrimaryOwnershipAction(formData: FormData) {
-  const { context } = await resolveBusinessContextFromRequest();
-  if (context.accessMode !== "member" || !isPrimaryOwner(context.membership?.role)) {
-    throw new Error("Only the current Owner can transfer primary ownership.");
+export async function transferPrimaryOwnershipAction(
+  _state: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  try {
+    const { context } = await resolveBusinessContextFromRequest();
+    if (context.accessMode !== "member" || !isPrimaryOwner(context.membership?.role)) {
+      return { ok: false, message: "Only the current Owner can transfer primary ownership." };
+    }
+    if (read(formData, "business_name_confirmation") !== context.business.name) {
+      return {
+        ok: false,
+        message: "Type the business name exactly to confirm the ownership transfer.",
+        fieldErrors: {
+          business_name_confirmation: "Type the business name exactly.",
+        },
+      };
+    }
+    const targetProfileId = read(formData, "profile_id");
+    if (!targetProfileId) {
+      return {
+        ok: false,
+        message: "Choose an active Manager.",
+        fieldErrors: { profile_id: "Choose an active Manager." },
+      };
+    }
+    const client = await createClient({ businessId: context.business.id });
+    const { error } = await client.rpc("transfer_primary_ownership", {
+      target_business_id: context.business.id,
+      target_profile_id: targetProfileId,
+    });
+    if (error) throw error;
+    revalidatePath(`/b/${context.business.slug}`);
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return { ok: true, message: "Primary ownership transferred." };
+  } catch (error) {
+    return businessActionError(error, "Could not transfer primary ownership.");
   }
-  if (read(formData, "business_name_confirmation") !== context.business.name) {
-    throw new Error("Type the business name exactly to confirm the ownership transfer.");
-  }
-  const targetProfileId = read(formData, "profile_id");
-  if (!targetProfileId) throw new Error("Choose an active Manager.");
-  const client = await createClient({ businessId: context.business.id });
-  const { error } = await client.rpc("transfer_primary_ownership", {
-    target_business_id: context.business.id,
-    target_profile_id: targetProfileId,
-  });
-  if (error) throw new Error(error.message);
-  revalidatePath(`/b/${context.business.slug}`);
-  revalidatePath(`/b/${context.business.slug}/manage`);
 }
 
 async function updateBusinessMemberStatus(formData: FormData) {
@@ -172,21 +227,26 @@ async function updateBusinessMemberStatus(formData: FormData) {
       ? "The Owner cannot be removed. Transfer ownership first."
       : "Managers can remove only Staff and Sales Agents.");
   }
-  if (membership.status === nextStatus) return nextStatus;
+  if (membership.status === nextStatus) return { status: nextStatus };
   const { error } = await client.from("business_memberships").update({
     status: nextStatus,
     suspended_at: nextStatus === "suspended" ? new Date().toISOString() : null,
   }).eq("id", membershipId);
   if (error) throw new Error(error.message);
+  let secondaryError: unknown = null;
+  let secondaryMessage = "The access change was saved, but its audit event could not be written.";
   if (membership.role === "sales_agent" && nextStatus === "suspended") {
     const { error: referralError } = await createAdminClient()
       .from("referral_codes")
       .update({ active: false })
       .eq("business_id", context.business.id)
       .eq("agent_id", membership.profile_id);
-    if (referralError) throw new Error(referralError.message);
+    if (referralError) {
+      secondaryError = referralError;
+      secondaryMessage = "Access was suspended, but linked coupons could not be hidden. Review them in Business setup.";
+    }
   }
-  await client.from("audit_events").insert({
+  const { error: auditError } = await client.from("audit_events").insert({
     business_id: context.business.id,
     actor_profile_id: identity.id,
     event_type: nextStatus === "active" ? "membership_reactivated" : "membership_suspended",
@@ -195,22 +255,41 @@ async function updateBusinessMemberStatus(formData: FormData) {
     before_data: { status: membership.status },
     after_data: { status: nextStatus, role: membership.role },
   });
+  secondaryError ??= auditError;
   revalidatePath(`/b/${context.business.slug}`);
   revalidatePath(`/b/${context.business.slug}/manage`);
-  return nextStatus;
+  return {
+    status: nextStatus,
+    ...(secondaryError
+      ? actionWarning(
+          secondaryError,
+          {
+            action: "updateBusinessMemberStatus.bookkeeping",
+            fallback: "Could not finish access bookkeeping.",
+            businessId: context.business.id,
+            userId: identity.id,
+          },
+          secondaryMessage,
+        )
+      : {}),
+  };
 }
 
 async function runBusinessUserAction(
   action: (formData: FormData) => Promise<{ ok: true; message?: string } | { ok: false; message: string }>,
   formData: FormData,
 ): Promise<BusinessUserActionState> {
-  const result = await action(formData);
-  const { context } = await resolveBusinessContextFromRequest();
-  if (result.ok) {
-    revalidatePath(`/b/${context.business.slug}`);
-    revalidatePath(`/b/${context.business.slug}/manage`);
+  try {
+    const result = await action(formData);
+    const { context } = await resolveBusinessContextFromRequest();
+    if (result.ok) {
+      revalidatePath(`/b/${context.business.slug}`);
+      revalidatePath(`/b/${context.business.slug}/manage`);
+    }
+    return { ...result, message: result.message ?? (result.ok ? "Saved." : "Could not save changes.") };
+  } catch (error) {
+    return businessActionError(error, "Could not save business access.");
   }
-  return { ok: result.ok, message: result.message ?? (result.ok ? "Saved." : "Could not save changes.") };
 }
 
 export async function createBusinessUserAction(
@@ -222,7 +301,13 @@ export async function createBusinessUserAction(
     const { identity, context } = await resolveBusinessContextFromRequest();
     const email = read(formData, "email").toLowerCase();
     const role = roleFromForm(formData);
-    if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
+    if (!emailPattern.test(email)) {
+      return {
+        ok: false,
+        message: "Enter a valid email address.",
+        fieldErrors: { email: "Enter a valid email address." },
+      };
+    }
     if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
       return { ok: false, message: "You cannot assign this business role." };
     }
@@ -270,9 +355,10 @@ export async function createBusinessUserAction(
       const accessVerb = resolution.membership?.status === "active" ? "has updated business access" : "now has access";
       return {
         ok: true,
-        message: delivery.ok
-          ? `${resolution.profile.fullName} ${accessVerb}. Their password was not changed.`
-          : `${resolution.profile.fullName} ${accessVerb}. Email delivery failed, but their Account page will show the business.`,
+        message: `${resolution.profile.fullName} ${accessVerb}. Their password was not changed.`,
+        ...(!delivery.ok
+          ? { warning: "The access is active, but the email could not be delivered. Their Account page will still show the business." }
+          : {}),
       };
     }
 
@@ -290,11 +376,14 @@ export async function createBusinessUserAction(
       ok: true,
       message: invitation.delivery.ok
         ? `Invitation sent to ${email}. It expires in 30 days.`
-        : `Invitation saved, but email could not be sent: ${invitation.delivery.error}`,
+        : `Invitation created for ${email}.`,
+      ...(!invitation.delivery.ok
+        ? { warning: "The invitation is ready, but the email could not be delivered. Copy and share the invitation link." }
+        : {}),
       inviteUrl: invitation.invitationUrl,
     };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not grant business access." };
+    return businessActionError(error, "Could not grant business access.");
   }
 }
 
@@ -309,7 +398,13 @@ export async function resolveBusinessUserEmailAction(
       return { ok: false, message: "Only the Owner or a Manager can add business users." };
     }
     const email = read(formData, "email").toLowerCase();
-    if (!emailPattern.test(email)) return { ok: false, message: "Enter a valid email address." };
+    if (!emailPattern.test(email)) {
+      return {
+        ok: false,
+        message: "Enter a valid email address.",
+        fieldErrors: { email: "Enter a valid email address." },
+      };
+    }
     const resolution = await resolveExactBusinessEmail(context.business.id, email);
     if (!resolution.profile) return { ok: true, message: "No Lenden account exists yet. An invitation will be sent.", lookup: "invite", email };
     if (!resolution.profile.active || resolution.profile.accountStatus !== "active") {
@@ -322,7 +417,7 @@ export async function resolveBusinessUserEmailAction(
     if (resolution.membership?.status === "suspended") return { ok: true, message: `${resolution.profile.fullName} previously had access. Confirming will reactivate it.`, lookup: "suspended", email, fullName: resolution.profile.fullName, existingRole: resolution.membership.role };
     return { ok: true, message: `Registered account found for ${resolution.profile.fullName}.`, lookup: "registered", email, fullName: resolution.profile.fullName };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not check this email." };
+    return businessActionError(error, "Could not check this email.");
   }
 }
 
@@ -344,9 +439,8 @@ export async function updateBusinessMemberAccessAction(
       .eq("id", membershipId)
       .eq("business_id", context.business.id)
       .single();
-    if (membershipError || !membership) {
-      return { ok: false, message: membershipError?.message ?? "Business membership was not found." };
-    }
+    if (membershipError) throw membershipError;
+    if (!membership) return { ok: false, message: "Business membership was not found." };
     if (!canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode)) {
       return { ok: false, message: membership.role === "primary_owner"
         ? "Ownership must be changed through the ownership transfer workflow."
@@ -402,12 +496,13 @@ export async function updateBusinessMemberAccessAction(
     const verb = membership.status === "suspended" ? "restored" : "updated";
     return {
       ok: true,
-      message: delivery.ok
-        ? `${targetProfile.full_name}'s access was ${verb}.`
-        : `${targetProfile.full_name}'s access was ${verb}. Email delivery failed, but the access change is active.`,
+      message: `${targetProfile.full_name}'s access was ${verb}.`,
+      ...(!delivery.ok
+        ? { warning: "The access change is active, but the email could not be delivered." }
+        : {}),
     };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not update business access." };
+    return businessActionError(error, "Could not update business access.");
   }
 }
 
@@ -432,9 +527,16 @@ export async function resendBusinessInvitationAction(
     if (!invitation || !canManageBusinessMemberRole(context.membership?.role, invitation.intended_role, context.accessMode)) throw new Error("You cannot resend this invitation.");
     const sent = await regenerateBusinessInvitation({ invitationId, businessId: context.business.id, businessName: context.business.name, actorId: identity.id, actorName: identity.full_name });
     revalidatePath(`/b/${context.business.slug}/manage`);
-    return { ok: true, message: sent.delivery.ok ? "Invitation regenerated and sent." : `New link created, but email failed: ${sent.delivery.error}`, inviteUrl: sent.invitationUrl };
+    return {
+      ok: true,
+      message: sent.delivery.ok ? "Invitation regenerated and sent." : "A new invitation link was created.",
+      ...(!sent.delivery.ok
+        ? { warning: "The email could not be delivered. Copy and share the new invitation link." }
+        : {}),
+      inviteUrl: sent.invitationUrl,
+    };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not resend invitation." };
+    return businessActionError(error, "Could not resend invitation.");
   }
 }
 
@@ -453,7 +555,7 @@ export async function revokeBusinessInvitationAction(
     revalidatePath(`/b/${context.business.slug}/manage`);
     return { ok: true, message: "Invitation revoked." };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : "Could not revoke invitation." };
+    return businessActionError(error, "Could not revoke invitation.");
   }
 }
 
@@ -463,15 +565,14 @@ export async function setBusinessMemberStatusAction(
 ): Promise<BusinessUserActionState> {
   void previousState;
   try {
-    const status = await updateBusinessMemberStatus(formData);
+    const result = await updateBusinessMemberStatus(formData);
     return {
       ok: true,
-      message: status === "active" ? "Business access activated." : "Business access suspended.",
+      message: result.status === "active" ? "Business access activated." : "Business access suspended.",
+      ...(result.warning ? { warning: result.warning } : {}),
+      ...(result.errorId ? { errorId: result.errorId } : {}),
     };
   } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Could not update business access.",
-    };
+    return businessActionError(error, "Could not update business access.");
   }
 }

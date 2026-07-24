@@ -6,7 +6,12 @@ export const permissionOptions = [
   { value: "collect_course", label: "Course collection" },
   { value: "collect_general", label: "General payment" },
   { value: "add_expense", label: "Add expense" },
+  { value: "transfer_money", label: "Transfer assigned transactions" },
 ] as const;
+
+export const staffPermissionValues = new Set<string>(
+  permissionOptions.map((permission) => permission.value),
+);
 
 export const businessLabels: Record<BusinessType, string> = {
   guest_house: "Guest House",

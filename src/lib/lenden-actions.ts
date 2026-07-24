@@ -1,4 +1,5 @@
-import { dateIsoInTimeZone } from "@/lib/constants";
+import { dateIsoInTimeZone, staffPermissionValues } from "@/lib/constants";
+import { actionWarning, normalizeActionError } from "@/lib/action-errors";
 import type {
   ActionResult,
   CourseStudent,
@@ -104,6 +105,7 @@ type QueryResponse<T> = {
 
 type AppNotificationCategory = "payment" | "expense" | "transfer" | "approval" | "agent" | "settings" | "system";
 type AppNotificationTone = "success" | "error" | "warning" | "info";
+const notificationFailureCollectors = new WeakMap<SupabaseAdminClient, unknown[]>();
 
 const businessPermissions: Record<BusinessType, string> = {
   guest_house: "collect_guest_house",
@@ -274,6 +276,14 @@ function isMissingPaymentApprovalJourneySchemaError(error: unknown) {
   return isMissingDbSchemaError(error, ["approved_by", "approved_at"]);
 }
 
+function isMissingStudentSubscriptionCycleSchemaError(error: unknown) {
+  return isMissingDbSchemaError(error, [
+    "student_subscription_key",
+    "current_subscription_key",
+    "lenden_student_subscription_history",
+  ]);
+}
+
 async function updatePaymentApprovalFields(
   admin: SupabaseAdminClient,
   paymentId: string,
@@ -329,7 +339,9 @@ function isMissingNotificationEventKeySchemaError(error: unknown) {
 }
 
 function permissionsFromForm(formData: FormData) {
-  return formData.getAll("permissions").filter((value): value is string => typeof value === "string");
+  return formData.getAll("permissions").filter(
+    (value): value is string => typeof value === "string" && staffPermissionValues.has(value),
+  );
 }
 
 function isIsoDate(value: string | null) {
@@ -442,8 +454,12 @@ function ok(message?: string, patch?: MutationPatch): ActionResult {
   };
 }
 
-function fail(message: string): ActionResult {
-  return { ok: false, message };
+function fail(message: string, fieldErrors?: Record<string, string>): ActionResult {
+  return {
+    ok: false,
+    message,
+    ...(fieldErrors ? { fieldErrors } : {}),
+  };
 }
 
 function isDuplicateError(error: { code?: string; message?: string } | null | undefined) {
@@ -521,12 +537,24 @@ async function actionFingerprint(formData: FormData) {
 
 function asActionResult(value: unknown): ActionResult | null {
   if (!value || typeof value !== "object" || !("ok" in value)) return null;
-  const result = value as { ok: unknown; message?: unknown };
+  const result = value as {
+    ok: unknown;
+    message?: unknown;
+    warning?: unknown;
+    errorId?: unknown;
+    fieldErrors?: unknown;
+    patch?: unknown;
+  };
   if (result.ok === true) {
-    return typeof result.message === "string" ? ok(result.message) : ok();
+    if (result.message !== undefined && typeof result.message !== "string") return null;
+    if (result.warning !== undefined && typeof result.warning !== "string") return null;
+    if (result.errorId !== undefined && typeof result.errorId !== "string") return null;
+    return result as ActionResult;
   }
   if (result.ok === false && typeof result.message === "string") {
-    return fail(result.message);
+    if (result.errorId !== undefined && typeof result.errorId !== "string") return null;
+    if (result.fieldErrors !== undefined && (!result.fieldErrors || typeof result.fieldErrors !== "object")) return null;
+    return result as ActionResult;
   }
   return null;
 }
@@ -541,9 +569,15 @@ async function beginIdempotentAction(
     return { kind: "new" as const, requestId: null, requestKey: null };
   }
 
-  const requestKey = normalizeRequestKey(asString(formData, idempotencyField));
-  if (!requestKey) {
-    return { kind: "result" as const, result: fail("Please retry the action. Missing request key.") };
+  const submittedRequestKey = normalizeRequestKey(asString(formData, idempotencyField));
+  const requestKey = submittedRequestKey ?? crypto.randomUUID();
+  if (!submittedRequestKey) {
+    console.warn("[lenden-action-idempotency]", {
+      action,
+      userId: profile.id,
+      businessId: profile.businessId,
+      message: "Client omitted the action request key; a server key was generated.",
+    });
   }
 
   const requestFingerprint = await actionFingerprint(formData);
@@ -847,7 +881,11 @@ async function createNotifications(
       error = retry.error;
     }
     if (isDuplicateError(error)) continue;
-    if (error) throw new Error(error.message);
+    if (error) {
+      const failures = notificationFailureCollectors.get(admin);
+      if (!failures) throw new Error(error.message);
+      failures.push(error);
+    }
   }
 }
 
@@ -868,6 +906,20 @@ async function existingByClientRequest<T>(
   if (isMissingClientRequestSchemaError(response.error)) return null;
   if (response.error) throw new Error(response.error.message);
   return typedData<T>(response);
+}
+
+async function referencedRowCount(
+  admin: SupabaseAdminClient,
+  table: string,
+  column: string,
+  id: string,
+) {
+  const response = await admin
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq(column, id);
+  if (response.error) throw new Error(response.error.message);
+  return response.count ?? 0;
 }
 
 type LibraryStudentFormFields = {
@@ -1057,6 +1109,7 @@ async function saveLibraryStudentRecord(
     active: boolean;
     lastPaymentId?: string | null;
     lastPaymentDate?: string | null;
+    currentSubscriptionKey?: string | null;
     photoUrl?: string | null;
     aadharPhotoUrl?: string | null;
     aadharBackPhotoUrl?: string | null;
@@ -1067,6 +1120,7 @@ async function saveLibraryStudentRecord(
   };
   if (params.lastPaymentId) payload.last_payment_id = params.lastPaymentId;
   if (params.lastPaymentDate) payload.last_payment_date = params.lastPaymentDate;
+  if (params.currentSubscriptionKey) payload.current_subscription_key = params.currentSubscriptionKey;
 
   const studentId = normalizeLibraryStudentId(params.id);
   if (studentId) {
@@ -1109,6 +1163,9 @@ async function saveLibraryStudentRecord(
   const response = await query.select("id").single();
   const student = typedData<{ id: string }>(response);
   if (response.error || !student) {
+    if (isMissingStudentSubscriptionCycleSchemaError(response.error)) {
+      throw new Error("Apply the student subscription cycle migration before saving student payments.");
+    }
     if (isMissingLibraryStudentSchemaError(response.error)) {
       throw new Error("Apply the library student migration before saving student records.");
     }
@@ -1169,6 +1226,7 @@ async function upsertCourseStudentRecord(
     rollNumber: string | null;
     studentName: string | null;
     paymentId?: string | null;
+    currentSubscriptionKey?: string | null;
     photoUrl?: string | null;
     phoneNumber?: string | null;
     address?: string | null;
@@ -1223,12 +1281,18 @@ async function upsertCourseStudentRecord(
   if (params.aadharPhotoUrl) payload.aadhar_photo_url = params.aadharPhotoUrl;
   if (params.aadharBackPhotoUrl) payload.aadhar_back_photo_url = params.aadharBackPhotoUrl;
   if (params.paymentId) payload.last_payment_id = params.paymentId;
+  if (params.currentSubscriptionKey) payload.current_subscription_key = params.currentSubscriptionKey;
   if (!current) payload.active = true;
 
   const result = current
     ? await admin.from("course_students").update(payload).eq("id", current.id).select("*").single()
     : await admin.from("course_students").insert(payload).select("*").single();
-  if (result.error) throw new Error(result.error.message);
+  if (result.error) {
+    if (isMissingStudentSubscriptionCycleSchemaError(result.error)) {
+      throw new Error("Apply the student subscription cycle migration before saving student payments.");
+    }
+    throw new Error(result.error.message);
+  }
   const student = typedData<CourseStudent>(result);
   if (!student) throw new Error("Could not save course student.");
   return student;
@@ -1274,7 +1338,15 @@ function withErrors(
     try {
       return await handler(formData, context);
     } catch (error) {
-      return fail(error instanceof Error ? error.message : fallbackMessage);
+      return {
+        ok: false,
+        ...normalizeActionError(error, {
+          action: fallbackMessage,
+          fallback: fallbackMessage,
+          businessId: context.profile.businessId,
+          userId: context.profile.id,
+        }),
+      };
     }
   };
 }
@@ -1331,15 +1403,13 @@ const handlers = {
     }
 
     if (targetMembership.role !== "staff") return fail("Granular permissions apply only to staff memberships.");
-    await admin.from("business_member_permissions").delete().eq("membership_id", targetMembership.id);
     const permissions = permissionsFromForm(formData);
-
-    if (permissions.length > 0) {
-      const { error } = await admin.from("business_member_permissions").insert(
-        permissions.map((permission) => ({ membership_id: targetMembership.id, permission, granted_by: profile.id })),
-      );
-      if (error) throw new Error(error.message);
-    }
+    const { error } = await admin.rpc("replace_staff_permissions", {
+      target_business_id: profile.businessId,
+      target_membership_id: targetMembership.id,
+      target_permissions: permissions,
+    });
+    if (error) throw new Error(error.message);
 
     await createNotifications(admin, {
       recipientIds: profileId === profile.id ? [] : [profileId],
@@ -1351,15 +1421,6 @@ const handlers = {
       eventKey: `staff-permissions:${profileId}:${idempotencyKey ?? permissions.sort().join(",")}`,
       metadata: { permission_count: permissions.length },
     });
-    await admin.from("audit_events").insert({
-      business_id: profile.businessId,
-      actor_profile_id: profile.id,
-      event_type: "staff_permissions_updated",
-      entity_type: "business_membership",
-      entity_id: targetMembership.id,
-      after_data: { permissions },
-    });
-
     return ok("Permissions saved.");
   }),
 
@@ -1452,6 +1513,8 @@ const handlers = {
     const courseId = asString(formData, "course_id");
     const skillCourseId = asString(formData, "skill_course_id");
     const requestedCourseStudentId = asString(formData, "course_student_id");
+    const libraryPaymentKind = asString(formData, "library_payment_kind") === "dues" ? "dues" : "renewal";
+    const coursePaymentKind = asString(formData, "course_payment_kind") === "dues" ? "dues" : "renewal";
     const referralCodeText = asString(formData, "referral_code");
     let libraryStudentId: string | null = null;
     let libraryStudentFields: LibraryStudentFormFields | null = null;
@@ -1464,6 +1527,7 @@ const handlers = {
     let courseStudentPhotoUrl: string | null = null;
     let courseStudent: CourseStudent | null = null;
     let savedLibraryStudent: LibraryStudent | null = null;
+    let studentSubscriptionKey: string | null = null;
 
     if (business === "library" || business === "course") {
       const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
@@ -1495,7 +1559,6 @@ const handlers = {
     }
 
     if (business === "library") {
-      const libraryPaymentKind = asString(formData, "library_payment_kind") === "dues" ? "dues" : "renewal";
       if (libraryPaymentKind === "dues") {
         libraryPaymentEventKeyPrefix = "library-due-payment";
         libraryPaymentEventSource = "library_due_payment";
@@ -1529,7 +1592,11 @@ const handlers = {
           duesAmount: nextDue,
           advanceAmount: nextAdvance,
         };
+        studentSubscriptionKey = typeof studentRecord.current_subscription_key === "string"
+          ? studentRecord.current_subscription_key
+          : crypto.randomUUID();
       } else {
+        studentSubscriptionKey = crypto.randomUUID();
         const parsedStudent = readLibraryStudentFields(formData, { requireSubscription: true, requirePayment: true });
         if (!parsedStudent.ok) return parsedStudent.result;
         libraryStudentFields = parsedStudent.fields;
@@ -1558,6 +1625,7 @@ const handlers = {
             id: libraryStudentId,
             fields: libraryStudentFields,
             active: true,
+            currentSubscriptionKey: studentSubscriptionKey,
             photoUrl: libraryStudentPhotoUrl,
             aadharPhotoUrl,
             aadharBackPhotoUrl,
@@ -1611,38 +1679,65 @@ const handlers = {
     if (business === "course") {
       const sourceCourseId = skillCourseId ?? courseId;
       if (!sourceCourseId) return fail("Choose a main or skill course.");
+      let existingCourseStudent: CourseStudent | null = null;
       if (requestedCourseStudentId) {
         const existingStudentResponse = await admin
           .from("course_students")
-          .select("id,active,source_course_id")
+          .select("*")
           .eq("business_id", profile.businessId)
           .eq("id", requestedCourseStudentId)
           .maybeSingle();
         if (existingStudentResponse.error && !isMissingCourseStudentSchemaError(existingStudentResponse.error)) {
           throw new Error(existingStudentResponse.error.message);
         }
-        const existingStudent = typedData<{ id: string; active: boolean; source_course_id: string }>(existingStudentResponse);
-        if (!existingStudent || existingStudent.source_course_id !== sourceCourseId) {
+        existingCourseStudent = typedData<CourseStudent>(existingStudentResponse);
+        if (!existingCourseStudent || existingCourseStudent.source_course_id !== sourceCourseId) {
           return fail("The selected course student was not found.");
         }
-        if (!existingStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
+        if (!existingCourseStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
       }
+
+      if (coursePaymentKind === "dues") {
+        if (!existingCourseStudent) return fail("Select a course student before collecting dues.");
+        const previousDue = Math.max(Number(existingCourseStudent.dues_amount ?? 0), 0);
+        if (previousDue <= 0) return fail("No dues are pending for this student.");
+        const previousPaid = Math.max(Number(existingCourseStudent.paid_amount ?? 0), 0);
+        fee = existingCourseStudent.fee_amount;
+        paid = previousPaid + amount;
+        due = Math.max(previousDue - amount, 0);
+        advance = Math.max(amount - previousDue, 0);
+        studentSubscriptionKey = existingCourseStudent.current_subscription_key ?? crypto.randomUUID();
+      } else {
+        studentSubscriptionKey = crypto.randomUUID();
+      }
+
       courseStudent = await upsertCourseStudentRecord(admin, {
         businessId: profile.businessId,
         sourceCourseId,
-        rollNumber: normalizeLibraryRollNumber(asString(formData, "roll_number")),
-        studentName: asString(formData, "customer_name"),
+        rollNumber: existingCourseStudent?.roll_number ?? normalizeLibraryRollNumber(asString(formData, "roll_number")),
+        studentName: existingCourseStudent?.student_name ?? asString(formData, "customer_name"),
+        currentSubscriptionKey: studentSubscriptionKey,
         photoUrl: courseStudentPhotoUrl,
-        phoneNumber: asString(formData, "phone_number"),
-        address: asString(formData, "address"),
-        aadharNumber: asString(formData, "aadhar_number"),
+        phoneNumber: existingCourseStudent?.phone_number ?? asString(formData, "phone_number"),
+        address: existingCourseStudent?.address ?? asString(formData, "address"),
+        aadharNumber: existingCourseStudent?.aadhar_number ?? asString(formData, "aadhar_number"),
         aadharPhotoUrl,
         aadharBackPhotoUrl,
-        subscriptionStartDate: asString(formData, "start_date"),
-        subscriptionEndDate: asString(formData, "end_date"),
-        startTime: normalizeClockTime(asString(formData, "start_time")),
-        endTime: normalizeClockTime(asString(formData, "end_time")),
-        slotHours: asNumber(formData, "slot_hours"),
+        subscriptionStartDate: coursePaymentKind === "dues"
+          ? existingCourseStudent?.subscription_start_date
+          : asString(formData, "start_date"),
+        subscriptionEndDate: coursePaymentKind === "dues"
+          ? existingCourseStudent?.subscription_end_date
+          : asString(formData, "end_date"),
+        startTime: coursePaymentKind === "dues"
+          ? existingCourseStudent?.start_time
+          : normalizeClockTime(asString(formData, "start_time")),
+        endTime: coursePaymentKind === "dues"
+          ? existingCourseStudent?.end_time
+          : normalizeClockTime(asString(formData, "end_time")),
+        slotHours: coursePaymentKind === "dues"
+          ? existingCourseStudent?.slot_hours
+          : asNumber(formData, "slot_hours"),
         feeAmount: fee,
         paidAmount: paid,
         duesAmount: due,
@@ -1662,19 +1757,27 @@ const handlers = {
       dues_amount: due,
       advance_amount: advance,
       payment_date: paymentDate,
-      start_date: libraryStudentFields?.subscriptionStartDate ?? asString(formData, "start_date"),
-      end_date: libraryStudentFields?.subscriptionEndDate ?? asString(formData, "end_date"),
-      customer_name: libraryStudentFields?.studentName ?? asString(formData, "customer_name"),
-      roll_number: libraryStudentFields?.rollNumber ?? asString(formData, "roll_number"),
+      start_date: libraryStudentFields?.subscriptionStartDate
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.subscription_start_date : asString(formData, "start_date")),
+      end_date: libraryStudentFields?.subscriptionEndDate
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.subscription_end_date : asString(formData, "end_date")),
+      customer_name: libraryStudentFields?.studentName
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.student_name : asString(formData, "customer_name")),
+      roll_number: libraryStudentFields?.rollNumber
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.roll_number : asString(formData, "roll_number")),
       room_id: roomId,
       room_number_snapshot: roomSnapshot,
       seat_number: libraryStudentFields?.seatNumber ?? asString(formData, "seat_number"),
-      start_time: libraryStudentFields?.startTime ?? asString(formData, "start_time"),
-      end_time: libraryStudentFields?.endTime ?? asString(formData, "end_time"),
-      slot_hours: libraryStudentFields?.slotHours ?? asNumber(formData, "slot_hours"),
+      start_time: libraryStudentFields?.startTime
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.start_time : asString(formData, "start_time")),
+      end_time: libraryStudentFields?.endTime
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.end_time : asString(formData, "end_time")),
+      slot_hours: libraryStudentFields?.slotHours
+        ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.slot_hours : asNumber(formData, "slot_hours")),
       course_id: courseId,
       skill_course_id: skillCourseId,
       course_student_id: courseStudent?.id ?? null,
+      student_subscription_key: studentSubscriptionKey,
       referral_code_id: referralCodeId,
       referral_code_snapshot: referralCodeText,
       referral_agent_id: referralAgentId,
@@ -1721,6 +1824,10 @@ const handlers = {
         ("aadhar_photo_url" in paymentPayloadForInsert || "aadhar_back_photo_url" in paymentPayloadForInsert)
       ) {
         return fail("Apply the student Aadhar sides migration before saving Aadhar images.");
+      }
+
+      if (isMissingStudentSubscriptionCycleSchemaError(paymentResult.error)) {
+        return fail("Apply the student subscription cycle migration before saving student payments.");
       }
 
       if (
@@ -1801,6 +1908,7 @@ const handlers = {
           active: true,
           lastPaymentId: payment.id,
           lastPaymentDate: paymentDate,
+          currentSubscriptionKey: studentSubscriptionKey,
           photoUrl: libraryStudentPhotoUrl,
           aadharPhotoUrl,
           aadharBackPhotoUrl,
@@ -1836,6 +1944,7 @@ const handlers = {
         rollNumber: courseStudent.roll_number,
         studentName: courseStudent.student_name,
         paymentId: payment.id,
+        currentSubscriptionKey: studentSubscriptionKey,
         aadharPhotoUrl,
         aadharBackPhotoUrl,
         subscriptionStartDate: payment.start_date,
@@ -2832,6 +2941,12 @@ const handlers = {
     if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
     }
+    if (!isBusinessOwner(profile.businessRole)) {
+      const senderPermissions = await userPermissions(admin, profile.businessId, profile.id);
+      if (!senderPermissions.includes("transfer_money")) {
+        return fail("You do not have permission to transfer assigned transactions. Ask the Owner to enable Transfer assigned transactions.");
+      }
+    }
 
     const paymentId = asString(formData, "payment_id");
     const toProfileId = asString(formData, "to_profile_id");
@@ -2849,10 +2964,10 @@ const handlers = {
     if (String(payment.record_status ?? "active") !== "active" || !canTransferPaymentStatus(String(payment.approval_status ?? ""))) {
       return fail("Only active transactions can be transferred.");
     }
-    const transactionOrCashApproved = paymentComponentDecision(payment, "cash") === "approved" ||
+    const transactionOrComponentApproved = paymentHasApprovedComponent(payment) ||
       await recordIsEffectivelyApproved(admin, "payment", payment);
-    if (transactionOrCashApproved && !isBusinessOwner(profile.businessRole)) {
-      return fail("Only an owner can transfer an approved transaction.");
+    if (transactionOrComponentApproved && profile.businessRole !== "primary_owner") {
+      return fail("Only the Owner can transfer a transaction after any payment component is approved.");
     }
     const currentAssigneeId = String(payment.assigned_profile_id ?? payment.current_holder_id ?? payment.collected_by ?? "");
     if (!currentAssigneeId) return fail("This transaction does not have an assignee.");
@@ -2911,29 +3026,40 @@ const handlers = {
     const movement = typedData<MoneyMovement>(movementResult);
     if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not request transfer.");
 
-    const notificationRecipients = new Set([
-      ...(await ownerRecipientIds(admin, profile.businessId, profile.id)),
-      currentAssigneeId,
-      toProfileId,
-    ]);
-    notificationRecipients.delete(profile.id);
-    await createNotifications(admin, {
-      recipientIds: [...notificationRecipients],
-      actorId: profile.id,
-      title: "Transaction transfer requested",
-      body: `${profile.full_name} requested to transfer the transaction of ${payment.amount} to ${recipient.full_name}.`,
-      category: "transfer",
-      tone: "info",
-      eventKey: `payment-transfer-request:${movement.id}`,
-      metadata: { payment_id: paymentId, movement_id: movement.id, amount: Number(payment.amount ?? 0) },
-    });
+    let notificationWarning: { warning: string; errorId?: string } | null = null;
+    try {
+      const notificationRecipients = new Set([
+        ...(await ownerRecipientIds(admin, profile.businessId, profile.id)),
+        currentAssigneeId,
+        toProfileId,
+      ]);
+      notificationRecipients.delete(profile.id);
+      await createNotifications(admin, {
+        recipientIds: [...notificationRecipients],
+        actorId: profile.id,
+        title: "Transaction transfer requested",
+        body: `${profile.full_name} requested to transfer the transaction of ${payment.amount} to ${recipient.full_name}.`,
+        category: "transfer",
+        tone: "info",
+        eventKey: `payment-transfer-request:${movement.id}`,
+        metadata: { payment_id: paymentId, movement_id: movement.id, amount: Number(payment.amount ?? 0) },
+      });
+    } catch (error) {
+      notificationWarning = actionWarning(error, {
+        action: "requestPaymentTransfer:notifications",
+        fallback: "Could not send transfer notifications.",
+        businessId: profile.businessId,
+        userId: profile.id,
+      }, "The transfer was requested, but one or more notifications could not be delivered.");
+    }
 
-    return ok("Transaction transfer requested.", {
+    const result = ok("Transaction transfer requested.", {
       type: "payment-transfer",
       payment: payment as unknown as Payment,
       movement,
       ledgerEntries: [],
     });
+    return notificationWarning ? { ...result, ...notificationWarning } : result;
   }),
 
   respondPaymentTransfer: withErrors("Could not update transaction transfer.", async (formData, { admin, profile }) => {
@@ -2969,28 +3095,39 @@ const handlers = {
     if (ledgerResponse.error) throw new Error(ledgerResponse.error.message);
     const ledgerEntries = typedDataArray<LedgerEntry>(ledgerResponse);
 
-    await createNotifications(admin, {
-      recipientIds: [...(await ownerRecipientIds(admin, profile.businessId, profile.id)), movement.from_profile_id],
-      actorId: profile.id,
-      title: `Transaction transfer ${decision}`,
-      body: `${profile.full_name} ${decision} a transaction transfer of ${movement.amount}.`,
-      category: "transfer",
-      tone: decision === "accepted" ? "success" : "warning",
-      eventKey: `payment-transfer-response:${movementId}:${decision}`,
-      metadata: {
-        payment_id: movement.payment_id,
-        movement_id: movementId,
-        decision,
-        assigned_profile_id: payment.assigned_profile_id,
-      },
-    });
+    let notificationWarning: { warning: string; errorId?: string } | null = null;
+    try {
+      await createNotifications(admin, {
+        recipientIds: [...(await ownerRecipientIds(admin, profile.businessId, profile.id)), movement.from_profile_id],
+        actorId: profile.id,
+        title: `Transaction transfer ${decision}`,
+        body: `${profile.full_name} ${decision} a transaction transfer of ${movement.amount}.`,
+        category: "transfer",
+        tone: decision === "accepted" ? "success" : "warning",
+        eventKey: `payment-transfer-response:${movementId}:${decision}`,
+        metadata: {
+          payment_id: movement.payment_id,
+          movement_id: movementId,
+          decision,
+          assigned_profile_id: payment.assigned_profile_id,
+        },
+      });
+    } catch (error) {
+      notificationWarning = actionWarning(error, {
+        action: "respondPaymentTransfer:notifications",
+        fallback: "Could not send transfer notifications.",
+        businessId: profile.businessId,
+        userId: profile.id,
+      }, `The transfer was ${decision}, but one or more notifications could not be delivered.`);
+    }
 
-    return ok(`Transaction transfer ${decision}.`, {
+    const result = ok(`Transaction transfer ${decision}.`, {
       type: "payment-transfer",
       payment,
       movement,
       ledgerEntries,
     });
+    return notificationWarning ? { ...result, ...notificationWarning } : result;
   }),
 
   requestTransfer: withErrors("Could not request transfer.", async (formData, { admin, profile, idempotencyKey }) => {
@@ -3486,13 +3623,35 @@ const handlers = {
   saveRoom: withErrors("Could not save room.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const roomNumber = asString(formData, "room_number");
-    if (!roomNumber) return fail("Room number is required.");
-    const { error } = await admin.from("rooms").upsert({
+    if (!roomNumber) return fail("Enter a room number.", { room_number: "Room number is required." });
+    if (roomNumber.length > 40) {
+      return fail("Review the room number.", { room_number: "Use 40 characters or fewer." });
+    }
+    const existingResponse = await admin
+      .from("rooms")
+      .select("id,active")
+      .eq("business_id", profile.businessId)
+      .ilike("room_number", roomNumber)
+      .maybeSingle();
+    if (existingResponse.error) throw new Error(existingResponse.error.message);
+    const existing = typedData<{ id: string; active: boolean }>(existingResponse);
+    if (existing) {
+      return fail(
+        existing.active
+          ? "This room already exists."
+          : "This room already exists but is hidden. Restore it from the room list.",
+        { room_number: "Choose another room number or restore the existing room." },
+      );
+    }
+    const { error } = await admin.from("rooms").insert({
       business_id: profile.businessId,
       room_number: roomNumber,
       label: asString(formData, "label"),
-      active: !asBool(formData, "inactive"),
-    }, { onConflict: "business_id,room_number" });
+      active: true,
+    });
+    if (isDuplicateError(error)) {
+      return fail("This room already exists.", { room_number: "Choose another room number." });
+    }
     if (error) throw new Error(error.message);
     return ok("Room saved.");
   }),
@@ -3501,45 +3660,159 @@ const handlers = {
     requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Room is required.");
+    const referenceCount = await referencedRowCount(admin, "payments", "room_id", id);
+    if (referenceCount > 0) {
+      const { error } = await admin.from("rooms").update({ active: false }).eq("id", id);
+      if (error) throw new Error(error.message);
+      return ok("Room hidden because transaction history uses it.");
+    }
     const { error } = await admin.from("rooms").delete().eq("id", id);
     if (error) throw new Error(error.message);
     return ok("Room deleted.");
+  }),
+
+  setRoomActive: withErrors("Could not update room.", async (formData, { admin, profile }) => {
+    requireBusinessSettingsManager(profile);
+    const id = asString(formData, "id");
+    if (!id) return fail("Room is required.");
+    const active = asBool(formData, "active");
+    const { error } = await admin.from("rooms").update({ active }).eq("id", id);
+    if (error) throw new Error(error.message);
+    return ok(active ? "Room restored." : "Room hidden.");
   }),
 
   saveCourse: withErrors("Could not save course.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const name = asString(formData, "name");
     const kind = asString(formData, "kind") ?? "main";
-    if (!name) return fail("Course name is required.");
-    const { error } = await admin.from("courses").upsert({ business_id: profile.businessId, name, kind, active: true }, { onConflict: "business_id,name,kind" });
+    if (!name) return fail("Enter a course name.", { name: "Course name is required." });
+    if (name.length > 120) {
+      return fail("Review the course name.", { name: "Use 120 characters or fewer." });
+    }
+    if (kind !== "main" && kind !== "skill") {
+      return fail("Choose a valid course type.", { kind: "Choose Main course or Skill course." });
+    }
+    const duplicateMessage = kind === "skill"
+      ? "This skill course already exists."
+      : "This course already exists.";
+    const existingResponse = await admin
+      .from("courses")
+      .select("id,name,active")
+      .eq("business_id", profile.businessId)
+      .eq("kind", kind);
+    if (existingResponse.error) throw new Error(existingResponse.error.message);
+    const normalizedName = name.toLocaleLowerCase();
+    const existing = typedDataArray<{ id: string; name: string; active: boolean }>(existingResponse)
+      .find((course) => course.name.trim().toLocaleLowerCase() === normalizedName);
+    if (existing) {
+      return fail(
+        existing.active
+          ? duplicateMessage
+          : `${duplicateMessage.slice(0, -1)} but is hidden. Restore it from the course list.`,
+        { name: "Choose another name or restore the existing item." },
+      );
+    }
+    const { error } = await admin.from("courses").insert({
+      business_id: profile.businessId,
+      name,
+      kind,
+      active: true,
+    });
+    if (isDuplicateError(error)) {
+      return fail(duplicateMessage, { name: "Choose another name." });
+    }
     if (error) throw new Error(error.message);
-    return ok("Course saved.");
+    return ok(kind === "skill" ? "Skill course saved." : "Course saved.");
   }),
 
   deleteCourse: withErrors("Could not delete course.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Course is required.");
+    const [mainPayments, skillPayments, students] = await Promise.all([
+      referencedRowCount(admin, "payments", "course_id", id),
+      referencedRowCount(admin, "payments", "skill_course_id", id),
+      referencedRowCount(admin, "course_students", "source_course_id", id),
+    ]);
+    if (mainPayments + skillPayments + students > 0) {
+      const { error } = await admin.from("courses").update({ active: false }).eq("id", id);
+      if (error) throw new Error(error.message);
+      return ok("Course hidden because student or transaction history uses it.");
+    }
     const { error } = await admin.from("courses").delete().eq("id", id);
     if (error) throw new Error(error.message);
     return ok("Course deleted.");
   }),
 
+  setCourseActive: withErrors("Could not update course.", async (formData, { admin, profile }) => {
+    requireBusinessSettingsManager(profile);
+    const id = asString(formData, "id");
+    if (!id) return fail("Course is required.");
+    const active = asBool(formData, "active");
+    const { error } = await admin.from("courses").update({ active }).eq("id", id);
+    if (error) throw new Error(error.message);
+    return ok(active ? "Course restored." : "Course hidden.");
+  }),
+
   saveReferral: withErrors("Could not save referral.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const code = asString(formData, "code")?.toUpperCase();
-    if (!code) return fail("Referral code is required.");
-    const { error } = await admin.from("referral_codes").upsert({
+    if (!code) return fail("Enter a coupon code.", { code: "Coupon code is required." });
+    const discountType = asString(formData, "discount_type") ?? "amount";
+    const incentiveType = asString(formData, "incentive_type") ?? "amount";
+    const discountValue = asNumber(formData, "discount_value") ?? asNumber(formData, "discount_amount");
+    const incentiveValue = asNumber(formData, "incentive_value");
+    const fieldErrors: Record<string, string> = {};
+    if (code.length > 40) fieldErrors.code = "Use 40 characters or fewer.";
+    if (discountType !== "amount" && discountType !== "percentage") {
+      fieldErrors.discount_type = "Choose Amount or Percentage.";
+    }
+    if (incentiveType !== "amount" && incentiveType !== "percentage") {
+      fieldErrors.incentive_type = "Choose Amount or Percentage.";
+    }
+    if (discountValue === null || discountValue < 0) {
+      fieldErrors.discount_value = "Enter a value of 0 or more.";
+    } else if (discountType === "percentage" && discountValue > 100) {
+      fieldErrors.discount_value = "Percentage cannot exceed 100.";
+    }
+    if (incentiveValue === null || incentiveValue < 0) {
+      fieldErrors.incentive_value = "Enter a value of 0 or more.";
+    } else if (incentiveType === "percentage" && incentiveValue > 100) {
+      fieldErrors.incentive_value = "Percentage cannot exceed 100.";
+    }
+    if (Object.keys(fieldErrors).length > 0) {
+      return fail("Review the highlighted coupon details.", fieldErrors);
+    }
+    const existingResponse = await admin
+      .from("referral_codes")
+      .select("id,active")
+      .eq("business_id", profile.businessId)
+      .ilike("code", code)
+      .maybeSingle();
+    if (existingResponse.error) throw new Error(existingResponse.error.message);
+    const existing = typedData<{ id: string; active: boolean }>(existingResponse);
+    if (existing) {
+      return fail(
+        existing.active
+          ? "This coupon code already exists."
+          : "This coupon code already exists but is hidden. Restore it from the coupon list.",
+        { code: "Choose another code or restore the existing coupon." },
+      );
+    }
+    const { error } = await admin.from("referral_codes").insert({
       business_id: profile.businessId,
       code,
       agent_id: asString(formData, "agent_id"),
-      discount_amount: asNumber(formData, "discount_value") ?? asNumber(formData, "discount_amount") ?? 0,
-      discount_type: asString(formData, "discount_type") ?? "amount",
-      discount_value: asNumber(formData, "discount_value") ?? asNumber(formData, "discount_amount") ?? 0,
-      incentive_type: asString(formData, "incentive_type") ?? "amount",
-      incentive_value: asNumber(formData, "incentive_value") ?? 0,
+      discount_amount: discountValue ?? 0,
+      discount_type: discountType,
+      discount_value: discountValue ?? 0,
+      incentive_type: incentiveType,
+      incentive_value: incentiveValue ?? 0,
       active: true,
-    }, { onConflict: "business_id,code" });
+    });
+    if (isDuplicateError(error)) {
+      return fail("This coupon code already exists.", { code: "Choose another code." });
+    }
     if (error) throw new Error(error.message);
     return ok("Referral code saved.");
   }),
@@ -3548,9 +3821,25 @@ const handlers = {
     requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Referral code is required.");
+    const referenceCount = await referencedRowCount(admin, "payments", "referral_code_id", id);
+    if (referenceCount > 0) {
+      const { error } = await admin.from("referral_codes").update({ active: false }).eq("id", id);
+      if (error) throw new Error(error.message);
+      return ok("Coupon hidden because transaction history uses it.");
+    }
     const { error } = await admin.from("referral_codes").delete().eq("id", id);
     if (error) throw new Error(error.message);
     return ok("Referral code deleted.");
+  }),
+
+  setReferralActive: withErrors("Could not update referral code.", async (formData, { admin, profile }) => {
+    requireBusinessSettingsManager(profile);
+    const id = asString(formData, "id");
+    if (!id) return fail("Referral code is required.");
+    const active = asBool(formData, "active");
+    const { error } = await admin.from("referral_codes").update({ active }).eq("id", id);
+    if (error) throw new Error(error.message);
+    return ok(active ? "Coupon restored." : "Coupon hidden.");
   }),
 } satisfies Record<string, (formData: FormData, context: ActionContext) => Promise<ActionResult>>;
 
@@ -3569,7 +3858,47 @@ export async function executeLendenAction(
     idempotencyKey: started.requestKey,
   };
 
-  const result = await handlers[action](formData, nextContext);
-  await finishIdempotentAction(context.admin, started.requestId, result);
-  return result;
+  const notificationFailures: unknown[] = [];
+  notificationFailureCollectors.set(context.admin, notificationFailures);
+  let result: ActionResult;
+  try {
+    result = await handlers[action](formData, nextContext);
+  } finally {
+    notificationFailureCollectors.delete(context.admin);
+  }
+
+  if (result.ok && notificationFailures.length > 0) {
+    const warning = actionWarning(notificationFailures[0], {
+      action: `${action}:notifications`,
+      fallback: "Could not deliver an action notification.",
+      businessId: context.profile.businessId,
+      userId: context.profile.id,
+    }, notificationFailures.length === 1
+      ? "The change was saved, but a notification could not be delivered."
+      : "The change was saved, but some notifications could not be delivered.");
+    result = {
+      ...result,
+      warning: [result.warning, warning.warning].filter(Boolean).join(" "),
+      errorId: result.errorId ?? warning.errorId,
+    };
+  }
+
+  try {
+    await finishIdempotentAction(context.admin, started.requestId, result);
+    return result;
+  } catch (error) {
+    const warning = actionWarning(error, {
+      action: `${action}:finish-idempotency`,
+      fallback: "Could not finish action bookkeeping.",
+      businessId: context.profile.businessId,
+      userId: context.profile.id,
+    }, "The change was processed, but action bookkeeping could not be completed.");
+    return result.ok
+      ? {
+          ...result,
+          warning: [result.warning, warning.warning].filter(Boolean).join(" "),
+          errorId: result.errorId ?? warning.errorId,
+        }
+      : result;
+  }
 }

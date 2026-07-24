@@ -1,7 +1,7 @@
 "use client";
 
 import { ReturnAwareLink } from "@/components/return-aware-link";
-import { useActionState } from "react";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import { startSupportSessionAction, type AdminActionState } from "../../actions";
 
 const initialState: AdminActionState = { ok: null, message: "" };
@@ -24,7 +24,16 @@ export default function SupportSessionForm({ businessId, businessName, disabled 
       </label>
       {disabled ? <div className="admin-warning-callout"><strong>Business is suspended</strong><p>Activate the business before starting a support session.</p></div> : null}
       <button className="primary-button" type="submit" disabled={pending || disabled}>{pending ? "Starting session…" : "Start 30-minute support session"}</button>
-      {state.message ? <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">{state.message}</p> : null}
+      {state.message ? (
+        <p
+          className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+          role={state.ok ? "status" : "alert"}
+        >
+          {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+        </p>
+      ) : null}
       {state.href ? <ReturnAwareLink className="secondary-button" href={state.href}>Open business workspace</ReturnAwareLink> : null}
     </form>
   );

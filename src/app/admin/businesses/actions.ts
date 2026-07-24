@@ -1,16 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { actionFailure, actionWarning, type UserActionStateBase } from "@/lib/action-errors";
 import { appBaseUrl } from "@/lib/auth-helpers";
 import { createOrRegenerateBusinessInvitation, regenerateBusinessInvitation, resolveExactBusinessEmail, revokeBusinessInvitation } from "@/lib/business-access-service";
 import { sendBusinessAccessGrantedEmail } from "@/lib/email";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { staffPermissionValues } from "@/lib/constants";
 import type { BusinessRole, BusinessStatus, BusinessType, MembershipStatus } from "@/lib/types";
 import { requirePlatformAdmin } from "./admin-data";
 
-export type AdminActionState = {
-  ok: boolean | null;
-  message: string;
+export type AdminActionState = UserActionStateBase & {
   fieldErrors?: Record<string, string>;
   entityId?: string;
   href?: string;
@@ -19,13 +19,7 @@ export type AdminActionState = {
 
 const BUSINESS_MODULES: BusinessType[] = ["library", "guest_house", "course", "general"];
 const MEMBER_ROLES: BusinessRole[] = ["co_owner", "staff", "sales_agent"];
-const STAFF_PERMISSIONS = new Set([
-  "collect_guest_house",
-  "collect_library",
-  "collect_course",
-  "collect_general",
-  "add_expense",
-]);
+const STAFF_PERMISSIONS = staffPermissionValues;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -40,7 +34,10 @@ function slugify(input: string) {
 }
 
 function actionError(error: unknown, fallback: string): AdminActionState {
-  return { ok: false, message: error instanceof Error ? error.message : fallback };
+  return actionFailure<AdminActionState>(error, {
+    action: fallback,
+    fallback,
+  });
 }
 
 function fieldFailure(message: string, fieldErrors: Record<string, string>): AdminActionState {
@@ -237,7 +234,6 @@ export async function setBusinessStatusAction(
       before_data: { status: business.status },
       after_data: { status },
     });
-    if (auditError) throw new Error(auditError.message);
 
     revalidateBusinessAdmin(business.id, business.slug);
     return {
@@ -246,6 +242,18 @@ export async function setBusinessStatusAction(
         ? "Business activated. Active members can sign in again."
         : "Business suspended. Every member is blocked; business data is preserved.",
       entityId: business.id,
+      ...(auditError
+        ? actionWarning(
+            auditError,
+            {
+              action: "setBusinessStatusAction.audit",
+              fallback: "Could not record the audit event.",
+              businessId: business.id,
+              userId: user.id,
+            },
+            "The status changed, but its audit event could not be written.",
+          )
+        : {}),
     };
   } catch (error) {
     return actionError(error, "Could not update business status.");
@@ -291,10 +299,25 @@ export async function saveBusinessModulesAdminAction(
       before_data: { enabled_modules: (previousRows ?? []).filter((row) => row.enabled).map((row) => row.module) },
       after_data: { enabled_modules: enabledModules },
     });
-    if (auditError) throw new Error(auditError.message);
 
     revalidateBusinessAdmin(business.id, business.slug);
-    return { ok: true, message: "Business modules updated.", entityId: business.id };
+    return {
+      ok: true,
+      message: "Business modules updated.",
+      entityId: business.id,
+      ...(auditError
+        ? actionWarning(
+            auditError,
+            {
+              action: "saveBusinessModulesAdminAction.audit",
+              fallback: "Could not record the audit event.",
+              businessId: business.id,
+              userId: user.id,
+            },
+            "The modules changed, but their audit event could not be written.",
+          )
+        : {}),
+    };
   } catch (error) {
     return actionError(error, "Could not update modules.");
   }
@@ -336,12 +359,29 @@ export async function createBusinessMemberAdminAction(
       const baseUrl = await appBaseUrl();
       const delivery = await sendBusinessAccessGrantedEmail({ recipientEmail: email, businessId: business.id, businessName: business.name, roleLabel: role === "co_owner" ? "Manager" : role === "sales_agent" ? "Sales Agent" : "Staff", businessUrl: `${baseUrl}/b/${business.slug}`, generation: new Date().toISOString().slice(0, 16) });
       revalidateBusinessAdmin(business.id, business.slug);
-      return { ok: true, message: delivery.ok ? "Registered user access granted. Their password was not changed." : "Access granted. Email delivery failed, but the business will appear in their Account page.", entityId: membershipId };
+      return {
+        ok: true,
+        message: "Registered user access granted. Their password was not changed.",
+        ...(!delivery.ok
+          ? { warning: "The access is active, but the email could not be delivered. The business will still appear in their Account page." }
+          : {}),
+        entityId: membershipId,
+      };
     }
 
     const invitation = await createOrRegenerateBusinessInvitation({ businessId: business.id, businessName: business.name, email, role: role as Exclude<BusinessRole, "primary_owner">, permissions, actorId: user.id, actorName: actor.full_name });
     revalidateBusinessAdmin(business.id, business.slug);
-    return { ok: true, message: invitation.delivery.ok ? "Invitation sent. The user will create their own account and accept access." : `Invitation saved, but email failed: ${invitation.delivery.error}`, entityId: invitation.invitationId, inviteUrl: invitation.invitationUrl };
+    return {
+      ok: true,
+      message: invitation.delivery.ok
+        ? "Invitation sent. The user will create their own account and accept access."
+        : "Invitation created.",
+      ...(!invitation.delivery.ok
+        ? { warning: "The email could not be delivered. Copy and share the invitation link." }
+        : {}),
+      entityId: invitation.invitationId,
+      inviteUrl: invitation.invitationUrl,
+    };
   } catch (error) {
     return actionError(error, "Could not add the business user.");
   }
@@ -358,7 +398,15 @@ export async function resendBusinessInvitationAdminAction(
     assertUuid(invitationId, "Invitation");
     const sent = await regenerateBusinessInvitation({ invitationId, businessId: business.id, businessName: business.name, actorId: user.id, actorName: profile.full_name });
     revalidateBusinessAdmin(business.id, business.slug);
-    return { ok: true, message: sent.delivery.ok ? "Invitation regenerated and sent." : `New link created, but email failed: ${sent.delivery.error}`, entityId: invitationId, inviteUrl: sent.invitationUrl };
+    return {
+      ok: true,
+      message: sent.delivery.ok ? "Invitation regenerated and sent." : "A new invitation link was created.",
+      ...(!sent.delivery.ok
+        ? { warning: "The email could not be delivered. Copy and share the new invitation link." }
+        : {}),
+      entityId: invitationId,
+      inviteUrl: sent.invitationUrl,
+    };
   } catch (error) {
     return actionError(error, "Could not resend invitation.");
   }
@@ -386,7 +434,7 @@ export async function saveBusinessMemberPermissionsAdminAction(
   formData: FormData,
 ): Promise<AdminActionState> {
   try {
-    const { user } = await requirePlatformAdmin();
+    await requirePlatformAdmin();
     const businessId = value(formData, "business_id");
     const membershipId = value(formData, "membership_id");
     const permissions = selectedPermissions(formData);
@@ -403,29 +451,13 @@ export async function saveBusinessMemberPermissionsAdminAction(
     if (!membership) throw new Error("Business membership was not found.");
     if (membership.role !== "staff") throw new Error("Granular permissions apply only to Staff memberships.");
 
-    const { data: beforeRows, error: beforeError } = await admin
-      .from("business_member_permissions")
-      .select("permission")
-      .eq("membership_id", membership.id);
-    if (beforeError) throw new Error(beforeError.message);
-    const { error: deleteError } = await admin.from("business_member_permissions").delete().eq("membership_id", membership.id);
-    if (deleteError) throw new Error(deleteError.message);
-    if (permissions.length > 0) {
-      const { error: insertError } = await admin.from("business_member_permissions").insert(
-        permissions.map((permission) => ({ membership_id: membership.id, permission, granted_by: user.id })),
-      );
-      if (insertError) throw new Error(insertError.message);
-    }
-    const { error: auditError } = await admin.from("audit_events").insert({
-      business_id: business.id,
-      actor_profile_id: user.id,
-      event_type: "staff_permissions_updated",
-      entity_type: "business_membership",
-      entity_id: membership.id,
-      before_data: { permissions: (beforeRows ?? []).map((row) => row.permission) },
-      after_data: { permissions },
+    const client = await createClient({ businessId: business.id });
+    const { error } = await client.rpc("replace_staff_permissions", {
+      target_business_id: business.id,
+      target_membership_id: membership.id,
+      target_permissions: permissions,
     });
-    if (auditError) throw new Error(auditError.message);
+    if (error) throw new Error(error.message);
 
     revalidateBusinessAdmin(business.id, business.slug);
     return { ok: true, message: "Staff permissions updated.", entityId: membership.id };
@@ -469,13 +501,14 @@ export async function setBusinessMemberStatusAdminAction(
       suspended_at: status === "suspended" ? new Date().toISOString() : null,
     }).eq("id", membership.id);
     if (error) throw new Error(error.message);
+    let referralError: unknown = null;
     if (membership.role === "sales_agent" && status === "suspended") {
-      const { error: referralError } = await admin
+      const { error: couponError } = await admin
         .from("referral_codes")
         .update({ active: false })
         .eq("business_id", business.id)
         .eq("agent_id", membership.profile_id);
-      if (referralError) throw new Error(referralError.message);
+      if (couponError) referralError = couponError;
     }
     const { error: auditError } = await admin.from("audit_events").insert({
       business_id: business.id,
@@ -486,7 +519,7 @@ export async function setBusinessMemberStatusAdminAction(
       before_data: { status: membership.status, role: membership.role },
       after_data: { status, role: membership.role },
     });
-    if (auditError) throw new Error(auditError.message);
+    const secondaryError = referralError ?? auditError;
 
     revalidateBusinessAdmin(business.id, business.slug);
     return {
@@ -495,6 +528,20 @@ export async function setBusinessMemberStatusAdminAction(
         ? "Business access activated. Other memberships were not changed."
         : "Access to this business suspended. History and other memberships were preserved.",
       entityId: membership.id,
+      ...(secondaryError
+        ? actionWarning(
+            secondaryError,
+            {
+              action: "setBusinessMemberStatusAdminAction.bookkeeping",
+              fallback: "Could not finish access bookkeeping.",
+              businessId: business.id,
+              userId: user.id,
+            },
+            referralError
+              ? "Access changed, but linked coupons could not be hidden. Review them in Business setup."
+              : "Access changed, but its audit event could not be written.",
+          )
+        : {}),
     };
   } catch (error) {
     return actionError(error, "Could not update business access.");
@@ -582,7 +629,6 @@ export async function startSupportSessionAction(
       reason,
       after_data: { expires_at: expiresAt.toISOString(), access_level: "configuration" },
     });
-    if (auditError) throw new Error(auditError.message);
 
     revalidateBusinessAdmin(business.id, business.slug);
     return {
@@ -590,6 +636,18 @@ export async function startSupportSessionAction(
       message: "30-minute support session started. Open the business workspace to continue.",
       entityId: session.id,
       href: `/b/${business.slug}`,
+      ...(auditError
+        ? actionWarning(
+            auditError,
+            {
+              action: "startSupportSessionAction.audit",
+              fallback: "Could not record the audit event.",
+              businessId: business.id,
+              userId: user.id,
+            },
+            "The session started, but its audit event could not be written.",
+          )
+        : {}),
     };
   } catch (error) {
     return actionError(error, "Could not start the support session.");

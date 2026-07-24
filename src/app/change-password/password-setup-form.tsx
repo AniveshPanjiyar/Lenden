@@ -2,16 +2,26 @@
 
 import Image from "next/image";
 import { Check, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 
-import { changeOwnPasswordAction } from "@/app/actions";
+import {
+  changeOwnPasswordAction,
+  type PasswordSetupActionState,
+} from "@/app/actions";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 
 import styles from "./change-password.module.css";
 
 type PasswordSetupFormProps = {
   error: string | null;
   fullName: string;
+};
+
+const initialState: PasswordSetupActionState = {
+  ok: false,
+  message: "",
 };
 
 function SavePasswordButton({ canSubmit }: { canSubmit: boolean }) {
@@ -37,6 +47,9 @@ function Requirement({ met, children }: { met: boolean; children: React.ReactNod
 }
 
 export function PasswordSetupForm({ error, fullName }: PasswordSetupFormProps) {
+  const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [state, formAction] = useActionState(changeOwnPasswordAction, initialState);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -45,6 +58,21 @@ export function PasswordSetupForm({ error, fullName }: PasswordSetupFormProps) {
   const hasMinimumLength = password.length >= 8;
   const passwordsMatch = confirmation.length > 0 && password === confirmation;
   const canSubmit = hasMinimumLength && passwordsMatch;
+  const displayedError = !state.ok && state.message ? state.message : error;
+
+  useEffect(() => {
+    if (state.ok && !state.warning) {
+      router.replace("/");
+      router.refresh();
+      return;
+    }
+    const firstInvalidField = state.fieldErrors ? Object.keys(state.fieldErrors)[0] : null;
+    if (firstInvalidField) {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstInvalidField)}"]`)
+        ?.focus();
+    }
+  }, [router, state.fieldErrors, state.ok, state.warning]);
 
   return (
     <main className={styles.page}>
@@ -88,14 +116,24 @@ export function PasswordSetupForm({ error, fullName }: PasswordSetupFormProps) {
             <p>Hi {fullName}, replace your temporary password before continuing.</p>
           </header>
 
-          {error ? (
+          {displayedError ? (
             <div className={styles.errorAlert} role="alert">
               <span aria-hidden="true">!</span>
-              <p>{error}</p>
+              <p>
+                {displayedError}
+                {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+              </p>
             </div>
           ) : null}
+          {state.ok && state.message ? (
+            <p className={state.warning ? "form-warning" : "form-success"} role="status">
+              {state.message}
+              {state.warning ? ` ${state.warning}` : ""}
+              {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+            </p>
+          ) : null}
 
-          <form action={changeOwnPasswordAction} className={styles.form}>
+          <form ref={formRef} action={formAction} className={styles.form}>
             <label className={styles.field}>
               <span>New password</span>
               <span className={styles.inputWrap}>

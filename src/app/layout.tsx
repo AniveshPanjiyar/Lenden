@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { ActionToastProvider } from "@/components/action-toast-provider";
 import { PwaClient } from "@/components/pwa-client";
 import { QueryProvider } from "@/components/query-provider";
 import "./globals.css";
@@ -38,6 +39,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <QueryProvider>
           <PwaClient />
+          <ActionToastProvider />
           {children}
         </QueryProvider>
       </body>

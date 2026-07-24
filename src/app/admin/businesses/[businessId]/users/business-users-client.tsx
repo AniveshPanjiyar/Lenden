@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { permissionOptions } from "@/lib/constants";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { AdminBusinessInvitation, AdminBusinessMember } from "../../admin-data";
 import {
   createBusinessMemberAdminAction,
@@ -16,7 +17,19 @@ const initialState: AdminActionState = { ok: null, message: "" };
 const roleLabels = { primary_owner: "Owner", co_owner: "Manager", staff: "Staff", sales_agent: "Sales Agent" } as const;
 
 function ActionMessage({ state }: { state: AdminActionState }) {
-  return state.message ? <div className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status"><p>{state.message}</p>{state.inviteUrl ? <a href={state.inviteUrl}>Open or copy invitation link</a> : null}</div> : null;
+  return state.message ? (
+    <div
+      className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+      role={state.ok ? "status" : "alert"}
+    >
+      <p>
+        {state.message}
+        {state.warning ? ` ${state.warning}` : ""}
+        {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+      </p>
+      {state.inviteUrl ? <a href={state.inviteUrl}>Open or copy invitation link</a> : null}
+    </div>
+  ) : null;
 }
 
 function PendingInvitationCard({ invitation }: { invitation: AdminBusinessInvitation }) {
@@ -25,7 +38,7 @@ function PendingInvitationCard({ invitation }: { invitation: AdminBusinessInvita
   const expired = invitation.expired;
   return <article className="admin-user-card invited">
     <header><div><strong>{invitation.email}</strong><span>Waiting for account signup and acceptance</span></div><div className="admin-user-badges"><span>{roleLabels[invitation.role]}</span><span className={`status-pill ${expired ? "expired" : "pending"}`}>{expired ? "expired" : "pending"}</span></div></header>
-    <p className="admin-warning-text">Email: {invitation.deliveryStatus}{invitation.deliveryError ? ` · ${invitation.deliveryError}` : ""} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}</p>
+    <p className="admin-warning-text">Email: {invitation.deliveryStatus}{invitation.deliveryError ? " · Delivery failed; regenerate or copy the link" : ""} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}</p>
     <div className="admin-form-actions"><form action={resendAction}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="secondary-button" type="submit" disabled={resendPending}>{resendPending ? "Regenerating…" : "Regenerate & send"}</button></form><form action={revokeAction} onSubmit={(event) => { if (!window.confirm(`Revoke the invitation for ${invitation.email}?`)) event.preventDefault(); }}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="business-user-suspend-button" type="submit" disabled={revokePending}>{revokePending ? "Revoking…" : "Revoke"}</button></form></div>
     <ActionMessage state={resendState} /><ActionMessage state={revokeState} />
   </article>;
@@ -88,8 +101,17 @@ export default function BusinessUsersClient({ businessId, members, invitations }
   const [state, action, pending] = useActionState(createBusinessMemberAdminAction, initialState);
   const formRef = useRef<HTMLFormElement>(null);
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
-  }, [state.ok]);
+    if (state.ok) {
+      formRef.current?.reset();
+      return;
+    }
+    const firstInvalidField = state.fieldErrors ? Object.keys(state.fieldErrors)[0] : null;
+    if (firstInvalidField) {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstInvalidField)}"]`)
+        ?.focus();
+    }
+  }, [state.fieldErrors, state.ok]);
 
   return (
     <div className="admin-users-layout">

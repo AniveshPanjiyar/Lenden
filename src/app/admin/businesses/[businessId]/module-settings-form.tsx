@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import { businessLabels } from "@/lib/constants";
 import type { BusinessType } from "@/lib/types";
 import { saveBusinessModulesAdminAction, type AdminActionState } from "../actions";
@@ -23,7 +23,16 @@ export default function ModuleSettingsForm({ businessId, enabledModules }: { bus
         ))}
       </fieldset>
       <button className="primary-button" type="submit" disabled={pending}>{pending ? "Saving…" : "Save modules"}</button>
-      {state.message ? <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">{state.message}</p> : null}
+      {state.message ? (
+        <p
+          className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+          role={state.ok ? "status" : "alert"}
+        >
+          {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+        </p>
+      ) : null}
     </form>
   );
 }

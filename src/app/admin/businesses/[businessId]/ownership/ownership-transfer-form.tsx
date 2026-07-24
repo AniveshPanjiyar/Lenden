@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useState } from "react";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { AdminBusinessMember } from "../../admin-data";
 import { transferOwnershipAdminAction, type AdminActionState } from "../../actions";
 
@@ -58,7 +59,16 @@ export default function OwnershipTransferForm({
       ) : null}
       <div className="admin-warning-callout"><strong>Role change only</strong><p>The transfer is atomic. The selected active Manager becomes Owner; the previous Owner becomes Manager. No password is changed.</p></div>
       <button className="danger-button" type="submit" disabled={pending || !selectedManager}>{pending ? "Transferring…" : currentOwner ? "Transfer ownership" : "Assign ownership"}</button>
-      {state.message ? <p className={state.ok ? "admin-action-message success" : "admin-action-message error"} role="status">{state.message}</p> : null}
+      {state.message ? (
+        <p
+          className={state.ok ? state.warning ? "admin-action-message warning" : "admin-action-message success" : "admin-action-message error"}
+          role={state.ok ? "status" : "alert"}
+        >
+          {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+        </p>
+      ) : null}
       {state.fieldErrors ? <ul className="admin-field-error-list">{Object.values(state.fieldErrors).map((error) => <li key={error}>{error}</li>)}</ul> : null}
     </form>
   );

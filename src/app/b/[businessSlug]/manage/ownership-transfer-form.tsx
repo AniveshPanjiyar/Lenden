@@ -1,8 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { transferPrimaryOwnershipAction } from "./actions";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
+import {
+  transferPrimaryOwnershipAction,
+  type BusinessUserActionState,
+} from "./actions";
+
+const initialState: BusinessUserActionState = {
+  ok: false,
+  message: "",
+};
 
 function TransferOwnershipButton({ ready }: { ready: boolean }) {
   const { pending } = useFormStatus();
@@ -20,17 +30,32 @@ export function OwnershipTransferForm({
   businessName: string;
   candidates: Array<{ profileId: string; label: string; email: string }>;
 }) {
+  const router = useRouter();
+  const [state, formAction] = useActionState(transferPrimaryOwnershipAction, initialState);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
   const selected = candidates.find((candidate) => candidate.profileId === selectedProfileId);
   const ready = Boolean(selectedProfileId && confirmation === businessName);
+
+  useEffect(() => {
+    if (state.ok) router.refresh();
+    const firstInvalidField = !state.ok && state.fieldErrors
+      ? Object.keys(state.fieldErrors)[0]
+      : null;
+    if (firstInvalidField) {
+      formRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstInvalidField)}"]`)
+        ?.focus();
+    }
+  }, [router, state.fieldErrors, state.ok]);
 
   if (candidates.length === 0) {
     return <div className="ownership-transfer-empty">Add or reactivate a Manager before transferring primary ownership.</div>;
   }
 
   return (
-    <form action={transferPrimaryOwnershipAction} className="ownership-transfer-form">
+    <form ref={formRef} action={formAction} className="ownership-transfer-form">
       <div className="ownership-transfer-warning">
         <strong>This changes who controls the business</strong>
         <span>The selected Manager receives full Owner control. Your role changes to Manager immediately, and only the new Owner can transfer ownership again.</span>
@@ -65,6 +90,17 @@ export function OwnershipTransferForm({
           value={confirmation}
         />
       </label>
+      {state.message ? (
+        <p
+          className={state.ok ? state.warning ? "form-warning" : "form-success" : "form-error"}
+          role={state.ok ? "status" : "alert"}
+          aria-live={state.ok ? "polite" : "assertive"}
+        >
+          {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+        </p>
+      ) : null}
       <TransferOwnershipButton ready={ready} />
     </form>
   );

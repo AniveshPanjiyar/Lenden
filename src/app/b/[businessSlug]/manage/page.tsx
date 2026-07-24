@@ -1,28 +1,20 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { FocusedPageHeader } from "@/components/focused-page-header";
-import { businessLabels } from "@/lib/constants";
 import { safeReturnPath, withReturnTo } from "@/lib/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { invitationState } from "@/lib/invitations";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContext } from "@/lib/tenancy";
-import type { BusinessMembership, ChangeRequest, Course, Profile, ReferralCode, Room } from "@/lib/types";
-import type { BusinessType } from "@/lib/types";
-import {
-  saveBusinessModulesAction,
-} from "./actions";
+import type { BusinessMembership, BusinessType, ChangeRequest, Course, Profile, ReferralCode, Room } from "@/lib/types";
 import BusinessUsersSettings from "./business-users-settings";
-import { BusinessSetupSettings, ChangeApprovalsSettings } from "./business-configuration-settings";
+import {
+  BusinessModulesSettings,
+  BusinessSetupSettings,
+  ChangeApprovalsSettings,
+} from "./business-configuration-settings";
 import { OwnershipTransferForm } from "./ownership-transfer-form";
 
 type ManageTab = "people" | "setup" | "modules" | "approvals" | "ownership";
-
-const moduleDescriptions: Record<BusinessType, string> = {
-  library: "Library subscriptions, collections, and student records",
-  guest_house: "Guest-house residents, rooms, and collections",
-  course: "Course students, subscriptions, and collections",
-  general: "General-purpose payments and collections",
-};
 
 export default async function BusinessManagePage({
   params,
@@ -175,24 +167,7 @@ export default async function BusinessManagePage({
       ) : null}
 
       {activeTab === "modules" && canManageBusinessSettings ? (
-        <section className="admin-panel business-modules-panel">
-          <div className="business-users-heading">
-            <div><p className="eyebrow">Business modules</p><h2>Choose how this business operates</h2><p>Disabling a module blocks new activity while preserving historical records and existing Staff grants.</p></div>
-            <span className="status-pill active">{enabledModuleList.length} enabled</span>
-          </div>
-          <form action={saveBusinessModulesAction} className="business-module-config-form">
-            <div className="business-module-config-grid">
-              {(["library", "guest_house", "course", "general"] as BusinessType[]).map((module) => (
-                <label key={module}>
-                  <input type="checkbox" name="modules" value={module} defaultChecked={enabledModules.has(module)} />
-                  <span><strong>{businessLabels[module]}</strong><small>{moduleDescriptions[module]}</small></span>
-                </label>
-              ))}
-            </div>
-            <div className="business-module-preservation-note"><strong>Safe to change</strong><span>Existing payments, students, and Staff grants are never deleted. Preserved Staff access returns when a module is enabled again.</span></div>
-            <button className="primary-button" type="submit">Save business modules</button>
-          </form>
-        </section>
+        <BusinessModulesSettings enabledModules={enabledModuleList} />
       ) : null}
 
       {activeTab === "approvals" && canReviewChangeRequests ? (

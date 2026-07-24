@@ -2,11 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { actionFailure, actionWarning, type UserActionStateBase } from "@/lib/action-errors";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { requireIdentity } from "@/lib/tenancy";
 import type { BusinessType } from "@/lib/types";
 
-export type SettingsActionState = { ok: boolean | null; message: string };
+export type SettingsActionState = UserActionStateBase;
 
 const allowedModules = new Set<BusinessType>(["library", "guest_house", "course", "general"]);
 
@@ -16,15 +17,31 @@ function value(formData: FormData, key: string) {
 }
 
 function failure(error: unknown, fallback: string): SettingsActionState {
-  return {
-    ok: false,
-    message: error instanceof Error ? error.message : fallback,
-  };
+  return actionFailure<SettingsActionState>(error, {
+    action: fallback,
+    fallback,
+  });
 }
 
-function refreshSettings() {
-  revalidatePath("/settings");
-  revalidatePath("/account");
+function refreshSettings(...extraPaths: string[]) {
+  try {
+    revalidatePath("/settings");
+    revalidatePath("/account");
+    extraPaths.forEach((path) => revalidatePath(path));
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
+function refreshActionWarning(error: unknown, action: string) {
+  return error
+    ? actionWarning(
+        error,
+        { action: `${action}.revalidate`, fallback: "Could not refresh saved data." },
+        "The change was saved, but refreshed data may take a moment to appear.",
+      )
+    : {};
 }
 
 export async function updateUserProfileAction(
@@ -34,16 +51,30 @@ export async function updateUserProfileAction(
   try {
     const { user, profile } = await requireIdentity();
     const fullName = value(formData, "full_name");
-    if (fullName.length < 2) return { ok: false, message: "Enter your full name." };
+    if (fullName.length < 2) {
+      return {
+        ok: false,
+        message: "Enter your full name.",
+        fieldErrors: { full_name: "Enter at least 2 characters." },
+      };
+    }
 
     const photo = formData.get("photo");
     let avatarPath = profile.avatar_url;
     if (photo instanceof File && photo.size > 0) {
       if (!photo.type.startsWith("image/")) {
-        return { ok: false, message: "Choose an image file for your profile photo." };
+        return {
+          ok: false,
+          message: "Choose an image file for your profile photo.",
+          fieldErrors: { photo: "Choose an image file." },
+        };
       }
       if (photo.size > 3 * 1024 * 1024) {
-        return { ok: false, message: "Profile photo must be 3 MB or smaller." };
+        return {
+          ok: false,
+          message: "Profile photo must be 3 MB or smaller.",
+          fieldErrors: { photo: "Choose an image no larger than 3 MB." },
+        };
       }
       const safeName = photo.name.replace(/[^a-zA-Z0-9._-]/g, "-");
       avatarPath = `users/${user.id}/${crypto.randomUUID()}-${safeName}`;
@@ -63,9 +94,12 @@ export async function updateUserProfileAction(
       .update({ full_name: fullName, avatar_url: avatarPath })
       .eq("id", user.id);
     if (error) throw new Error(error.message);
-    refreshSettings();
-    revalidatePath("/");
-    return { ok: true, message: "Profile updated everywhere you use Lenden." };
+    const refreshError = refreshSettings("/");
+    return {
+      ok: true,
+      message: "Profile updated everywhere you use Lenden.",
+      ...refreshActionWarning(refreshError, "updateUserProfileAction"),
+    };
   } catch (error) {
     return failure(error, "Could not update profile.");
   }
@@ -79,17 +113,46 @@ export async function setUserPasswordAction(
     const { user } = await requireIdentity();
     const password = value(formData, "password");
     const confirmation = value(formData, "password_confirmation");
-    if (password.length < 8) return { ok: false, message: "Use at least 8 characters." };
-    if (password !== confirmation) return { ok: false, message: "Passwords do not match." };
+    if (password.length < 8) {
+      return {
+        ok: false,
+        message: "Use at least 8 characters.",
+        fieldErrors: { password: "Use at least 8 characters." },
+      };
+    }
+    if (password !== confirmation) {
+      return {
+        ok: false,
+        message: "Passwords do not match.",
+        fieldErrors: { password_confirmation: "Enter the same password again." },
+      };
+    }
     const client = await createClient();
     const { error } = await client.auth.updateUser({ password });
     if (error) throw new Error(error.message);
-    await createAdminClient()
+    const { error: profileError } = await createAdminClient()
       .from("profiles")
       .update({ must_change_password: false })
       .eq("id", user.id);
-    refreshSettings();
-    return { ok: true, message: "Your password has been updated." };
+    const refreshError = refreshSettings();
+    const secondaryError = profileError ?? refreshError;
+    return {
+      ok: true,
+      message: "Your password has been updated.",
+      ...(secondaryError
+        ? actionWarning(
+            secondaryError,
+            {
+              action: "setUserPasswordAction.bookkeeping",
+              fallback: "Could not finish password bookkeeping.",
+              userId: user.id,
+            },
+            profileError
+              ? "The password changed, but account setup could not be marked complete. Try again."
+              : "The password changed, but refreshed data may take a moment to appear.",
+          )
+        : {}),
+    };
   } catch (error) {
     return failure(error, "Could not update password.");
   }
@@ -108,9 +171,15 @@ export async function requestBusinessCreationAction(
         typeof entry === "string" && allowedModules.has(entry as BusinessType)
       ),
     ))];
-    if (requestedName.length < 2) return { ok: false, message: "Enter a business name." };
-    if (modules.length === 0) return { ok: false, message: "Choose at least one module." };
-    if (note.length > 1000) return { ok: false, message: "Keep the note under 1,000 characters." };
+    if (requestedName.length < 2) {
+      return { ok: false, message: "Enter a business name.", fieldErrors: { requested_name: "Enter at least 2 characters." } };
+    }
+    if (modules.length === 0) {
+      return { ok: false, message: "Choose at least one module.", fieldErrors: { modules: "Select at least one module." } };
+    }
+    if (note.length > 1000) {
+      return { ok: false, message: "Keep the note under 1,000 characters.", fieldErrors: { note: "Use 1,000 characters or fewer." } };
+    }
 
     const client = await createClient();
     const { error } = await client.from("business_creation_requests").insert({
@@ -129,45 +198,84 @@ export async function requestBusinessCreationAction(
       }
       throw new Error(error.message);
     }
-    refreshSettings();
-    revalidatePath("/admin/businesses/requests");
-    return { ok: true, message: "Business request submitted for platform review." };
+    const refreshError = refreshSettings("/admin/businesses/requests");
+    return {
+      ok: true,
+      message: "Business request submitted for platform review.",
+      ...refreshActionWarning(refreshError, "requestBusinessCreationAction"),
+    };
   } catch (error) {
     return failure(error, "Could not submit the business request.");
   }
 }
 
-export async function cancelBusinessCreationRequestAction(formData: FormData) {
-  await requireIdentity();
-  const requestId = z.uuid().parse(value(formData, "request_id"));
-  const client = await createClient();
-  const { error } = await client.rpc("cancel_business_creation_request", {
-    target_request_id: requestId,
-  });
-  if (error) throw new Error(error.message);
-  refreshSettings();
-  revalidatePath("/admin/businesses/requests");
+export async function cancelBusinessCreationRequestAction(
+  _state: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  try {
+    await requireIdentity();
+    const requestIdResult = z.uuid().safeParse(value(formData, "request_id"));
+    if (!requestIdResult.success) return { ok: false, message: "This business request is invalid." };
+    const client = await createClient();
+    const { error } = await client.rpc("cancel_business_creation_request", {
+      target_request_id: requestIdResult.data,
+    });
+    if (error) throw error;
+    const refreshError = refreshSettings("/admin/businesses/requests");
+    return {
+      ok: true,
+      message: "Business request cancelled.",
+      ...refreshActionWarning(refreshError, "cancelBusinessCreationRequestAction"),
+    };
+  } catch (error) {
+    return failure(error, "Could not cancel the business request.");
+  }
 }
 
-export async function acceptBusinessInvitationAction(formData: FormData) {
-  await requireIdentity();
-  const invitationId = z.uuid().parse(value(formData, "invitation_id"));
-  const client = await createClient();
-  const { error } = await client.rpc("accept_business_invitation", {
-    target_invitation_id: invitationId,
-  });
-  if (error) throw new Error(error.message);
-  refreshSettings();
-  revalidatePath("/");
+export async function acceptBusinessInvitationAction(
+  _state: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  try {
+    await requireIdentity();
+    const invitationIdResult = z.uuid().safeParse(value(formData, "invitation_id"));
+    if (!invitationIdResult.success) return { ok: false, message: "This invitation is invalid." };
+    const client = await createClient();
+    const { error } = await client.rpc("accept_business_invitation", {
+      target_invitation_id: invitationIdResult.data,
+    });
+    if (error) throw error;
+    const refreshError = refreshSettings("/");
+    return {
+      ok: true,
+      message: "Business invitation accepted.",
+      ...refreshActionWarning(refreshError, "acceptBusinessInvitationAction"),
+    };
+  } catch (error) {
+    return failure(error, "Could not accept the business invitation.");
+  }
 }
 
-export async function declineBusinessInvitationAction(formData: FormData) {
-  await requireIdentity();
-  const invitationId = z.uuid().parse(value(formData, "invitation_id"));
-  const client = await createClient();
-  const { error } = await client.rpc("decline_business_invitation", {
-    target_invitation_id: invitationId,
-  });
-  if (error) throw new Error(error.message);
-  refreshSettings();
+export async function declineBusinessInvitationAction(
+  _state: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
+  try {
+    await requireIdentity();
+    const invitationIdResult = z.uuid().safeParse(value(formData, "invitation_id"));
+    const client = await createClient();
+    const { error } = await client.rpc("decline_business_invitation", {
+      target_invitation_id: invitationIdResult.data,
+    });
+    if (error) throw error;
+    const refreshError = refreshSettings();
+    return {
+      ok: true,
+      message: "Business invitation declined.",
+      ...refreshActionWarning(refreshError, "declineBusinessInvitationAction"),
+    };
+  } catch (error) {
+    return failure(error, "Could not decline the business invitation.");
+  }
 }

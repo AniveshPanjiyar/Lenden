@@ -18,15 +18,17 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  useActionState,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { logoutAction } from "@/app/actions";
+import { normalizeActionError } from "@/lib/action-errors";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { businessLabels } from "@/lib/constants";
 import { withReturnTo } from "@/lib/navigation";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type {
   BusinessRole,
   SettingsSection,
@@ -43,6 +45,10 @@ import {
 } from "./actions";
 
 const initialState: SettingsActionState = { ok: null, message: "" };
+type SettingsStateAction = (
+  state: SettingsActionState,
+  formData: FormData,
+) => Promise<SettingsActionState>;
 const sections: Array<{
   id: SettingsSection;
   label: string;
@@ -103,12 +109,47 @@ function initials(name: string) {
 function ActionMessage({ state }: { state: SettingsActionState }) {
   return state.message ? (
     <p
-      className={state.ok ? "form-success" : "form-error"}
-      role="status"
+      className={state.ok ? state.warning ? "form-warning" : "form-success" : "form-error"}
+      role={state.ok ? "status" : "alert"}
     >
       {state.message}
+      {state.warning ? ` ${state.warning}` : ""}
+      {state.errorId ? ` Reference: ${state.errorId}.` : ""}
     </p>
   ) : null;
+}
+
+function SettingsInlineAction({
+  action,
+  fields,
+  label,
+  pendingLabel,
+  buttonClassName,
+}: {
+  action: SettingsStateAction;
+  fields: Record<string, string>;
+  label: string;
+  pendingLabel: string;
+  buttonClassName: string;
+}) {
+  const router = useRouter();
+  const [state, formAction, pending] = useActionState(action, initialState);
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [router, state.ok]);
+  return (
+    <div>
+      <form action={formAction}>
+        {Object.entries(fields).map(([name, fieldValue]) => (
+          <input key={name} type="hidden" name={name} value={fieldValue} />
+        ))}
+        <button className={buttonClassName} type="submit" disabled={pending}>
+          {pending ? pendingLabel : label}
+        </button>
+      </form>
+      <ActionMessage state={state} />
+    </div>
+  );
 }
 
 function SettingsNav({
@@ -156,6 +197,8 @@ function ProfileSection({
     initialState,
   );
   const [photoPreview, setPhotoPreview] = useState(payload.profile.avatarUrl);
+  const profileFormRef = useRef<HTMLFormElement>(null);
+  const passwordFormRef = useRef<HTMLFormElement>(null);
   const [linkMessage, setLinkMessage] = useState("");
   const [linkPending, setLinkPending] = useState(false);
   const providers = useMemo(
@@ -166,10 +209,29 @@ function ProfileSection({
   const hasGoogle = providers.has("google");
 
   useEffect(() => {
-    if (!profileState.ok) return;
-    void queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
-    router.refresh();
+    if (profileState.ok) {
+      void queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      router.refresh();
+      return;
+    }
+    const firstField = profileState.fieldErrors ? Object.keys(profileState.fieldErrors)[0] : null;
+    if (firstField) {
+      profileFormRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstField)}"]`)
+        ?.focus();
+    }
   }, [profileState, queryClient, router]);
+
+  useEffect(() => {
+    const firstField = !passwordState.ok && passwordState.fieldErrors
+      ? Object.keys(passwordState.fieldErrors)[0]
+      : null;
+    if (firstField) {
+      passwordFormRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstField)}"]`)
+        ?.focus();
+    }
+  }, [passwordState.fieldErrors, passwordState.ok]);
 
   async function connectGoogle() {
     setLinkPending(true);
@@ -183,7 +245,11 @@ function ProfileSection({
       },
     });
     if (error) {
-      setLinkMessage(error.message);
+      const normalized = normalizeActionError(error, {
+        action: "connectGoogleIdentity",
+        fallback: "Could not connect Google.",
+      });
+      setLinkMessage(`${normalized.message}${normalized.errorId ? ` Reference: ${normalized.errorId}.` : ""}`);
       setLinkPending(false);
       return;
     }
@@ -212,7 +278,7 @@ function ProfileSection({
             )}
           </span>
         </div>
-        <form action={profileAction} className="form-grid settings-profile-form">
+        <form ref={profileFormRef} action={profileAction} className="form-grid settings-profile-form">
           <label>
             Full name
             <input
@@ -293,7 +359,7 @@ function ProfileSection({
         </div>
         {linkMessage ? <p className="form-error" role="status">{linkMessage}</p> : null}
 
-        <form action={passwordAction} className="form-grid settings-password-form">
+        <form ref={passwordFormRef} action={passwordAction} className="form-grid settings-password-form">
           <div className="full-span settings-subheading">
             <LockKeyhole size={20} />
             <div>
@@ -442,14 +508,20 @@ function BusinessesSection({
                 </div>
                 {invitation.state === "pending" ? (
                   <div className="account-row-actions">
-                    <form action={acceptBusinessInvitationAction}>
-                      <input type="hidden" name="invitation_id" value={invitation.id} />
-                      <button className="primary-button" type="submit">Accept</button>
-                    </form>
-                    <form action={declineBusinessInvitationAction}>
-                      <input type="hidden" name="invitation_id" value={invitation.id} />
-                      <button className="secondary-button" type="submit">Decline</button>
-                    </form>
+                    <SettingsInlineAction
+                      action={acceptBusinessInvitationAction}
+                      fields={{ invitation_id: invitation.id }}
+                      label="Accept"
+                      pendingLabel="Accepting…"
+                      buttonClassName="primary-button"
+                    />
+                    <SettingsInlineAction
+                      action={declineBusinessInvitationAction}
+                      fields={{ invitation_id: invitation.id }}
+                      label="Decline"
+                      pendingLabel="Declining…"
+                      buttonClassName="secondary-button"
+                    />
                   </div>
                 ) : null}
               </article>
@@ -486,6 +558,17 @@ function ContactSection({
     requestBusinessCreationAction,
     initialState,
   );
+  const requestFormRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const firstField = !requestState.ok && requestState.fieldErrors
+      ? Object.keys(requestState.fieldErrors)[0]
+      : null;
+    if (firstField) {
+      requestFormRef.current
+        ?.querySelector<HTMLElement>(`[name="${CSS.escape(firstField)}"]`)
+        ?.focus();
+    }
+  }, [requestState.fieldErrors, requestState.ok]);
   return (
     <div className="settings-section-stack">
       <section className="settings-card settings-contact-card">
@@ -509,7 +592,7 @@ function ContactSection({
           </div>
           <Building2 size={28} />
         </div>
-        <form action={requestAction} className="form-grid">
+        <form ref={requestFormRef} action={requestAction} className="form-grid">
           <label>
             Business name
             <input name="requested_name" minLength={2} required />
@@ -558,10 +641,13 @@ function ContactSection({
                     <Link href={`/b/${request.businessSlug}`}>Open business</Link>
                   ) : null}
                   {request.status === "pending" ? (
-                    <form action={cancelBusinessCreationRequestAction}>
-                      <input type="hidden" name="request_id" value={request.id} />
-                      <button className="admin-link-button" type="submit">Cancel request</button>
-                    </form>
+                    <SettingsInlineAction
+                      action={cancelBusinessCreationRequestAction}
+                      fields={{ request_id: request.id }}
+                      label="Cancel request"
+                      pendingLabel="Cancelling…"
+                      buttonClassName="admin-link-button"
+                    />
                   ) : null}
                 </div>
               </article>

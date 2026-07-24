@@ -744,6 +744,8 @@
 .business-user-action-message { max-width: 100%; margin: 0; border-radius: .65rem; padding: .45rem .6rem; font-size: .75rem; font-weight: 700; line-height: 1.35; }
 .business-user-action-message.success { background: #e6f6ec; color: #176b3a; }
 .business-user-action-message.error { background: #fff1ee; color: #9b352b; }
+.form-warning,
+.business-user-action-message.warning { background: #fff7db; color: #7a5510; }
 .business-user-owner-note { max-width: 19rem; color: var(--color-on-surface-variant); font-size: .75rem; font-weight: 700; line-height: 1.35; }
 
 /* ── Business people and access ── */
@@ -1073,6 +1075,7 @@ button.business-person-open { cursor: pointer; }
 .admin-action-stack.compact { display: contents; }
 .admin-action-message { width: fit-content; max-width: 100%; margin: 0; border-radius: 9px; padding: .55rem .7rem; font-size: .76rem; font-weight: 750; line-height: 1.4; }
 .admin-action-message.success { background: #e6f6ec; color: #176b3a; }
+.admin-action-message.warning { background: #fff8df; color: #8a5a00; }
 .admin-action-message.status { background: #edf4ff; color: #285a8f; }
 .admin-action-message.error { background: #fff1ee; color: #9b352b; }
 .admin-action-message ul { margin: .4rem 0 0; padding-left: 1.1rem; }
@@ -2489,6 +2492,17 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   color: var(--bad);
 }
 
+.toast-warning {
+  background: #fff4cf;
+  border-color: #e6c661;
+  color: #6f4a00;
+}
+
+.business-setup-delete.restore {
+  color: #176b3a;
+  background: #e6f6ec;
+}
+
 .toast-info {
   background: rgba(82, 111, 159, 0.12);
   border-color: rgba(82, 111, 159, 0.2);
@@ -3893,6 +3907,64 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   border-radius: 18px;
   padding: 16px;
   min-width: 0;
+}
+
+.transaction-journey-lanes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.transaction-journey.has-lanes .transaction-journey-lanes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.transaction-journey-lane {
+  min-width: 0;
+}
+
+.transaction-journey-lane.cash,
+.transaction-journey-lane.online {
+  border: 1px solid rgba(49, 66, 57, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 12px;
+}
+
+.transaction-journey-lane.cash {
+  border-color: rgba(28, 122, 65, 0.3);
+  background: rgba(221, 248, 228, 0.66);
+}
+
+.transaction-journey-lane.online {
+  border-color: rgba(30, 104, 196, 0.3);
+  background: rgba(226, 239, 255, 0.72);
+}
+
+.transaction-journey-lane > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.transaction-journey-lane > header span,
+.transaction-journey-lane > header strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.transaction-journey-lane.cash > header {
+  color: #155d33;
+}
+
+.transaction-journey-lane.online > header {
+  color: #185aa5;
 }
 
 .transaction-journey.approved,
@@ -8930,6 +9002,124 @@ option {
   justify-self: center;
 }
 
+.student-subscription-history-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(49, 66, 57, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  padding: 14px;
+}
+
+.student-subscription-payment-count {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(47, 111, 94, 0.1);
+  padding: 5px 9px;
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.student-history-heading small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.student-subscription-transaction-tree {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid rgba(49, 66, 57, 0.1);
+  padding-top: 12px;
+}
+
+.student-subscription-transaction {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin-left: 7px;
+  border-left: 2px solid rgba(47, 111, 94, 0.2);
+  padding: 0 0 16px 25px;
+}
+
+.student-subscription-transaction:last-child {
+  border-left-color: transparent;
+  padding-bottom: 0;
+}
+
+.student-subscription-transaction > .student-history-marker {
+  top: 1px;
+  left: -8px;
+}
+
+.student-subscription-transaction.compact {
+  margin: 0;
+  border: 1px solid rgba(49, 66, 57, 0.1);
+  border-radius: 11px;
+  background: rgba(244, 240, 232, 0.48);
+  padding: 11px;
+}
+
+.student-subscription-transaction.cancelled {
+  opacity: 0.72;
+}
+
+.student-subscription-transaction-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.student-subscription-transaction-main strong {
+  color: var(--foreground);
+  font-family: var(--font-headline);
+  font-size: 16px;
+}
+
+.student-subscription-transaction-main p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.student-subscription-transaction-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.student-subscription-transaction-mode > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: rgba(49, 66, 57, 0.07);
+  padding: 5px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.student-subscription-transaction-mode > .cash {
+  background: rgba(28, 122, 65, 0.1);
+  color: #155d33;
+}
+
+.student-subscription-transaction-mode > .online {
+  background: rgba(30, 104, 196, 0.1);
+  color: #185aa5;
+}
+
+.student-subscription-cancel-note {
+  color: var(--error);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .student-subscription-step-intro {
   gap: 10px;
   border-bottom: 1px solid var(--line);
@@ -10068,5 +10258,27 @@ option {
 
   .student-drawer-close {
     display: none;
+  }
+
+  .transaction-journey.has-lanes .transaction-journey-lanes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .transaction-journey-lane.cash,
+  .transaction-journey-lane.online {
+    padding: 10px;
+  }
+
+  .student-history-money-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-subscription-transaction-main {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .student-subscription-transaction-main .status-chip {
+    align-self: flex-start;
   }
 }

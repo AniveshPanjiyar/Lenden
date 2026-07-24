@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
 import { resendSignupConfirmationAction, type AuthActionState } from "@/app/auth/actions";
+import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 
 const initialState: AuthActionState = { ok: null, message: "" };
 
@@ -35,8 +35,10 @@ export default function ResendConfirmationForm({
         </label>
       )}
       {state.message ? (
-        <p className={state.ok ? "form-success" : "form-error"} role={state.ok ? "status" : "alert"} aria-live="polite">
+        <p className={state.ok ? state.warning ? "form-warning" : "form-success" : "form-error"} role={state.ok ? "status" : "alert"} aria-live="polite">
           {state.message}
+          {state.warning ? ` ${state.warning}` : ""}
+          {state.errorId ? ` Reference: ${state.errorId}.` : ""}
         </p>
       ) : null}
       <button className={compact ? "secondary-button" : "primary-button"} type="submit" disabled={pending}>
