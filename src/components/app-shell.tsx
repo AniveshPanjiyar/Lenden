@@ -10279,8 +10279,7 @@ function ClosingView({
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
         if (summary.profile.membership_role === "co_owner") return true;
-        if (summary.profile.membership_role !== "staff") return false;
-        return (closingBusinessTypesForProfile(summary.profile)?.size ?? 0) > 0;
+        return summary.profile.membership_role === "staff";
       }
       return summary.profile.id === profile.id;
     })
@@ -10457,13 +10456,7 @@ function ClosingView({
             const receivableBusinessTypes = [...new Set(
               summary.profile.membership_role === "staff"
                 ? staffUnitAssignments
-                    .filter((assignment) =>
-                      assignment.staff_profile_id === summary.profile.id
-                      && (
-                        profile.membership_role !== "co_owner"
-                        || viewerManagerBusinessTypes.has(assignment.business_type)
-                      )
-                    )
+                    .filter((assignment) => assignment.staff_profile_id === summary.profile.id)
                     .map((assignment) => assignment.business_type)
                 : summary.profile.membership_role === "co_owner"
                   ? managerUnitScopes

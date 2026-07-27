@@ -69,6 +69,10 @@ function isNetworkError(message: string) {
   return /fetch failed|failed to fetch|network|connection (?:closed|refused|reset)|econn|enotfound|timeout|timed out|socket/i.test(message);
 }
 
+function isBusinessContextError(message: string) {
+  return /authorized business context|business context is required/i.test(message);
+}
+
 function isSchemaError(code: string | null, message: string) {
   return (
     code === "PGRST204" ||
@@ -123,6 +127,12 @@ export function normalizeActionError(
   if (isNetworkError(message)) {
     return {
       message: "Could not reach Lenden. Check your connection and try again.",
+    };
+  }
+
+  if (isBusinessContextError(message)) {
+    return {
+      message: "Your business session could not be verified. Refresh the page and try again.",
     };
   }
 

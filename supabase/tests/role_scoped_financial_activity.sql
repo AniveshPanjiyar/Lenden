@@ -182,7 +182,8 @@ insert into public.ledger_entries (
 set local role authenticated;
 select set_config('request.headers', '{"x-lenden-business-id":"92000000-0000-4000-8000-000000000001"}', true);
 
--- Manager A sees Library and its assigned team only.
+-- Manager A reviews Library activity only, but Closing cash custody includes
+-- every Staff member in the same business.
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000002', true);
 do $$
 declare
@@ -222,13 +223,13 @@ begin
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 3
+  ) <> 4
     or exists (
       select 1
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000001'
     ) then
-    raise exception 'Manager A Closing did not contain the Managers and Staff A';
+    raise exception 'Manager A Closing did not contain every same-business Staff member';
   end if;
   if (
     select closing
@@ -239,18 +240,18 @@ begin
       select closing
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000004'
-    ) <> 100
-    or exists (
-      select 1
+    ) <> 35
+    or (
+      select closing
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
-    )
+    ) <> 45
     or (
       select closing
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000003'
     ) <> 0 then
-    raise exception 'Manager A Closing leaked a balance outside Library';
+    raise exception 'Manager A Closing did not show business-wide Staff cash';
   end if;
   if (
     select count(*)
@@ -308,7 +309,7 @@ begin
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
     ) then
-    raise exception 'Manager B Closing did not contain both assigned Staff members';
+    raise exception 'Manager B Closing did not contain every same-business Staff member';
   end if;
   if (
     select closing

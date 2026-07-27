@@ -864,6 +864,7 @@ async function uploadLibraryStudentAadharPhoto(
 async function ensureLedgerEntry(
   admin: SupabaseAdminClient,
   params: {
+    businessId?: string;
     accountProfileId: string | null | undefined;
     businessType: BusinessType;
     amount: number;
@@ -875,7 +876,7 @@ async function ensureLedgerEntry(
   },
 ) {
   if (!params.accountProfileId) return;
-  const { error } = await admin.from("ledger_entries").insert({
+  const payload: Record<string, unknown> = {
     account_profile_id: params.accountProfileId,
     business_type: params.businessType,
     amount: params.amount,
@@ -884,7 +885,9 @@ async function ensureLedgerEntry(
     source_id: params.sourceId,
     description: params.description,
     created_by: params.createdBy,
-  });
+  };
+  if (params.businessId) payload.business_id = params.businessId;
+  const { error } = await admin.from("ledger_entries").insert(payload);
   if (isDuplicateError(error)) return;
   if (error) throw new Error(error.message);
 }
@@ -1049,13 +1052,15 @@ async function existingByClientRequest<T>(
   actorId: string,
   requestKey: string,
   columns = "*",
+  businessId?: string,
 ) {
-  const response = await admin
+  let query = admin
     .from(table)
     .select(columns)
     .eq(actorColumn, actorId)
-    .eq("client_request_id", requestKey)
-    .maybeSingle();
+    .eq("client_request_id", requestKey);
+  if (businessId) query = query.eq("business_id", businessId);
+  const response = await query.maybeSingle();
   if (isMissingClientRequestSchemaError(response.error)) return null;
   if (response.error) throw new Error(response.error.message);
   return typedData<T>(response);
@@ -3593,7 +3598,7 @@ const handlers = {
     return ok("Transfer updated.");
   }),
 
-  settleCash: withErrors("Could not settle cash.", async (formData, { admin, profile, idempotencyKey }) => {
+  settleCash: withErrors("Could not settle cash.", async (formData, { admin, authAdmin, profile, idempotencyKey }) => {
     requireBusinessOwner(profile.businessRole);
 
     const direction = (asString(formData, "settlement_direction") ?? "received_from_user") as SettlementDirection;
@@ -3619,7 +3624,7 @@ const handlers = {
       return fail("Choose whether money was received or sent.");
     }
 
-    const selectedProfile = await businessMember(admin, profile.businessId, counterpartyProfileId);
+    const selectedProfile = await businessMember(authAdmin, profile.businessId, counterpartyProfileId);
     if (!selectedProfile?.active || selectedProfile.status !== "active") {
       return fail("Choose an active user.");
     }
@@ -3670,17 +3675,19 @@ const handlers = {
         to_profile_id: string | null;
         business_type: BusinessType | null;
       }>(
-        admin,
+        authAdmin,
         "money_movements",
         "requested_by",
         profile.id,
         movementRequestKey,
         "id,type,amount,from_profile_id,to_profile_id,business_type",
+        profile.businessId,
       );
       const postedAmount = existingMovement ? Number(existingMovement.amount) : allocatedAmount;
       const postedBusinessType = existingMovement?.business_type ?? allocatedBusinessType;
       if (existingMovement) {
-        await ensureLedgerEntry(admin, {
+        await ensureLedgerEntry(authAdmin, {
+          businessId: profile.businessId,
           accountProfileId: existingMovement.from_profile_id,
           businessType: postedBusinessType,
           amount: -postedAmount,
@@ -3690,7 +3697,8 @@ const handlers = {
           description: `Cash sent to ${direction === "received_from_user" ? profile.full_name : selectedProfile.full_name}`,
           createdBy: profile.id,
         });
-        await ensureLedgerEntry(admin, {
+        await ensureLedgerEntry(authAdmin, {
+          businessId: profile.businessId,
           accountProfileId: existingMovement.to_profile_id,
           businessType: postedBusinessType,
           amount: postedAmount,
@@ -3705,7 +3713,7 @@ const handlers = {
 
       if (checkSenderBalance) {
         const senderBalance = await profileCashBalanceAt(
-          admin,
+          authAdmin,
           profile.businessId,
           fromProfileId,
           allocatedBusinessType,
@@ -3717,9 +3725,10 @@ const handlers = {
         }
       }
 
-      const movementResult = await admin
+      const movementResult = await authAdmin
         .from("money_movements")
         .insert({
+          business_id: profile.businessId,
           type: movementType,
           mode: "cash",
           amount: allocatedAmount,
@@ -3738,7 +3747,8 @@ const handlers = {
       const movement = typedData<{ id: string }>(movementResult);
       if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not settle cash.");
 
-      await ensureLedgerEntry(admin, {
+      await ensureLedgerEntry(authAdmin, {
+        businessId: profile.businessId,
         accountProfileId: fromProfileId,
         businessType: allocatedBusinessType,
         amount: -allocatedAmount,
@@ -3748,7 +3758,8 @@ const handlers = {
         description: `Cash sent to ${direction === "received_from_user" ? profile.full_name : selectedProfile.full_name}`,
         createdBy: profile.id,
       });
-      await ensureLedgerEntry(admin, {
+      await ensureLedgerEntry(authAdmin, {
+        businessId: profile.businessId,
         accountProfileId: toProfileId,
         businessType: allocatedBusinessType,
         amount: allocatedAmount,
@@ -3764,64 +3775,20 @@ const handlers = {
     if (autoAllocateBusinessUnits) {
       let eligibleBusinessTypes: BusinessType[] = [];
       if (profile.businessRole === "co_owner" && selectedProfile.role === "staff") {
-        const [managerScopesResponse, staffAssignmentsResponse] = await Promise.all([
-          admin
-            .from("business_manager_unit_scopes")
-            .select("business_type")
-            .eq("business_id", profile.businessId)
-            .eq("manager_profile_id", profile.id),
-          admin
-            .from("business_staff_unit_assignments")
-            .select("business_type")
-            .eq("business_id", profile.businessId)
-            .eq("staff_profile_id", selectedProfile.id),
-        ]);
-        if (managerScopesResponse.error) throw new Error(managerScopesResponse.error.message);
-        if (staffAssignmentsResponse.error) throw new Error(staffAssignmentsResponse.error.message);
-        const managerTypes = new Set(
-          typedDataArray<{ business_type: BusinessType }>(managerScopesResponse)
-            .map((scope) => scope.business_type),
-        );
-        const staffTypes = new Set(
-          typedDataArray<{ business_type: BusinessType }>(staffAssignmentsResponse)
-            .map((assignment) => assignment.business_type),
-        );
-        eligibleBusinessTypes = (Object.keys(businessPermissions) as BusinessType[])
-          .filter((type) => managerTypes.has(type) && staffTypes.has(type));
+        eligibleBusinessTypes = Object.keys(businessPermissions) as BusinessType[];
       } else if (profile.businessRole === "primary_owner" && ["co_owner", "staff"].includes(selectedProfile.role)) {
-        const unitAccessResponse = selectedProfile.role === "co_owner"
-          ? await admin
-              .from("business_manager_unit_scopes")
-              .select("business_type")
-              .eq("business_id", profile.businessId)
-              .eq("manager_profile_id", selectedProfile.id)
-          : await admin
-              .from("business_staff_unit_assignments")
-              .select("business_type")
-              .eq("business_id", profile.businessId)
-              .eq("staff_profile_id", selectedProfile.id);
-        if (unitAccessResponse.error) throw new Error(unitAccessResponse.error.message);
-        const memberTypes = new Set(
-          typedDataArray<{ business_type: BusinessType }>(unitAccessResponse)
-            .map((scope) => scope.business_type),
-        );
-        eligibleBusinessTypes = (Object.keys(businessPermissions) as BusinessType[])
-          .filter((type) => memberTypes.has(type));
+        eligibleBusinessTypes = Object.keys(businessPermissions) as BusinessType[];
       }
 
       if (eligibleBusinessTypes.length === 0) {
-        return fail(
-          profile.businessRole === "co_owner"
-            ? "This Staff member does not share a business unit with you."
-            : `This ${selectedProfile.role === "staff" ? "Staff member" : "Manager"} has no assigned business unit with available cash.`,
-        );
+        return fail("This business member has no cash balance available to receive.");
       }
 
       const balances = await Promise.all(
         eligibleBusinessTypes.map(async (type) => ({
           businessType: type,
           balance: await profileCashBalanceAt(
-            admin,
+            authAdmin,
             profile.businessId,
             fromProfileId,
             type,
@@ -3874,14 +3841,14 @@ const handlers = {
     const selectedBusinessType = businessType as BusinessType;
     const [actorHasAccess, counterpartyHasAccess] = await Promise.all([
       profileHasBusinessUnitAccess(
-        admin,
+        authAdmin,
         profile.businessId,
         profile.id,
         profile.businessRole,
         selectedBusinessType,
       ),
       profileHasBusinessUnitAccess(
-        admin,
+        authAdmin,
         profile.businessId,
         selectedProfile.id,
         selectedProfile.role,
@@ -3894,7 +3861,7 @@ const handlers = {
     const movementId = await recordMovement(selectedBusinessType, amount, requestKey, true);
     if (!movementId) {
       const senderBalance = await profileCashBalanceAt(
-        admin,
+        authAdmin,
         profile.businessId,
         fromProfileId,
         selectedBusinessType,
