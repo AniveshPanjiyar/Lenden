@@ -221,23 +221,49 @@ begin
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 3
+  ) <> 4
     or exists (
       select 1
       from public.lenden_closing_summaries(current_date)
-      where profile_id in (
-        '91000000-0000-4000-8000-000000000001',
-        '91000000-0000-4000-8000-000000000003'
-      )
+      where profile_id = '91000000-0000-4000-8000-000000000001'
     ) then
-    raise exception 'Manager A Closing did not contain only self and assigned Library Staff';
+    raise exception 'Manager A Closing did not contain all Managers and Staff';
   end if;
-  if exists (
+  if (
+    select closing
+    from public.lenden_closing_summaries(current_date)
+    where profile_id = '91000000-0000-4000-8000-000000000002'
+  ) <> 30
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000004'
+    ) <> 35
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000005'
+    ) <> 45
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000003'
+    ) <> 40 then
+    raise exception 'Manager A Closing did not include organisation-wide balances';
+  end if;
+  if (
+    select count(*)
+    from public.business_memberships
+    where business_id = '92000000-0000-4000-8000-000000000001'
+  ) <> 5 then
+    raise exception 'Manager A could not see the complete business directory';
+  end if;
+  if not exists (
     select 1
     from public.lenden_financial_activity(current_date, current_date)
     where lens = 'business' and business_type = 'course'
   ) then
-    raise exception 'Manager A financial feed exposed Course activity';
+    raise exception 'Manager A could not review Staff activity outside the old unit assignment';
   end if;
 end;
 $$;
@@ -268,26 +294,55 @@ begin
     raise exception 'Manager B Course status included another unit pending activity';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 40
-    or (cash_position ->> 'cashWithStaff')::numeric <> 0 then
-    raise exception 'Manager B cash position crossed unit scopes: %', cash_position;
+    or (cash_position ->> 'cashWithStaff')::numeric <> 120 then
+    raise exception 'Manager B organisation Staff cash position is wrong: %', cash_position;
   end if;
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 2
-    or exists (
+  ) <> 4
+    or not exists (
       select 1
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
     ) then
-    raise exception 'Manager B Closing included Staff outside the Course unit';
+    raise exception 'Manager B Closing did not contain all Managers and Staff';
   end if;
-  if exists (
+  if (
+    select closing
+    from public.lenden_closing_summaries(current_date)
+    where profile_id = '91000000-0000-4000-8000-000000000003'
+  ) <> 40
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000004'
+    ) <> 35
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000005'
+    ) <> 45
+    or (
+      select closing
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000002'
+    ) <> 30 then
+    raise exception 'Manager B Closing did not include organisation-wide balances';
+  end if;
+  if (
+    select count(*)
+    from public.business_memberships
+    where business_id = '92000000-0000-4000-8000-000000000001'
+  ) <> 5 then
+    raise exception 'Manager B could not see the complete business directory';
+  end if;
+  if not exists (
     select 1
     from public.lenden_financial_activity(current_date, current_date)
     where lens = 'business' and business_type = 'library'
   ) then
-    raise exception 'Manager B financial feed exposed Library activity';
+    raise exception 'Manager B could not review Staff activity outside the old unit assignment';
   end if;
 end;
 $$;

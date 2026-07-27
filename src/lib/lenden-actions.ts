@@ -492,29 +492,34 @@ async function canManageBusinessRecord(
   actorProfileId: string,
 ) {
   if (profile.accessMode === "support" || profile.businessRole === "primary_owner") return true;
-  if (!(await profileHasBusinessUnitAccess(
-    admin,
-    profile.businessId,
-    profile.id,
-    profile.businessRole,
-    businessType,
-  ))) {
-    return false;
+  if (profile.businessRole === "staff") {
+    return actorProfileId === profile.id && await profileHasBusinessUnitAccess(
+      admin,
+      profile.businessId,
+      profile.id,
+      profile.businessRole,
+      businessType,
+    );
   }
-  if (profile.businessRole === "staff") return actorProfileId === profile.id;
   if (profile.businessRole !== "co_owner") return false;
-  if (actorProfileId === profile.id) return true;
+  if (actorProfileId === profile.id) {
+    return profileHasBusinessUnitAccess(
+      admin,
+      profile.businessId,
+      profile.id,
+      profile.businessRole,
+      businessType,
+    );
+  }
   const actor = await businessMember(admin, profile.businessId, actorProfileId);
-  if (!actor) return false;
-  if (actor.role === "primary_owner") return true;
-  if (actor.role !== "staff") return false;
-  const assignment = await staffManagerForBusinessUnit(
+  if (!actor || actor.role !== "staff" || actor.status !== "active" || !actor.active) return false;
+  return profileHasBusinessUnitAccess(
     admin,
     profile.businessId,
-    actorProfileId,
+    actor.id,
+    actor.role,
     businessType,
   );
-  return assignment.assigned && assignment.managerId === profile.id;
 }
 
 async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile, business: BusinessType) {
@@ -2606,7 +2611,7 @@ const handlers = {
     );
     if (!businessPermissions[recordBusinessType]) return fail("This record has no valid business unit.");
     if (!(await canManageBusinessRecord(admin, profile, recordBusinessType, actorProfileId))) {
-      return fail("You can review only records in your assigned units and team.");
+      return fail("Managers can review Staff records and their own records.");
     }
     const currentDecision = String(existing.approval_status ?? "pending");
 
@@ -2837,7 +2842,7 @@ const handlers = {
     const recordOwnerId = recordOwnerProfileId(recordType, record);
     if (!businessPermissions[recordBusinessType]
       || !(await canManageBusinessRecord(admin, profile, recordBusinessType, recordOwnerId))) {
-      return fail("You can cancel only records in your assigned units and team.");
+      return fail("Managers can cancel Staff records and their own records.");
     }
     if (String(record.record_status ?? "active") === "cancelled") {
       await removeRecordLedgerEntries(admin, recordType, id);
@@ -2896,7 +2901,7 @@ const handlers = {
     const recordBusinessType = String(record.business_type ?? (recordType === "expense" ? "general" : "")) as BusinessType;
     if (!businessPermissions[recordBusinessType]
       || !(await canManageBusinessRecord(admin, profile, recordBusinessType, recordOwnerId))) {
-      return fail("You can edit only your own records or assigned team records.");
+      return fail("You can edit your own records, or Staff records when you are a Manager.");
     }
     const effectivelyApproved = await recordIsEffectivelyApproved(admin, recordType, record);
     if (String(record.record_status ?? "active") !== "active") {
@@ -2993,7 +2998,7 @@ const handlers = {
     const recordOwnerId = recordOwnerProfileId(recordType, record);
     if (!businessPermissions[recordBusinessType]
       || !(await canManageBusinessRecord(admin, profile, recordBusinessType, recordOwnerId))) {
-      return fail("You can request changes only for records in your assigned units and team.");
+      return fail("You can request changes for your own records, or Staff records when you are a Manager.");
     }
     if (await recordIsEffectivelyApproved(admin, recordType, record)) {
       return fail("Approved transactions cannot be deleted.");
@@ -3086,7 +3091,7 @@ const handlers = {
     const recordOwnerId = recordOwnerProfileId(request.record_type, record);
     if (!businessPermissions[recordBusinessType]
       || !(await canManageBusinessRecord(admin, profile, recordBusinessType, recordOwnerId))) {
-      return fail("You can review only requests from your assigned units and team.");
+      return fail("Managers can review Staff requests and their own requests.");
     }
 
     let acceptedCancelTarget: { table: "expenses" | "payments" } | null = null;
@@ -3604,7 +3609,10 @@ const handlers = {
     if (isBusinessSalesAgent(selectedProfile.role)) {
       return fail("Use the agent incentive payout flow for a sales agent.");
     }
-    if (!(await profileHasBusinessUnitAccess(
+    const managerReceivingFromStaff = profile.businessRole === "co_owner"
+      && direction === "received_from_user"
+      && selectedProfile.role === "staff";
+    if (!managerReceivingFromStaff && !(await profileHasBusinessUnitAccess(
       admin,
       profile.businessId,
       profile.id,
@@ -3626,21 +3634,20 @@ const handlers = {
       if (direction === "received_from_user" && selectedProfile.role !== "staff") {
         return fail("A Manager can receive cash only from Staff.");
       }
-      if (direction === "received_from_user") {
-        const assignment = await staffManagerForBusinessUnit(
-          admin,
-          profile.businessId,
-          selectedProfile.id,
-          businessType,
-        );
-        if (!assignment.assigned || assignment.managerId !== profile.id) {
-          return fail("Choose Staff assigned to you in this business unit.");
-        }
-      }
       if (direction === "sent_to_user" && selectedProfile.role !== "primary_owner") {
         return fail("A Manager can settle cash only to the Owner.");
       }
-    } else if (profile.businessRole === "primary_owner" && !["co_owner", "staff"].includes(selectedProfile.role)) {
+    } else if (
+      profile.businessRole === "primary_owner"
+      && direction === "received_from_user"
+      && selectedProfile.role !== "co_owner"
+    ) {
+      return fail("The Owner can receive cash only from a Manager.");
+    } else if (
+      profile.businessRole === "primary_owner"
+      && direction === "sent_to_user"
+      && !["co_owner", "staff"].includes(selectedProfile.role)
+    ) {
       return fail("Choose an active Manager or Staff member.");
     }
 

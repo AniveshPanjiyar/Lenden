@@ -258,26 +258,6 @@ async function updateBusinessMemberStatus(formData: FormData) {
       ? "The Owner cannot be removed. Transfer ownership first."
       : "Managers can remove only Staff and Sales Agents.");
   }
-  if (
-    context.accessMode === "member"
-    && context.membership?.role === "co_owner"
-    && membership.role === "staff"
-  ) {
-    const { data: assignments, error: assignmentsError } = await createAdminClient()
-      .from("business_staff_unit_assignments")
-      .select("manager_profile_id")
-      .eq("business_id", context.business.id)
-      .eq("staff_profile_id", membership.profile_id);
-    if (assignmentsError) throw assignmentsError;
-    const managerIds = new Set(
-      (assignments ?? [])
-        .map((assignment) => assignment.manager_profile_id)
-        .filter((managerId): managerId is string => Boolean(managerId)),
-    );
-    if (managerIds.size === 0 || [...managerIds].some((managerId) => managerId !== identity.id)) {
-      throw new Error("This Staff member also works outside your team. Ask the Owner to suspend their business access.");
-    }
-  }
   if (membership.status === nextStatus) return { status: nextStatus };
   const { error } = await client.from("business_memberships").update({
     status: nextStatus,

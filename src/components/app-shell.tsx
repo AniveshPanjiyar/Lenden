@@ -65,7 +65,7 @@ import { clearPersistedQueryCache } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -2848,14 +2848,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const salesAgents = appData.profiles.filter((profile) => profile.active && profile.membership_status === "active" && profile.role === "sales_agent");
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
-    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
-    if (manager) {
-      return item.membership_role === "staff"
-        && appData.staffUnitAssignments.some((assignment) =>
-          assignment.staff_profile_id === item.id
-          && assignment.manager_profile_id === appData.profile.id,
-        );
-    }
+    if (primaryOwner) return item.membership_role === "co_owner";
+    if (manager) return item.membership_role === "staff";
     return false;
   });
   const sendMoneyProfiles = appData.profiles.filter((item) => {
@@ -3562,6 +3556,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 agentSettlements={appData.agentSettlements}
                 postingEvents={postingEvents}
                 profiles={appData.profiles}
+                managerUnitScopes={appData.managerUnitScopes}
                 staffUnitAssignments={appData.staffUnitAssignments}
                 setNotice={pushNotice}
                 startTransition={startTransition}
@@ -10225,6 +10220,7 @@ function ClosingView({
   agentSettlements,
   postingEvents,
   profiles,
+  managerUnitScopes,
   staffUnitAssignments,
   setNotice,
   startTransition,
@@ -10240,6 +10236,7 @@ function ClosingView({
   agentSettlements: AgentSettlement[];
   postingEvents: DailyPostingEvent[];
   profiles: Profile[];
+  managerUnitScopes: ManagerUnitScope[];
   staffUnitAssignments: StaffUnitAssignment[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
@@ -10247,18 +10244,36 @@ function ClosingView({
   const { t } = useLanguage();
   const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
+  const [settlementEntryBusinessTypes, setSettlementEntryBusinessTypes] = useState<Record<string, BusinessType>>({});
+  const closingBusinessTypesForProfile = (closingProfile: Profile): Set<BusinessType> | null => {
+    if (profile.membership_role === "primary_owner") return null;
+    if (profile.membership_role === "co_owner") {
+      if (closingProfile.membership_role === "co_owner") {
+        return new Set(
+          managerUnitScopes
+            .filter((scope) => scope.manager_profile_id === closingProfile.id)
+            .map((scope) => scope.business_type),
+        );
+      }
+      return new Set(
+        staffUnitAssignments
+          .filter((assignment) => assignment.staff_profile_id === closingProfile.id)
+          .map((assignment) => assignment.business_type),
+      );
+    }
+    return new Set(
+      staffUnitAssignments
+        .filter((assignment) => assignment.staff_profile_id === profile.id)
+        .map((assignment) => assignment.business_type),
+    );
+  };
   const visibleSummaries = summaries
     .filter((summary) => {
       if (!summary.profile.active || summary.profile.membership_role === "sales_agent") return false;
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
-        return summary.profile.id === profile.id || (
-          summary.profile.membership_role === "staff"
-          && staffUnitAssignments.some((assignment) =>
-            assignment.manager_profile_id === profile.id
-            && assignment.staff_profile_id === summary.profile.id,
-          )
-        );
+        return summary.profile.membership_role === "co_owner"
+          || summary.profile.membership_role === "staff";
       }
       return summary.profile.id === profile.id;
     })
@@ -10272,11 +10287,22 @@ function ClosingView({
       return rank(left) - rank(right) || left.profile.full_name.localeCompare(right.profile.full_name);
     });
   const visibleClosingProfileIds = new Set(visibleSummaries.map((summary) => summary.profile.id));
+  const closingBusinessTypesByProfile = new Map(
+    visibleSummaries.map((summary) => [summary.profile.id, closingBusinessTypesForProfile(summary.profile)]),
+  );
+  const recordInClosingScope = (profileId: string, businessType: BusinessType | null | undefined) => {
+    const scope = closingBusinessTypesByProfile.get(profileId);
+    return scope === null || Boolean(businessType && scope?.has(businessType));
+  };
   const selectedReviewSummary = reviewProfileId ? visibleSummaries.find((summary) => summary.profile.id === reviewProfileId) ?? null : null;
+  const selectedReviewBusinessTypes = selectedReviewSummary
+    ? closingBusinessTypesByProfile.get(selectedReviewSummary.profile.id) ?? null
+    : null;
   const pendingReviewSummary = (summary: UserClosingSummary) => {
     const pendingPayments = payments.filter(
       (payment) =>
         paymentReviewProfileId(payment) === summary.profile.id &&
+        recordInClosingScope(summary.profile.id, payment.business_type) &&
         payment.record_status === "active" &&
         belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
         isPendingReviewStatus(payment.approval_status),
@@ -10284,6 +10310,7 @@ function ClosingView({
     const pendingExpenses = expenses.filter(
       (expense) =>
         expense.spent_by === summary.profile.id &&
+        recordInClosingScope(summary.profile.id, expense.business_type ?? "general") &&
         expense.record_status === "active" &&
         belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
         isPendingReviewStatus(expense.approval_status),
@@ -10292,6 +10319,7 @@ function ClosingView({
       (movement) =>
         movement.status === "pending" &&
         movement.type === "settlement" &&
+        recordInClosingScope(summary.profile.id, movement.business_type) &&
         indiaDateIso(movement.created_at) <= date &&
         (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
     );
@@ -10307,6 +10335,7 @@ function ClosingView({
   const cumulativePendingPayments = payments.filter(
     (payment) =>
       visibleClosingProfileIds.has(paymentReviewProfileId(payment)) &&
+      recordInClosingScope(paymentReviewProfileId(payment), payment.business_type) &&
       payment.record_status === "active" &&
       belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
       isPendingReviewStatus(payment.approval_status),
@@ -10314,6 +10343,7 @@ function ClosingView({
   const cumulativePendingExpenses = expenses.filter(
     (expense) =>
       visibleClosingProfileIds.has(expense.spent_by) &&
+      recordInClosingScope(expense.spent_by, expense.business_type ?? "general") &&
       expense.record_status === "active" &&
       belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
       isPendingReviewStatus(expense.approval_status),
@@ -10323,7 +10353,16 @@ function ClosingView({
       movement.status === "pending" &&
       movement.type === "settlement" &&
       indiaDateIso(movement.created_at) <= date &&
-      (visibleClosingProfileIds.has(movement.from_profile_id) || visibleClosingProfileIds.has(movement.to_profile_id ?? "")),
+      (
+        (
+          visibleClosingProfileIds.has(movement.from_profile_id)
+          && recordInClosingScope(movement.from_profile_id, movement.business_type)
+        )
+        || (
+          visibleClosingProfileIds.has(movement.to_profile_id ?? "")
+          && recordInClosingScope(movement.to_profile_id ?? "", movement.business_type)
+        )
+      ),
   );
   const cumulativePendingAmount =
     cumulativePendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
@@ -10357,6 +10396,12 @@ function ClosingView({
         postingEvents={postingEvents}
         dateFilterKey={dateFilterKey}
         profiles={profiles}
+        businessTypes={selectedReviewBusinessTypes === null ? null : [...selectedReviewBusinessTypes]}
+        reviewActionsEnabled={
+          profile.membership_role !== "co_owner"
+          || selectedReviewSummary.profile.membership_role === "staff"
+          || selectedReviewSummary.profile.id === profile.id
+        }
         close={() => setReviewProfileId(null)}
         setNotice={setNotice}
         startTransition={startTransition}
@@ -10402,14 +10447,28 @@ function ClosingView({
           {visibleSummaries.map((summary) => {
             const pendingSummary = pendingReviewSummary(summary);
             const cashToReceive = Math.max(summary.closing, 0);
-            const canReceiveFromUser = summary.profile.id !== profile.id && (
-              (profile.membership_role === "primary_owner" && (
-                summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff"
-              )) ||
+            const receivableBusinessTypes = [...new Set(
+              summary.profile.membership_role === "staff"
+                ? staffUnitAssignments
+                    .filter((assignment) =>
+                      assignment.staff_profile_id === summary.profile.id
+                    )
+                    .map((assignment) => assignment.business_type)
+                : summary.profile.membership_role === "co_owner"
+                  ? managerUnitScopes
+                      .filter((scope) => scope.manager_profile_id === summary.profile.id)
+                      .map((scope) => scope.business_type)
+                  : [],
+            )];
+            const settlementProfileKey = `${date}:${summary.profile.id}`;
+            const selectedSettlementBusinessType = settlementEntryBusinessTypes[settlementProfileKey] ?? receivableBusinessTypes[0] ?? "";
+            const canReceiveFromUser = receivableBusinessTypes.length > 0 && summary.profile.id !== profile.id && (
+              (profile.membership_role === "primary_owner" && summary.profile.membership_role === "co_owner") ||
               (profile.membership_role === "co_owner" && summary.profile.membership_role === "staff")
             );
-            const settlementEntryKey = `${date}:${summary.profile.id}`;
-            const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey] ?? (cashToReceive > 0 ? String(cashToReceive) : "");
+            const settlementEntryKey = `${settlementProfileKey}:${selectedSettlementBusinessType}`;
+            const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
+              ?? (receivableBusinessTypes.length === 1 && cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
             const receiveInputDisabled = pendingSummary.count > 0 || cashToReceive <= 0;
             const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
@@ -10469,6 +10528,26 @@ function ClosingView({
                         <input type="hidden" name="settlement_direction" value="received_from_user" />
                         <input type="hidden" name="profile_id" value={summary.profile.id} />
                         <input type="hidden" name="settlement_date" value={date} />
+                        {receivableBusinessTypes.length === 1 ? (
+                          <input type="hidden" name="business_type" value={selectedSettlementBusinessType} />
+                        ) : (
+                          <label className="closing-receive-field closing-receive-business-field">
+                            <span>Business unit</span>
+                            <select
+                              name="business_type"
+                              value={selectedSettlementBusinessType}
+                              onChange={(event) => {
+                                const businessType = event.target.value as BusinessType;
+                                setSettlementEntryBusinessTypes((current) => ({ ...current, [settlementProfileKey]: businessType }));
+                              }}
+                              required
+                            >
+                              {receivableBusinessTypes.map((businessType) => (
+                                <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
                         <label className="closing-receive-field">
                           <span>{t("amountReceived")}</span>
                           <input
@@ -10513,6 +10592,8 @@ function ClosingReviewDetail({
   agentSettlements,
   postingEvents,
   profiles,
+  businessTypes,
+  reviewActionsEnabled,
   close,
   setNotice,
   startTransition,
@@ -10526,6 +10607,8 @@ function ClosingReviewDetail({
   agentSettlements: AgentSettlement[];
   postingEvents: DailyPostingEvent[];
   profiles: Profile[];
+  businessTypes: BusinessType[] | null;
+  reviewActionsEnabled: boolean;
   close: () => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
@@ -10560,7 +10643,10 @@ function ClosingReviewDetail({
     tone: "positive" | "negative";
     icon: ReactNode;
   };
-  const profileDayEvents = postingEventsForProfileDate(postingEvents, summary.profile.id, date, dateFilterKey);
+  const recordInScope = (businessType: BusinessType | null | undefined) =>
+    businessTypes === null || Boolean(businessType && businessTypes.includes(businessType));
+  const profileDayEvents = postingEventsForProfileDate(postingEvents, summary.profile.id, date, dateFilterKey)
+    .filter((event) => recordInScope(event.business_type));
   const paymentEventGroups = new Map<string, DailyPostingEvent[]>();
   profileDayEvents.filter((event) => event.source_type === "payment").forEach((event) => {
     paymentEventGroups.set(event.source_id, [...(paymentEventGroups.get(event.source_id) ?? []), event]);
@@ -10604,6 +10690,7 @@ function ClosingReviewDetail({
   const pendingPaymentRecords: ClosingReviewRecord[] = payments
     .filter((payment) =>
       paymentReviewProfileId(payment) === summary.profile.id &&
+      recordInScope(payment.business_type) &&
       payment.record_status === "active" &&
       belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
       isPendingReviewStatus(payment.approval_status),
@@ -10678,6 +10765,7 @@ function ClosingReviewDetail({
   const pendingExpenseRecords: ClosingReviewRecord[] = expenses
     .filter((expense) =>
       expense.spent_by === summary.profile.id &&
+      recordInScope(expense.business_type ?? "general") &&
       expense.record_status === "active" &&
       belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
       isPendingReviewStatus(expense.approval_status),
@@ -10746,7 +10834,7 @@ function ClosingReviewDetail({
     });
 
   const agentSettlementRecords: ClosingReviewRecord[] = profileDayEvents
-    .filter((event) => event.source_type === "agent_settlement")
+    .filter((event) => businessTypes === null && event.source_type === "agent_settlement")
     .flatMap((event) => {
       const settlement = agentSettlements.find((item) => item.id === event.source_id);
       if (!settlement) return [];
@@ -10794,6 +10882,7 @@ function ClosingReviewDetail({
     (movement) =>
       movement.status === "pending" &&
       movement.type === "settlement" &&
+      recordInScope(movement.business_type) &&
       indiaDateIso(movement.created_at) <= date &&
       (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
   );
@@ -10873,8 +10962,8 @@ function ClosingReviewDetail({
         {pendingRecords.length > 0 ? <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p> : null}
         <div className="review-transaction-list">
           {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
-            const canReview = record.canReview;
-            const isMixedPayment = record.isMixedPayment;
+            const canReview = record.canReview && reviewActionsEnabled;
+            const isMixedPayment = record.isMixedPayment && reviewActionsEnabled;
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
               <article className={`history-card closing-history-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>

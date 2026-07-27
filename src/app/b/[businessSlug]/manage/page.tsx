@@ -81,23 +81,9 @@ export default async function BusinessManagePage({
   const memberRows = (memberships ?? []) as BusinessMembership[];
   const managerScopeRows = (managerUnitScopes ?? []) as ManagerUnitScope[];
   const staffAssignmentRows = (staffUnitAssignments ?? []) as StaffUnitAssignment[];
-  const actorIsManager = context.accessMode === "member" && context.membership?.role === "co_owner";
-  const managerStaffIds = new Set(
-    staffAssignmentRows
-      .filter((assignment) => assignment.manager_profile_id === identity.id)
-      .map((assignment) => assignment.staff_profile_id),
-  );
-  const visibleMemberRows = actorIsManager
-    ? memberRows.filter((membership) =>
-        membership.profile_id === identity.id
-        || membership.role === "primary_owner"
-        || membership.role === "sales_agent"
-        || (membership.role === "staff" && managerStaffIds.has(membership.profile_id)))
-    : memberRows;
   const managers = memberRows.filter((membership) =>
     membership.role === "co_owner"
-    && membership.status === "active"
-    && (!actorIsManager || membership.profile_id === identity.id));
+    && membership.status === "active");
   const enabledModules = new Set((modules ?? []).filter((module) => module.enabled).map((module) => module.module));
   const canManageBusinessSettings = context.accessMode === "support" || isPrimaryOwner(context.membership?.role);
   const canTransferOwnership = context.accessMode === "member" && isPrimaryOwner(context.membership?.role);
@@ -115,7 +101,7 @@ export default async function BusinessManagePage({
     rows[membershipId] = [...(rows[membershipId] ?? []), String(permission.permission)];
     return rows;
   }, {});
-  const businessUsers = visibleMemberRows.map((membership) => {
+  const businessUsers = memberRows.map((membership) => {
     const member = profileMap.get(membership.profile_id);
     return {
       membershipId: membership.id,
@@ -155,22 +141,18 @@ export default async function BusinessManagePage({
     fullName: member.fullName,
     role: member.role,
   }));
-  const managerOptions = managers.map((membership) => ({
-    profileId: membership.profile_id,
-    fullName: profileMap.get(membership.profile_id)?.full_name ?? membership.profile_id,
-    unitScopes: managerScopeRows
-      .filter((scope) => scope.manager_profile_id === membership.profile_id)
-      .map((scope) => scope.business_type),
-  }));
-  const visibleInvitations = actorIsManager
-    ? (invitations ?? []).filter((invitation) =>
-        invitation.intended_role === "sales_agent"
-        || (
-          invitation.intended_role === "staff"
-          && Object.values((invitation.unit_manager_assignments ?? {}) as Record<string, string>)
-            .includes(identity.id)
-        ))
-    : (invitations ?? []);
+  const managerOptions = managers
+    .map((membership) => ({
+      profileId: membership.profile_id,
+      fullName: profileMap.get(membership.profile_id)?.full_name ?? membership.profile_id,
+      unitScopes: managerScopeRows
+        .filter((scope) => scope.manager_profile_id === membership.profile_id)
+        .map((scope) => scope.business_type),
+    }))
+    .sort((left, right) =>
+      Number(right.profileId === identity.id) - Number(left.profileId === identity.id)
+      || left.fullName.localeCompare(right.fullName));
+  const visibleInvitations = invitations ?? [];
 
   return (
     <div className="authenticated-focused-page">

@@ -4999,7 +4999,12 @@ summary::-webkit-details-marker {
   text-transform: uppercase;
 }
 
-.closing-receive-field input {
+.closing-receive-business-field {
+  grid-column: 1 / -1;
+}
+
+.closing-receive-field input,
+.closing-receive-field select {
   min-height: 44px;
   min-width: 0;
   width: 100%;
@@ -5012,7 +5017,12 @@ summary::-webkit-details-marker {
   outline: none;
 }
 
-.closing-receive-field input:focus {
+.closing-receive-field select {
+  appearance: none;
+}
+
+.closing-receive-field input:focus,
+.closing-receive-field select:focus {
   border-color: var(--closing-primary);
   box-shadow: 0 0 0 3px rgba(17, 99, 95, 0.12);
 }
