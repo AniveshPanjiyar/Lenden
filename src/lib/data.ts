@@ -329,6 +329,8 @@ async function loadDashboard(
     agentSettlementsResult,
     closingMembershipsResult,
     agentReferralsResult,
+    closingManagerUnitScopesResult,
+    closingStaffUnitAssignmentsResult,
   ] = await Promise.all([
     needsStudents && canViewLibraryStudents && studentSourceId === "library"
       ? supabase
@@ -433,6 +435,18 @@ async function loadDashboard(
           .eq("business_id", bootstrap.businessContext.business.id)
           .eq("agent_id", userId)
       : Promise.resolve({ data: [], error: null }),
+    needsClosing && viewerBusinessRole === "co_owner"
+      ? supabase
+          .from("business_manager_unit_scopes")
+          .select("business_id,manager_profile_id,business_type")
+          .eq("business_id", bootstrap.businessContext.business.id)
+      : Promise.resolve({ data: bootstrap.managerUnitScopes, error: null }),
+    needsClosing && viewerBusinessRole === "co_owner"
+      ? supabase
+          .from("business_staff_unit_assignments")
+          .select("business_id,staff_profile_id,business_type,manager_profile_id")
+          .eq("business_id", bootstrap.businessContext.business.id)
+      : Promise.resolve({ data: bootstrap.staffUnitAssignments, error: null }),
   ]);
 
   if (paymentsResult.error) throw new Error(paymentsResult.error.message);
@@ -444,6 +458,8 @@ async function loadDashboard(
   if (dashboardBusinessStatusResult.error) throw new Error(dashboardBusinessStatusResult.error.message);
   if (dashboardCashPositionResult.error) throw new Error(dashboardCashPositionResult.error.message);
   if (financialActivityResult.error) throw new Error(financialActivityResult.error.message);
+  if (closingManagerUnitScopesResult.error) throw new Error(closingManagerUnitScopesResult.error.message);
+  if (closingStaffUnitAssignmentsResult.error) throw new Error(closingStaffUnitAssignmentsResult.error.message);
 
   const movementRows = (movementsResult.data ?? []) as MoneyMovement[];
   const visibleMovementPaymentIds = new Set(
@@ -526,8 +542,10 @@ async function loadDashboard(
         cashWithStaff: Number(dashboardCashPosition.cashWithStaff ?? 0),
       }
     : baseDashboardSummary;
+  const closingManagerUnitScopes = (closingManagerUnitScopesResult.data ?? []) as ManagerUnitScope[];
+  const closingStaffUnitAssignments = (closingStaffUnitAssignmentsResult.data ?? []) as StaffUnitAssignment[];
   const viewerManagerBusinessTypes = new Set(
-    bootstrap.managerUnitScopes
+    closingManagerUnitScopes
       .filter((scope) => scope.manager_profile_id === userId)
       .map((scope) => scope.business_type),
   );
@@ -552,7 +570,7 @@ async function loadDashboard(
         if (viewerBusinessRole === "co_owner") {
           if (item.role === "co_owner") return true;
           if (item.role !== "staff") return false;
-          return bootstrap.staffUnitAssignments.some(
+          return closingStaffUnitAssignments.some(
             (assignment) =>
               assignment.staff_profile_id === item.profile_id
               && viewerManagerBusinessTypes.has(assignment.business_type),
