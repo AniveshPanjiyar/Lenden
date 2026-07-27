@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { businessLabels, businessPermissions } from "@/lib/constants";
+import { businessLabels, businessPermissions, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
 import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import {
@@ -116,7 +116,7 @@ function accessSummary(
     return permissions.includes(permission) && enabledModules.includes(module) ? [businessLabels[module]] : [];
   });
   if (permissions.includes("add_expense")) capabilities.push("Add expenses");
-  if (permissions.includes("transfer_money")) capabilities.push("Transfer assigned transactions");
+  if (STAFF_TRANSACTION_TRANSFERS_ENABLED && permissions.includes("transfer_money")) capabilities.push("Transfer assigned transactions");
   const paused = permissions.filter((permission) => {
     const moduleKey = permissionToModule[permission];
     return moduleKey && !enabledModules.includes(moduleKey);
@@ -228,16 +228,20 @@ function StaffAccessFields({ permissions, setPermissions, enabledModules, preser
           />
           <span><strong>Can add expenses</strong><small>Create business expense records</small></span>
         </label>
-        <label>
-          <input
-            checked={permissions.includes("transfer_money")}
-            name="permissions"
-            onChange={(event) => toggle("transfer_money", event.target.checked)}
-            type="checkbox"
-            value="transfer_money"
-          />
-          <span><strong>Transfer assigned transactions</strong><small>Request a Staff-to-Staff transfer for transactions currently assigned to them</small></span>
-        </label>
+        {STAFF_TRANSACTION_TRANSFERS_ENABLED ? (
+          <label>
+            <input
+              checked={permissions.includes("transfer_money")}
+              name="permissions"
+              onChange={(event) => toggle("transfer_money", event.target.checked)}
+              type="checkbox"
+              value="transfer_money"
+            />
+            <span><strong>Transfer assigned transactions</strong><small>Request a Staff-to-Staff transfer for transactions currently assigned to them</small></span>
+          </label>
+        ) : permissions.includes("transfer_money") ? (
+          <input name="permissions" type="hidden" value="transfer_money" />
+        ) : null}
       </div>
       {disabledPreserved.length ? (
         <div className="business-paused-access">

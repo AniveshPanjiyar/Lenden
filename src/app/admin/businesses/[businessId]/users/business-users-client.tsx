@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { permissionOptions } from "@/lib/constants";
+import { permissionOptions, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { AdminBusinessInvitation, AdminBusinessMember } from "../../admin-data";
 import {
@@ -15,6 +15,9 @@ import {
 
 const initialState: AdminActionState = { ok: null, message: "" };
 const roleLabels = { primary_owner: "Owner", co_owner: "Manager", staff: "Staff", sales_agent: "Sales Agent" } as const;
+const visiblePermissionOptions = permissionOptions.filter(
+  (permission) => STAFF_TRANSACTION_TRANSFERS_ENABLED || permission.value !== "transfer_money",
+);
 
 function ActionMessage({ state }: { state: AdminActionState }) {
   return state.message ? (
@@ -81,9 +84,12 @@ function StaffPermissionsForm({ member }: { member: AdminBusinessMember }) {
     <form action={action} className="admin-member-permissions-form">
       <input type="hidden" name="business_id" value={member.businessId} />
       <input type="hidden" name="membership_id" value={member.id} />
+      {!STAFF_TRANSACTION_TRANSFERS_ENABLED && member.permissions.includes("transfer_money") ? (
+        <input type="hidden" name="permissions" value="transfer_money" />
+      ) : null}
       <fieldset>
         <legend>Permissions</legend>
-        {permissionOptions.map((permission) => (
+        {visiblePermissionOptions.map((permission) => (
           <label key={permission.value}>
             <input type="checkbox" name="permissions" value={permission.value} defaultChecked={member.permissions.includes(permission.value)} />
             {permission.label}
@@ -136,7 +142,7 @@ export default function BusinessUsersClient({ businessId, members, invitations }
           {role === "staff" ? (
             <fieldset className="admin-permission-grid">
               <legend>Staff permissions</legend>
-              {permissionOptions.map((permission) => <label key={permission.value}><input type="checkbox" name="permissions" value={permission.value} />{permission.label}</label>)}
+              {visiblePermissionOptions.map((permission) => <label key={permission.value}><input type="checkbox" name="permissions" value={permission.value} />{permission.label}</label>)}
             </fieldset>
           ) : null}
           <div className="admin-info-callout"><strong>User-owned login</strong><p>No password is created or changed. Business access remains separate from every other membership.</p></div>

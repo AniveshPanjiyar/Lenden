@@ -1,5 +1,7 @@
 import type { BusinessType } from "@/lib/types";
 
+export const STAFF_TRANSACTION_TRANSFERS_ENABLED = false;
+
 export const permissionOptions = [
   { value: "collect_guest_house", label: "Guest house collection" },
   { value: "collect_library", label: "Library collection" },

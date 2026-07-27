@@ -63,7 +63,7 @@ import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/clie
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { clearPersistedQueryCache } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
-import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
+import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
 import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
 import {
@@ -3562,6 +3562,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 agentSettlements={appData.agentSettlements}
                 postingEvents={postingEvents}
                 profiles={appData.profiles}
+                staffUnitAssignments={appData.staffUnitAssignments}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -5371,6 +5372,7 @@ function TransactionsView({
         const assigneeCanTransfer = assignee?.membership_role !== "staff"
           || (permissionsByProfile[reviewProfileId] ?? []).includes("transfer_money");
         const canRequestTransfer =
+          STAFF_TRANSACTION_TRANSFERS_ENABLED &&
           (owner || reviewProfileId === profile.id) &&
           (owner || (permissionsByProfile[profile.id] ?? []).includes("transfer_money")) &&
           assigneeCanTransfer &&
@@ -5378,7 +5380,9 @@ function TransactionsView({
           (effectivePaymentPending || (profile.membership_role === "primary_owner" && effectivePaymentApproved)) &&
           (profile.membership_role === "primary_owner" || !hasApprovedComponent) &&
           !pendingTransfer;
-        const incomingTransferId = pendingTransfer?.to_profile_id === profile.id ? pendingTransfer.id : null;
+        const incomingTransferId = STAFF_TRANSACTION_TRANSFERS_ENABLED && pendingTransfer?.to_profile_id === profile.id
+          ? pendingTransfer.id
+          : null;
         const baseRecord = {
           sourceId: payment.id,
           recordCategory: "payment" as const,
@@ -8871,7 +8875,16 @@ function PaymentForm({
   }
 
   function resetCourseMemberFlow() {
-    setCourseMemberMode(null);
+    const nextMode = initialMemberMode ?? courseMemberMode;
+    setCourseMemberMode(nextMode);
+    if (nextMode === "new") {
+      resetCourseFieldsForNewStudent();
+      return;
+    }
+    if (nextMode === "existing") {
+      clearExistingCourseSelection();
+      return;
+    }
     resetCourseFieldsForNewStudent();
   }
 
@@ -10212,6 +10225,7 @@ function ClosingView({
   agentSettlements,
   postingEvents,
   profiles,
+  staffUnitAssignments,
   setNotice,
   startTransition,
 }: {
@@ -10226,6 +10240,7 @@ function ClosingView({
   agentSettlements: AgentSettlement[];
   postingEvents: DailyPostingEvent[];
   profiles: Profile[];
+  staffUnitAssignments: StaffUnitAssignment[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -10237,7 +10252,13 @@ function ClosingView({
       if (!summary.profile.active || summary.profile.membership_role === "sales_agent") return false;
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
-        return summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff";
+        return summary.profile.id === profile.id || (
+          summary.profile.membership_role === "staff"
+          && staffUnitAssignments.some((assignment) =>
+            assignment.manager_profile_id === profile.id
+            && assignment.staff_profile_id === summary.profile.id,
+          )
+        );
       }
       return summary.profile.id === profile.id;
     })

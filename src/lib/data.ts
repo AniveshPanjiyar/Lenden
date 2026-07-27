@@ -545,7 +545,13 @@ async function loadDashboard(
         if (item.role === "sales_agent") return false;
         if (bootstrap.businessContext.accessMode === "support" || viewerBusinessRole === "primary_owner") return true;
         if (viewerBusinessRole === "co_owner") {
-          return item.role === "co_owner" || item.role === "staff";
+          return item.profile_id === userId || (
+            item.role === "staff"
+            && bootstrap.staffUnitAssignments.some((assignment) =>
+              assignment.manager_profile_id === userId
+              && assignment.staff_profile_id === item.profile_id,
+            )
+          );
         }
         return item.profile_id === userId;
       })

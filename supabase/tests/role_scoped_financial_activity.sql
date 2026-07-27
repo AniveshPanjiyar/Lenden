@@ -218,6 +218,20 @@ begin
     or (cash_position ->> 'cashWithStaff')::numeric <> 120 then
     raise exception 'Manager A cash position is wrong: %', cash_position;
   end if;
+  if (
+    select count(*)
+    from public.lenden_closing_summaries(current_date)
+  ) <> 3
+    or exists (
+      select 1
+      from public.lenden_closing_summaries(current_date)
+      where profile_id in (
+        '91000000-0000-4000-8000-000000000001',
+        '91000000-0000-4000-8000-000000000003'
+      )
+    ) then
+    raise exception 'Manager A Closing did not contain only self and assigned Library Staff';
+  end if;
   if exists (
     select 1
     from public.lenden_financial_activity(current_date, current_date)
@@ -257,6 +271,17 @@ begin
     or (cash_position ->> 'cashWithStaff')::numeric <> 0 then
     raise exception 'Manager B cash position crossed unit scopes: %', cash_position;
   end if;
+  if (
+    select count(*)
+    from public.lenden_closing_summaries(current_date)
+  ) <> 2
+    or exists (
+      select 1
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000005'
+    ) then
+    raise exception 'Manager B Closing included Staff outside the Course unit';
+  end if;
   if exists (
     select 1
     from public.lenden_financial_activity(current_date, current_date)
@@ -292,6 +317,17 @@ begin
   if (cash_position ->> 'cashSelf')::numeric <> 35
     or (cash_position ->> 'cashWithStaff')::numeric <> 0 then
     raise exception 'Staff cash position included another user: %', cash_position;
+  end if;
+  if (
+    select count(*)
+    from public.lenden_closing_summaries(current_date)
+  ) <> 1
+    or not exists (
+      select 1
+      from public.lenden_closing_summaries(current_date)
+      where profile_id = '91000000-0000-4000-8000-000000000004'
+    ) then
+    raise exception 'Staff Closing exposed another business member';
   end if;
   if exists (
     select 1
