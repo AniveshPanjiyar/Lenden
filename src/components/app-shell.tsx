@@ -2848,7 +2848,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const salesAgents = appData.profiles.filter((profile) => profile.active && profile.membership_status === "active" && profile.role === "sales_agent");
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
-    if (primaryOwner) return item.membership_role === "co_owner";
+    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
     if (manager) return item.membership_role === "staff";
     return false;
   });
@@ -10244,7 +10244,11 @@ function ClosingView({
   const { t } = useLanguage();
   const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
-  const [settlementEntryBusinessTypes, setSettlementEntryBusinessTypes] = useState<Record<string, BusinessType>>({});
+  const viewerManagerBusinessTypes = new Set(
+    managerUnitScopes
+      .filter((scope) => scope.manager_profile_id === profile.id)
+      .map((scope) => scope.business_type),
+  );
   const closingBusinessTypesForProfile = (closingProfile: Profile): Set<BusinessType> | null => {
     if (profile.membership_role === "primary_owner") return null;
     if (profile.membership_role === "co_owner") {
@@ -10252,13 +10256,15 @@ function ClosingView({
         return new Set(
           managerUnitScopes
             .filter((scope) => scope.manager_profile_id === closingProfile.id)
-            .map((scope) => scope.business_type),
+            .map((scope) => scope.business_type)
+            .filter((businessType) => viewerManagerBusinessTypes.has(businessType)),
         );
       }
       return new Set(
         staffUnitAssignments
           .filter((assignment) => assignment.staff_profile_id === closingProfile.id)
-          .map((assignment) => assignment.business_type),
+          .map((assignment) => assignment.business_type)
+          .filter((businessType) => viewerManagerBusinessTypes.has(businessType)),
       );
     }
     return new Set(
@@ -10272,8 +10278,9 @@ function ClosingView({
       if (!summary.profile.active || summary.profile.membership_role === "sales_agent") return false;
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
-        return summary.profile.membership_role === "co_owner"
-          || summary.profile.membership_role === "staff";
+        if (summary.profile.membership_role === "co_owner") return true;
+        if (summary.profile.membership_role !== "staff") return false;
+        return (closingBusinessTypesForProfile(summary.profile)?.size ?? 0) > 0;
       }
       return summary.profile.id === profile.id;
     })
@@ -10452,6 +10459,10 @@ function ClosingView({
                 ? staffUnitAssignments
                     .filter((assignment) =>
                       assignment.staff_profile_id === summary.profile.id
+                      && (
+                        profile.membership_role !== "co_owner"
+                        || viewerManagerBusinessTypes.has(assignment.business_type)
+                      )
                     )
                     .map((assignment) => assignment.business_type)
                 : summary.profile.membership_role === "co_owner"
@@ -10461,14 +10472,16 @@ function ClosingView({
                   : [],
             )];
             const settlementProfileKey = `${date}:${summary.profile.id}`;
-            const selectedSettlementBusinessType = settlementEntryBusinessTypes[settlementProfileKey] ?? receivableBusinessTypes[0] ?? "";
             const canReceiveFromUser = receivableBusinessTypes.length > 0 && summary.profile.id !== profile.id && (
-              (profile.membership_role === "primary_owner" && summary.profile.membership_role === "co_owner") ||
+              (
+                profile.membership_role === "primary_owner"
+                && (summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff")
+              ) ||
               (profile.membership_role === "co_owner" && summary.profile.membership_role === "staff")
             );
-            const settlementEntryKey = `${settlementProfileKey}:${selectedSettlementBusinessType}`;
+            const settlementEntryKey = settlementProfileKey;
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
-              ?? (receivableBusinessTypes.length === 1 && cashToReceive > 0 ? String(cashToReceive) : "");
+              ?? (cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
             const receiveInputDisabled = pendingSummary.count > 0 || cashToReceive <= 0;
             const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
@@ -10528,26 +10541,7 @@ function ClosingView({
                         <input type="hidden" name="settlement_direction" value="received_from_user" />
                         <input type="hidden" name="profile_id" value={summary.profile.id} />
                         <input type="hidden" name="settlement_date" value={date} />
-                        {receivableBusinessTypes.length === 1 ? (
-                          <input type="hidden" name="business_type" value={selectedSettlementBusinessType} />
-                        ) : (
-                          <label className="closing-receive-field closing-receive-business-field">
-                            <span>Business unit</span>
-                            <select
-                              name="business_type"
-                              value={selectedSettlementBusinessType}
-                              onChange={(event) => {
-                                const businessType = event.target.value as BusinessType;
-                                setSettlementEntryBusinessTypes((current) => ({ ...current, [settlementProfileKey]: businessType }));
-                              }}
-                              required
-                            >
-                              {receivableBusinessTypes.map((businessType) => (
-                                <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>
-                              ))}
-                            </select>
-                          </label>
-                        )}
+                        <input type="hidden" name="auto_allocate_business_units" value="true" />
                         <label className="closing-receive-field">
                           <span>{t("amountReceived")}</span>
                           <input

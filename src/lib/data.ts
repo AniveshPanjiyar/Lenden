@@ -526,6 +526,11 @@ async function loadDashboard(
         cashWithStaff: Number(dashboardCashPosition.cashWithStaff ?? 0),
       }
     : baseDashboardSummary;
+  const viewerManagerBusinessTypes = new Set(
+    bootstrap.managerUnitScopes
+      .filter((scope) => scope.manager_profile_id === userId)
+      .map((scope) => scope.business_type),
+  );
   const visiblePayments = visibleData(paymentRows, (payment) =>
     salesAgent
       ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
@@ -545,7 +550,13 @@ async function loadDashboard(
         if (item.role === "sales_agent") return false;
         if (bootstrap.businessContext.accessMode === "support" || viewerBusinessRole === "primary_owner") return true;
         if (viewerBusinessRole === "co_owner") {
-          return item.role === "co_owner" || item.role === "staff";
+          if (item.role === "co_owner") return true;
+          if (item.role !== "staff") return false;
+          return bootstrap.staffUnitAssignments.some(
+            (assignment) =>
+              assignment.staff_profile_id === item.profile_id
+              && viewerManagerBusinessTypes.has(assignment.business_type),
+          );
         }
         return item.profile_id === userId;
       })

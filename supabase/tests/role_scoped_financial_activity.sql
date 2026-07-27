@@ -50,6 +50,7 @@ insert into public.business_manager_unit_scopes (
   business_id, manager_profile_id, business_type, created_by
 ) values
   ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000002', 'library', '91000000-0000-4000-8000-000000000001'),
+  ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000003', 'library', '91000000-0000-4000-8000-000000000001'),
   ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000003', 'course', '91000000-0000-4000-8000-000000000001');
 
 insert into public.business_staff_unit_assignments (
@@ -57,7 +58,7 @@ insert into public.business_staff_unit_assignments (
 ) values
   ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000004', 'library', '91000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000001'),
   ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000004', 'course', '91000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000001'),
-  ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000005', 'library', '91000000-0000-4000-8000-000000000002', '91000000-0000-4000-8000-000000000001');
+  ('92000000-0000-4000-8000-000000000001', '91000000-0000-4000-8000-000000000005', 'course', '91000000-0000-4000-8000-000000000003', '91000000-0000-4000-8000-000000000001');
 
 insert into public.payments (
   id, business_id, business_type, mode, amount, cash_collection, online_collection,
@@ -86,7 +87,7 @@ insert into public.payments (
   (
     '93000000-0000-4000-8000-000000000003',
     '92000000-0000-4000-8000-000000000001',
-    'library', 'mixed', 50, 20, 30, 'Partially approved collection',
+    'course', 'mixed', 50, 20, 30, 'Partially approved collection',
     '91000000-0000-4000-8000-000000000005',
     '91000000-0000-4000-8000-000000000005',
     '91000000-0000-4000-8000-000000000005',
@@ -106,7 +107,7 @@ insert into public.expenses (
   (
     '94000000-0000-4000-8000-000000000002',
     '92000000-0000-4000-8000-000000000001',
-    'library', 'cash', 10, current_date, 'Library supplies',
+    'course', 'cash', 10, current_date, 'Course supplies pending',
     '91000000-0000-4000-8000-000000000005', 'pending', null
   );
 
@@ -116,7 +117,7 @@ insert into public.money_movements (
 ) values (
   '95000000-0000-4000-8000-000000000001',
   '92000000-0000-4000-8000-000000000001',
-  'library', 'transfer', 'cash', 25,
+  'course', 'transfer', 'cash', 25,
   '91000000-0000-4000-8000-000000000004',
   '91000000-0000-4000-8000-000000000005',
   'accepted',
@@ -136,19 +137,19 @@ insert into public.ledger_entries (
     '91000000-0000-4000-8000-000000000001'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'library',
+    '92000000-0000-4000-8000-000000000001', 'course',
     '91000000-0000-4000-8000-000000000005', 20, current_date,
     'payment', '93000000-0000-4000-8000-000000000003',
     '91000000-0000-4000-8000-000000000001'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'library',
+    '92000000-0000-4000-8000-000000000001', 'course',
     '91000000-0000-4000-8000-000000000004', -25, current_date,
     'transfer', '95000000-0000-4000-8000-000000000001',
     '91000000-0000-4000-8000-000000000004'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'library',
+    '92000000-0000-4000-8000-000000000001', 'course',
     '91000000-0000-4000-8000-000000000005', 25, current_date,
     'transfer', '95000000-0000-4000-8000-000000000001',
     '91000000-0000-4000-8000-000000000005'
@@ -192,42 +193,42 @@ begin
   into summary;
   select public.lenden_dashboard_cash_position(current_date)
   into cash_position;
-  if (summary #>> '{collections,total}')::numeric <> 120 then
+  if (summary #>> '{collections,total}')::numeric <> 100 then
     raise exception 'Manager A collections were not restricted to Library: %', summary;
   end if;
   if (summary #>> '{expenses,total}')::numeric <> 0 then
     raise exception 'Manager A saw a Course expense: %', summary;
   end if;
-  if (summary #>> '{pending,amount}')::numeric <> 40
-    or (summary #>> '{pending,count}')::integer <> 2 then
+  if (summary #>> '{pending,amount}')::numeric <> 0
+    or (summary #>> '{pending,count}')::integer <> 0 then
     raise exception 'Manager A pending amount/count is wrong: %', summary;
   end if;
   if (
     select status.pending_amount
     from public.lenden_dashboard_business_status(current_date, current_date) status
     where status.business_type = 'library'
-  ) <> 40
+  ) <> 0
     or (
       select status.pending_count
       from public.lenden_dashboard_business_status(current_date, current_date) status
       where status.business_type = 'library'
-    ) <> 2 then
+    ) <> 0 then
     raise exception 'Manager A Library status pending amount/count is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 30
-    or (cash_position ->> 'cashWithStaff')::numeric <> 120 then
+    or (cash_position ->> 'cashWithStaff')::numeric <> 100 then
     raise exception 'Manager A cash position is wrong: %', cash_position;
   end if;
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 4
+  ) <> 3
     or exists (
       select 1
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000001'
     ) then
-    raise exception 'Manager A Closing did not contain all Managers and Staff';
+    raise exception 'Manager A Closing did not contain the Managers and Staff A';
   end if;
   if (
     select closing
@@ -238,18 +239,18 @@ begin
       select closing
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000004'
-    ) <> 35
-    or (
-      select closing
+    ) <> 100
+    or exists (
+      select 1
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
-    ) <> 45
+    )
     or (
       select closing
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000003'
-    ) <> 40 then
-    raise exception 'Manager A Closing did not include organisation-wide balances';
+    ) <> 0 then
+    raise exception 'Manager A Closing leaked a balance outside Library';
   end if;
   if (
     select count(*)
@@ -258,17 +259,17 @@ begin
   ) <> 5 then
     raise exception 'Manager A could not see the complete business directory';
   end if;
-  if not exists (
+  if exists (
     select 1
     from public.lenden_financial_activity(current_date, current_date)
     where lens = 'business' and business_type = 'course'
   ) then
-    raise exception 'Manager A could not review Staff activity outside the old unit assignment';
+    raise exception 'Manager A could review Course activity outside the assigned unit';
   end if;
 end;
 $$;
 
--- Manager B sees the same Staff member only inside Course.
+-- Manager B sees both Library and Course, including Staff A and Staff B.
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000003', true);
 do $$
 declare
@@ -279,23 +280,24 @@ begin
   into summary;
   select public.lenden_dashboard_cash_position(current_date)
   into cash_position;
-  if (summary #>> '{collections,total}')::numeric <> 200
+  if (summary #>> '{collections,total}')::numeric <> 320
     or (summary #>> '{expenses,total}')::numeric <> 40 then
-    raise exception 'Manager B Course totals are wrong: %', summary;
+    raise exception 'Manager B Library and Course totals are wrong: %', summary;
   end if;
-  if (summary #>> '{pending,amount}')::numeric <> 0 then
-    raise exception 'Manager B saw Library pending activity: %', summary;
+  if (summary #>> '{pending,amount}')::numeric <> 40
+    or (summary #>> '{pending,count}')::integer <> 2 then
+    raise exception 'Manager B pending activity is wrong: %', summary;
   end if;
   if (
     select status.pending_amount
     from public.lenden_dashboard_business_status(current_date, current_date) status
     where status.business_type = 'course'
-  ) <> 0 then
-    raise exception 'Manager B Course status included another unit pending activity';
+  ) <> 40 then
+    raise exception 'Manager B Course pending activity is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 40
-    or (cash_position ->> 'cashWithStaff')::numeric <> 120 then
-    raise exception 'Manager B organisation Staff cash position is wrong: %', cash_position;
+    or (cash_position ->> 'cashWithStaff')::numeric <> 145 then
+    raise exception 'Manager B combined Staff cash position is wrong: %', cash_position;
   end if;
   if (
     select count(*)
@@ -306,7 +308,7 @@ begin
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
     ) then
-    raise exception 'Manager B Closing did not contain all Managers and Staff';
+    raise exception 'Manager B Closing did not contain both assigned Staff members';
   end if;
   if (
     select closing
@@ -328,7 +330,7 @@ begin
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000002'
     ) <> 30 then
-    raise exception 'Manager B Closing did not include organisation-wide balances';
+    raise exception 'Manager B Closing did not combine Library and Course balances';
   end if;
   if (
     select count(*)
@@ -342,7 +344,7 @@ begin
     from public.lenden_financial_activity(current_date, current_date)
     where lens = 'business' and business_type = 'library'
   ) then
-    raise exception 'Manager B could not review Staff activity outside the old unit assignment';
+    raise exception 'Manager B could not review the assigned Library activity';
   end if;
 end;
 $$;
@@ -460,17 +462,17 @@ begin
   if (
     select status.pending_amount
     from public.lenden_dashboard_business_status(current_date, current_date) status
-    where status.business_type = 'library'
+    where status.business_type = 'course'
   ) <> 40
     or (
       select status.pending_count
       from public.lenden_dashboard_business_status(current_date, current_date) status
-      where status.business_type = 'library'
+      where status.business_type = 'course'
     ) <> 2 then
-    raise exception 'Owner Library status pending amount/count is wrong';
+    raise exception 'Owner Course status pending amount/count is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 0
-    or (cash_position ->> 'cashWithStaff')::numeric <> 190 then
+    or (cash_position ->> 'cashWithStaff')::numeric <> 215 then
     raise exception 'Owner cash position did not combine Managers and Staff: %', cash_position;
   end if;
   if exists (

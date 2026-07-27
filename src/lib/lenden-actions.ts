@@ -513,13 +513,23 @@ async function canManageBusinessRecord(
   }
   const actor = await businessMember(admin, profile.businessId, actorProfileId);
   if (!actor || actor.role !== "staff" || actor.status !== "active" || !actor.active) return false;
-  return profileHasBusinessUnitAccess(
-    admin,
-    profile.businessId,
-    actor.id,
-    actor.role,
-    businessType,
-  );
+  const [managerHasAccess, staffHasAccess] = await Promise.all([
+    profileHasBusinessUnitAccess(
+      admin,
+      profile.businessId,
+      profile.id,
+      profile.businessRole,
+      businessType,
+    ),
+    profileHasBusinessUnitAccess(
+      admin,
+      profile.businessId,
+      actor.id,
+      actor.role,
+      businessType,
+    ),
+  ]);
+  return managerHasAccess && staffHasAccess;
 }
 
 async function hasBusinessCollectionAccess(admin: SupabaseAdminClient, profile: LendenActionProfile, business: BusinessType) {
@@ -3591,10 +3601,17 @@ const handlers = {
       ?? (direction === "sent_to_user" ? asString(formData, "to_profile_id") : asString(formData, "from_profile_id"));
     const amount = asNumber(formData, "amount") ?? 0;
     const businessType = asString(formData, "business_type") as BusinessType | null;
+    const autoAllocateBusinessUnits = asBool(formData, "auto_allocate_business_units");
     const settlementDate = asString(formData, "settlement_date") ?? dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
     const requestKey = idempotencyKey ?? crypto.randomUUID();
-    if (!counterpartyProfileId || amount <= 0 || !businessType || !businessPermissions[businessType]) {
-      return fail("Choose a user, business unit, and amount.");
+    if (!counterpartyProfileId || amount <= 0) {
+      return fail("Choose a user and enter an amount greater than zero.");
+    }
+    if (!autoAllocateBusinessUnits && (!businessType || !businessPermissions[businessType])) {
+      return fail("Choose a business unit.");
+    }
+    if (autoAllocateBusinessUnits && direction !== "received_from_user") {
+      return fail("Automatic cash allocation is available only when receiving cash.");
     }
     if (counterpartyProfileId === profile.id) return fail("Choose another user.");
     if (!isIsoDate(settlementDate)) return fail("Choose a valid settlement date.");
@@ -3609,27 +3626,6 @@ const handlers = {
     if (isBusinessSalesAgent(selectedProfile.role)) {
       return fail("Use the agent incentive payout flow for a sales agent.");
     }
-    const managerReceivingFromStaff = profile.businessRole === "co_owner"
-      && direction === "received_from_user"
-      && selectedProfile.role === "staff";
-    if (!managerReceivingFromStaff && !(await profileHasBusinessUnitAccess(
-      admin,
-      profile.businessId,
-      profile.id,
-      profile.businessRole,
-      businessType,
-    ))) {
-      return fail("You do not have access to this cash business unit.");
-    }
-    if (!(await profileHasBusinessUnitAccess(
-      admin,
-      profile.businessId,
-      selectedProfile.id,
-      selectedProfile.role,
-      businessType,
-    ))) {
-      return fail("The selected user is not assigned to this business unit.");
-    }
     if (profile.businessRole === "co_owner") {
       if (direction === "received_from_user" && selectedProfile.role !== "staff") {
         return fail("A Manager can receive cash only from Staff.");
@@ -3640,9 +3636,9 @@ const handlers = {
     } else if (
       profile.businessRole === "primary_owner"
       && direction === "received_from_user"
-      && selectedProfile.role !== "co_owner"
+      && !["co_owner", "staff"].includes(selectedProfile.role)
     ) {
-      return fail("The Owner can receive cash only from a Manager.");
+      return fail("The Owner can receive cash only from a Manager or Staff member.");
     } else if (
       profile.businessRole === "primary_owner"
       && direction === "sent_to_user"
@@ -3660,97 +3656,254 @@ const handlers = {
       (senderRole === "co_owner" && receiverRole === "primary_owner")
     ) ? "settlement" : "transfer";
 
-    const existingMovement = await existingByClientRequest<{
-      id: string;
-      type: "transfer" | "settlement";
-      from_profile_id: string;
-      to_profile_id: string | null;
-      business_type: BusinessType | null;
-    }>(
-      admin,
-      "money_movements",
-      "requested_by",
-      profile.id,
-      requestKey,
-      "id,type,from_profile_id,to_profile_id,business_type",
-    );
-    if (existingMovement) {
+    const recordMovement = async (
+      allocatedBusinessType: BusinessType,
+      allocatedAmount: number,
+      movementRequestKey: string,
+      checkSenderBalance: boolean,
+    ) => {
+      const existingMovement = await existingByClientRequest<{
+        id: string;
+        type: "transfer" | "settlement";
+        amount: number | string;
+        from_profile_id: string;
+        to_profile_id: string | null;
+        business_type: BusinessType | null;
+      }>(
+        admin,
+        "money_movements",
+        "requested_by",
+        profile.id,
+        movementRequestKey,
+        "id,type,amount,from_profile_id,to_profile_id,business_type",
+      );
+      const postedAmount = existingMovement ? Number(existingMovement.amount) : allocatedAmount;
+      const postedBusinessType = existingMovement?.business_type ?? allocatedBusinessType;
+      if (existingMovement) {
+        await ensureLedgerEntry(admin, {
+          accountProfileId: existingMovement.from_profile_id,
+          businessType: postedBusinessType,
+          amount: -postedAmount,
+          entryDate: settlementDate,
+          sourceType: existingMovement.type,
+          sourceId: existingMovement.id,
+          description: `Cash sent to ${direction === "received_from_user" ? profile.full_name : selectedProfile.full_name}`,
+          createdBy: profile.id,
+        });
+        await ensureLedgerEntry(admin, {
+          accountProfileId: existingMovement.to_profile_id,
+          businessType: postedBusinessType,
+          amount: postedAmount,
+          entryDate: settlementDate,
+          sourceType: existingMovement.type,
+          sourceId: existingMovement.id,
+          description: `Cash received from ${direction === "received_from_user" ? selectedProfile.full_name : profile.full_name}`,
+          createdBy: profile.id,
+        });
+        return existingMovement.id;
+      }
+
+      if (checkSenderBalance) {
+        const senderBalance = await profileCashBalanceAt(
+          admin,
+          profile.businessId,
+          fromProfileId,
+          allocatedBusinessType,
+          settlementDate,
+        );
+        if (senderRole !== "primary_owner") {
+          if (senderBalance <= 0) return null;
+          if (moneyToCents(allocatedAmount) > moneyToCents(senderBalance)) return null;
+        }
+      }
+
+      const movementResult = await admin
+        .from("money_movements")
+        .insert({
+          type: movementType,
+          mode: "cash",
+          amount: allocatedAmount,
+          business_type: allocatedBusinessType,
+          from_profile_id: fromProfileId,
+          to_profile_id: toProfileId,
+          status: "accepted",
+          requested_by: profile.id,
+          responded_by: profile.id,
+          responded_at: new Date().toISOString(),
+          client_request_id: movementRequestKey,
+          note: asString(formData, "note"),
+        })
+        .select("id")
+        .single();
+      const movement = typedData<{ id: string }>(movementResult);
+      if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not settle cash.");
+
       await ensureLedgerEntry(admin, {
-        accountProfileId: existingMovement.from_profile_id,
-        businessType: existingMovement.business_type ?? businessType,
-        amount: -amount,
+        accountProfileId: fromProfileId,
+        businessType: allocatedBusinessType,
+        amount: -allocatedAmount,
         entryDate: settlementDate,
-        sourceType: existingMovement.type,
-        sourceId: existingMovement.id,
+        sourceType: movementType,
+        sourceId: movement.id,
         description: `Cash sent to ${direction === "received_from_user" ? profile.full_name : selectedProfile.full_name}`,
         createdBy: profile.id,
       });
       await ensureLedgerEntry(admin, {
-        accountProfileId: existingMovement.to_profile_id,
-        businessType: existingMovement.business_type ?? businessType,
-        amount,
+        accountProfileId: toProfileId,
+        businessType: allocatedBusinessType,
+        amount: allocatedAmount,
         entryDate: settlementDate,
-        sourceType: existingMovement.type,
-        sourceId: existingMovement.id,
+        sourceType: movementType,
+        sourceId: movement.id,
         description: `Cash received from ${direction === "received_from_user" ? selectedProfile.full_name : profile.full_name}`,
         createdBy: profile.id,
       });
-      return ok(direction === "received_from_user" ? "Received payment recorded." : "Sent payment recorded.");
+      return movement.id;
+    };
+
+    if (autoAllocateBusinessUnits) {
+      let eligibleBusinessTypes: BusinessType[] = [];
+      if (profile.businessRole === "co_owner" && selectedProfile.role === "staff") {
+        const [managerScopesResponse, staffAssignmentsResponse] = await Promise.all([
+          admin
+            .from("business_manager_unit_scopes")
+            .select("business_type")
+            .eq("business_id", profile.businessId)
+            .eq("manager_profile_id", profile.id),
+          admin
+            .from("business_staff_unit_assignments")
+            .select("business_type")
+            .eq("business_id", profile.businessId)
+            .eq("staff_profile_id", selectedProfile.id),
+        ]);
+        if (managerScopesResponse.error) throw new Error(managerScopesResponse.error.message);
+        if (staffAssignmentsResponse.error) throw new Error(staffAssignmentsResponse.error.message);
+        const managerTypes = new Set(
+          typedDataArray<{ business_type: BusinessType }>(managerScopesResponse)
+            .map((scope) => scope.business_type),
+        );
+        const staffTypes = new Set(
+          typedDataArray<{ business_type: BusinessType }>(staffAssignmentsResponse)
+            .map((assignment) => assignment.business_type),
+        );
+        eligibleBusinessTypes = (Object.keys(businessPermissions) as BusinessType[])
+          .filter((type) => managerTypes.has(type) && staffTypes.has(type));
+      } else if (profile.businessRole === "primary_owner" && ["co_owner", "staff"].includes(selectedProfile.role)) {
+        const unitAccessResponse = selectedProfile.role === "co_owner"
+          ? await admin
+              .from("business_manager_unit_scopes")
+              .select("business_type")
+              .eq("business_id", profile.businessId)
+              .eq("manager_profile_id", selectedProfile.id)
+          : await admin
+              .from("business_staff_unit_assignments")
+              .select("business_type")
+              .eq("business_id", profile.businessId)
+              .eq("staff_profile_id", selectedProfile.id);
+        if (unitAccessResponse.error) throw new Error(unitAccessResponse.error.message);
+        const memberTypes = new Set(
+          typedDataArray<{ business_type: BusinessType }>(unitAccessResponse)
+            .map((scope) => scope.business_type),
+        );
+        eligibleBusinessTypes = (Object.keys(businessPermissions) as BusinessType[])
+          .filter((type) => memberTypes.has(type));
+      }
+
+      if (eligibleBusinessTypes.length === 0) {
+        return fail(
+          profile.businessRole === "co_owner"
+            ? "This Staff member does not share a business unit with you."
+            : `This ${selectedProfile.role === "staff" ? "Staff member" : "Manager"} has no assigned business unit with available cash.`,
+        );
+      }
+
+      const balances = await Promise.all(
+        eligibleBusinessTypes.map(async (type) => ({
+          businessType: type,
+          balance: await profileCashBalanceAt(
+            admin,
+            profile.businessId,
+            fromProfileId,
+            type,
+            settlementDate,
+          ),
+        })),
+      );
+      const availableCents = balances.reduce(
+        (sum, bucket) => sum + Math.max(moneyToCents(bucket.balance), 0),
+        0,
+      );
+      const requestedCents = moneyToCents(amount);
+      if (availableCents <= 0) return fail("No cash is available to receive from this user.");
+      if (requestedCents > availableCents) {
+        return fail("Amount is higher than this user's available cash balance.");
+      }
+
+      let remainingCents = requestedCents;
+      const allocations = balances.flatMap((bucket) => {
+        if (remainingCents <= 0) return [];
+        const allocatedCents = Math.min(Math.max(moneyToCents(bucket.balance), 0), remainingCents);
+        if (allocatedCents <= 0) return [];
+        remainingCents -= allocatedCents;
+        return [{ businessType: bucket.businessType, amount: allocatedCents / 100 }];
+      });
+      const movementIds: string[] = [];
+      for (const allocation of allocations) {
+        const movementId = await recordMovement(
+          allocation.businessType,
+          allocation.amount,
+          `${requestKey.slice(0, 120)}:closing:${allocation.businessType}`,
+          false,
+        );
+        if (movementId) movementIds.push(movementId);
+      }
+
+      await createNotifications(admin, {
+        recipientIds: [counterpartyProfileId],
+        actorId: profile.id,
+        title: "Cash marked received",
+        body: `${profile.full_name} marked ${amount} as received from you for ${settlementDate}.`,
+        category: "transfer",
+        tone: "success",
+        eventKey: `cash-settlement:auto:${requestKey}`,
+        metadata: { movement_ids: movementIds.join(","), amount, settlement_date: settlementDate, direction },
+      });
+      return ok("Received payment recorded.");
     }
 
-    const senderBalance = await profileCashBalanceAt(
-      admin,
-      profile.businessId,
-      fromProfileId,
-      businessType,
-      settlementDate,
-    );
-    if (senderRole !== "primary_owner") {
-      if (senderBalance <= 0) return fail("No cash is available to send from this user.");
-      if (amount > senderBalance) return fail("Amount is higher than this user's closing balance.");
+    const selectedBusinessType = businessType as BusinessType;
+    const [actorHasAccess, counterpartyHasAccess] = await Promise.all([
+      profileHasBusinessUnitAccess(
+        admin,
+        profile.businessId,
+        profile.id,
+        profile.businessRole,
+        selectedBusinessType,
+      ),
+      profileHasBusinessUnitAccess(
+        admin,
+        profile.businessId,
+        selectedProfile.id,
+        selectedProfile.role,
+        selectedBusinessType,
+      ),
+    ]);
+    if (!actorHasAccess) return fail("You do not have access to this cash business unit.");
+    if (!counterpartyHasAccess) return fail("The selected user is not assigned to this business unit.");
+
+    const movementId = await recordMovement(selectedBusinessType, amount, requestKey, true);
+    if (!movementId) {
+      const senderBalance = await profileCashBalanceAt(
+        admin,
+        profile.businessId,
+        fromProfileId,
+        selectedBusinessType,
+        settlementDate,
+      );
+      return senderBalance <= 0
+        ? fail("No cash is available to send from this user.")
+        : fail("Amount is higher than this user's closing balance.");
     }
-
-    const movementResult = await admin
-      .from("money_movements")
-      .insert({
-        type: movementType,
-        mode: "cash",
-        amount,
-        business_type: businessType,
-        from_profile_id: fromProfileId,
-        to_profile_id: toProfileId,
-        status: "accepted",
-        requested_by: profile.id,
-        responded_by: profile.id,
-        responded_at: new Date().toISOString(),
-        client_request_id: requestKey,
-        note: asString(formData, "note"),
-      })
-      .select("id")
-      .single();
-    const movement = typedData<{ id: string }>(movementResult);
-    if (movementResult.error || !movement) throw new Error(movementResult.error?.message ?? "Could not settle cash.");
-
-    await ensureLedgerEntry(admin, {
-      accountProfileId: fromProfileId,
-      businessType,
-      amount: -amount,
-      entryDate: settlementDate,
-      sourceType: movementType,
-      sourceId: movement.id,
-      description: `Cash sent to ${direction === "received_from_user" ? profile.full_name : selectedProfile.full_name}`,
-      createdBy: profile.id,
-    });
-    await ensureLedgerEntry(admin, {
-      accountProfileId: toProfileId,
-      businessType,
-      amount,
-      entryDate: settlementDate,
-      sourceType: movementType,
-      sourceId: movement.id,
-      description: `Cash received from ${direction === "received_from_user" ? selectedProfile.full_name : profile.full_name}`,
-      createdBy: profile.id,
-    });
 
     await createNotifications(admin, {
       recipientIds: [counterpartyProfileId],
@@ -3762,8 +3915,8 @@ const handlers = {
           : `${profile.full_name} marked ${amount} as sent to you for ${settlementDate}.`,
       category: "transfer",
       tone: "success",
-      eventKey: `cash-settlement:${movement.id}`,
-      metadata: { movement_id: movement.id, amount, settlement_date: settlementDate, direction },
+      eventKey: `cash-settlement:${movementId}`,
+      metadata: { movement_id: movementId, amount, settlement_date: settlementDate, direction },
     });
 
     return ok(direction === "received_from_user" ? "Received payment recorded." : "Sent payment recorded.");
