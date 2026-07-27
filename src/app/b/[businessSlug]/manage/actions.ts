@@ -54,6 +54,37 @@ function submittedPermissions(formData: FormData) {
   ))];
 }
 
+function submittedUnitAccess(
+  formData: FormData,
+  role: Exclude<BusinessRole, "primary_owner">,
+) {
+  if (role === "sales_agent") {
+    return { units: [] as BusinessType[], staffManagers: {} as Record<string, string> };
+  }
+  const allowedUnits = new Set<BusinessType>(["library", "guest_house", "course", "general"]);
+  const units = [...new Set(formData.getAll("unit_scopes").filter(
+    (unit): unit is BusinessType => typeof unit === "string" && allowedUnits.has(unit as BusinessType),
+  ))];
+  const staffManagers = role === "staff"
+    ? Object.fromEntries(units.map((unit) => [unit, read(formData, `unit_manager_${unit}`)]))
+    : {};
+  return { units, staffManagers };
+}
+
+function validateUnitAccess(
+  role: Exclude<BusinessRole, "primary_owner">,
+  units: BusinessType[],
+): BusinessUserActionState | null {
+  if ((role === "co_owner" || role === "staff") && units.length === 0) {
+    return {
+      ok: false,
+      message: `Choose at least one business unit for this ${role === "co_owner" ? "Manager" : "Staff member"}.`,
+      fieldErrors: { unit_scopes: "Choose at least one business unit." },
+    };
+  }
+  return null;
+}
+
 async function constrainedStaffPermissions(input: {
   businessId: string;
   role: Exclude<BusinessRole, "primary_owner">;
@@ -227,6 +258,26 @@ async function updateBusinessMemberStatus(formData: FormData) {
       ? "The Owner cannot be removed. Transfer ownership first."
       : "Managers can remove only Staff and Sales Agents.");
   }
+  if (
+    context.accessMode === "member"
+    && context.membership?.role === "co_owner"
+    && membership.role === "staff"
+  ) {
+    const { data: assignments, error: assignmentsError } = await createAdminClient()
+      .from("business_staff_unit_assignments")
+      .select("manager_profile_id")
+      .eq("business_id", context.business.id)
+      .eq("staff_profile_id", membership.profile_id);
+    if (assignmentsError) throw assignmentsError;
+    const managerIds = new Set(
+      (assignments ?? [])
+        .map((assignment) => assignment.manager_profile_id)
+        .filter((managerId): managerId is string => Boolean(managerId)),
+    );
+    if (managerIds.size === 0 || [...managerIds].some((managerId) => managerId !== identity.id)) {
+      throw new Error("This Staff member also works outside your team. Ask the Owner to suspend their business access.");
+    }
+  }
   if (membership.status === nextStatus) return { status: nextStatus };
   const { error } = await client.from("business_memberships").update({
     status: nextStatus,
@@ -301,6 +352,7 @@ export async function createBusinessUserAction(
     const { identity, context } = await resolveBusinessContextFromRequest();
     const email = read(formData, "email").toLowerCase();
     const role = roleFromForm(formData);
+    const unitAccess = submittedUnitAccess(formData, role);
     if (!emailPattern.test(email)) {
       return {
         ok: false,
@@ -311,6 +363,8 @@ export async function createBusinessUserAction(
     if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
       return { ok: false, message: "You cannot assign this business role." };
     }
+    const unitError = validateUnitAccess(role, unitAccess.units);
+    if (unitError) return unitError;
     const resolution = await resolveExactBusinessEmail(context.business.id, email);
     const preservedPermissions = await currentAccessPermissions({
       businessId: context.business.id,
@@ -332,11 +386,13 @@ export async function createBusinessUserAction(
         return { ok: false, message: "Managers cannot change another Manager." };
       }
       const client = await createClient({ businessId: context.business.id });
-      const { error } = await client.rpc("grant_business_access", {
+      const { error } = await client.rpc("grant_business_access_scoped", {
         target_business_id: context.business.id,
         target_profile_id: resolution.profile.id,
         target_role: role,
         target_permissions: permissions,
+        target_units: unitAccess.units,
+        target_staff_managers: unitAccess.staffManagers,
       });
       if (error) throw new Error(error.message);
       const baseUrl = await appBaseUrl();
@@ -368,6 +424,8 @@ export async function createBusinessUserAction(
       email,
       role,
       permissions,
+      unitScopes: unitAccess.units,
+      unitManagerAssignments: unitAccess.staffManagers,
       actorId: identity.id,
       actorName: identity.full_name,
     });
@@ -430,6 +488,7 @@ export async function updateBusinessMemberAccessAction(
     const { context } = await resolveBusinessContextFromRequest();
     const membershipId = read(formData, "membership_id");
     const role = roleFromForm(formData);
+    const unitAccess = submittedUnitAccess(formData, role);
     if (!membershipId) return { ok: false, message: "Choose a business member." };
 
     const client = await createClient({ businessId: context.business.id });
@@ -449,6 +508,8 @@ export async function updateBusinessMemberAccessAction(
     if (!canManageBusinessMemberRole(context.membership?.role, role, context.accessMode)) {
       return { ok: false, message: "You cannot assign this business role." };
     }
+    const unitError = validateUnitAccess(role, unitAccess.units);
+    if (unitError) return unitError;
 
     const admin = createAdminClient();
     const { data: targetProfile, error: profileError } = await admin
@@ -472,11 +533,13 @@ export async function updateBusinessMemberAccessAction(
       submitted: submittedPermissions(formData),
       preserved: preservedPermissions,
     });
-    const { error } = await client.rpc("grant_business_access", {
+    const { error } = await client.rpc("grant_business_access_scoped", {
       target_business_id: context.business.id,
       target_profile_id: membership.profile_id,
       target_role: role,
       target_permissions: permissions,
+      target_units: unitAccess.units,
+      target_staff_managers: unitAccess.staffManagers,
     });
     if (error) throw new Error(error.message);
 

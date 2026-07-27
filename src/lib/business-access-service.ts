@@ -4,7 +4,7 @@ import { appBaseUrl } from "@/lib/auth-helpers";
 import { sendBusinessInvitationEmail } from "@/lib/email";
 import { createInvitationToken, invitationTokenHash } from "@/lib/invitations";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { BusinessRole, MembershipStatus } from "@/lib/types";
+import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
 
 export type ExactEmailResolution = {
   email: string;
@@ -81,6 +81,8 @@ export async function createOrRegenerateBusinessInvitation(input: {
   email: string;
   role: Exclude<BusinessRole, "primary_owner">;
   permissions: string[];
+  unitScopes: BusinessType[];
+  unitManagerAssignments: Record<string, string>;
   actorId: string;
   actorName: string;
 }) {
@@ -100,6 +102,8 @@ export async function createOrRegenerateBusinessInvitation(input: {
     email: input.email,
     intended_role: input.role,
     permissions: input.permissions,
+    unit_scopes: input.unitScopes,
+    unit_manager_assignments: input.unitManagerAssignments,
     token_hash: tokenHash,
     invited_by: input.actorId,
     expires_at: expiresAt,
@@ -118,7 +122,14 @@ export async function createOrRegenerateBusinessInvitation(input: {
     event_type: existing ? "invitation_regenerated" : "invitation_created",
     entity_type: "business_invitation",
     entity_id: invitation.id,
-    after_data: { email: input.email, role: input.role, permissions: input.permissions, expires_at: expiresAt },
+    after_data: {
+      email: input.email,
+      role: input.role,
+      permissions: input.permissions,
+      unit_scopes: input.unitScopes,
+      unit_manager_assignments: input.unitManagerAssignments,
+      expires_at: expiresAt,
+    },
   });
   const delivered = await deliverInvitation({
     invitationId: invitation.id,
@@ -142,7 +153,7 @@ export async function regenerateBusinessInvitation(input: {
   const admin = createAdminClient();
   const { data: invitation, error } = await admin
     .from("business_invitations")
-    .select("id,email,intended_role,permissions,status")
+    .select("id,email,intended_role,permissions,unit_scopes,unit_manager_assignments,status")
     .eq("id", input.invitationId)
     .eq("business_id", input.businessId)
     .single();
@@ -153,6 +164,8 @@ export async function regenerateBusinessInvitation(input: {
     email: invitation.email,
     role: invitation.intended_role,
     permissions: invitation.permissions ?? [],
+    unitScopes: invitation.unit_scopes ?? [],
+    unitManagerAssignments: (invitation.unit_manager_assignments ?? {}) as Record<string, string>,
     actorId: input.actorId,
     actorName: input.actorName,
   });

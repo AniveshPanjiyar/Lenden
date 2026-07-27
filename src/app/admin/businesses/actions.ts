@@ -340,6 +340,15 @@ export async function createBusinessMemberAdminAction(
     if (Object.keys(fieldErrors).length > 0) return fieldFailure("Review the user details.", fieldErrors);
 
     const business = await lookupBusiness(businessId);
+    const { data: moduleRows, error: moduleError } = await createAdminClient()
+      .from("business_modules")
+      .select("module")
+      .eq("business_id", business.id)
+      .eq("enabled", true);
+    if (moduleError) throw new Error(moduleError.message);
+    const unitScopes = role === "sales_agent"
+      ? []
+      : (moduleRows ?? []).map((row) => row.module as BusinessType);
     const resolution = await resolveExactBusinessEmail(business.id, email);
     if (resolution.profile && (!resolution.profile.active || resolution.profile.accountStatus !== "active")) {
       return fieldFailure("This existing Lenden account is inactive.", {
@@ -349,11 +358,13 @@ export async function createBusinessMemberAdminAction(
     if (resolution.profile) {
       if (resolution.membership?.role === "primary_owner") return fieldFailure("This user is already the Owner.", { email: "Use the ownership workflow." });
       const client = await createClient({ businessId: business.id });
-      const { data: membershipId, error } = await client.rpc("grant_business_access", {
+      const { data: membershipId, error } = await client.rpc("grant_business_access_scoped", {
         target_business_id: business.id,
         target_profile_id: resolution.profile.id,
         target_role: role,
         target_permissions: permissions,
+        target_units: unitScopes,
+        target_staff_managers: {},
       });
       if (error) throw new Error(error.message);
       const baseUrl = await appBaseUrl();
@@ -369,7 +380,17 @@ export async function createBusinessMemberAdminAction(
       };
     }
 
-    const invitation = await createOrRegenerateBusinessInvitation({ businessId: business.id, businessName: business.name, email, role: role as Exclude<BusinessRole, "primary_owner">, permissions, actorId: user.id, actorName: actor.full_name });
+    const invitation = await createOrRegenerateBusinessInvitation({
+      businessId: business.id,
+      businessName: business.name,
+      email,
+      role: role as Exclude<BusinessRole, "primary_owner">,
+      permissions,
+      unitScopes,
+      unitManagerAssignments: {},
+      actorId: user.id,
+      actorName: actor.full_name,
+    });
     revalidateBusinessAdmin(business.id, business.slug);
     return {
       ok: true,

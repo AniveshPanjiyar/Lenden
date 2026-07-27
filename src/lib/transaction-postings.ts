@@ -3,6 +3,7 @@ import type {
   AgentSettlement,
   DailyPostingEvent,
   Expense,
+  FinancialActivity,
   LedgerEntry,
   MoneyMovement,
   Payment,
@@ -12,6 +13,43 @@ import type { DateFilterKey } from "@/lib/view-state";
 
 function numberValue(value: number | string | null | undefined) {
   return Number(value ?? 0);
+}
+
+export function financialActivityPostingEvents(
+  activity: FinancialActivity[],
+  lens: FinancialActivity["lens"],
+): DailyPostingEvent[] {
+  return activity
+    .filter((item) =>
+      item.lens === lens
+      && item.category !== "pending"
+      && item.approval_date,
+    )
+    .map((item) => {
+      const direction = item.category === "collection" || item.category === "in" ? "in" as const : "out" as const;
+      const component = numberValue(item.cash_amount) > 0 && numberValue(item.online_amount) === 0
+        ? "cash" as const
+        : numberValue(item.online_amount) > 0 && numberValue(item.cash_amount) === 0
+          ? "online" as const
+          : null;
+      return {
+        id: item.activity_id,
+        source_type: item.source_type,
+        source_id: item.source_id,
+        business_type: item.business_type,
+        component,
+        profile_id: (lens === "personal" ? item.flow_profile_id : item.actor_profile_id) ?? item.actor_profile_id,
+        counterparty_profile_id: item.counterparty_profile_id,
+        direction,
+        amount: numberValue(item.amount),
+        cash_amount: numberValue(item.cash_amount),
+        online_amount: numberValue(item.online_amount),
+        transaction_date: item.transaction_date,
+        approval_date: item.approval_date ?? item.transaction_date,
+        approved_at: item.created_at,
+        approved_by: null,
+      };
+    });
 }
 
 export function paymentCashValue(payment: Payment) {
@@ -72,13 +110,13 @@ export function buildDailyPostingEvents({
 
     if (cashAmount > 0 && paymentValueApproved(payment, "cash", ownerProfileIds)) {
       const ledgerEntry = recordLedgerEntry(ledger, "payment", payment.id, "in");
-      const profileId = payment.assigned_profile_id ?? payment.current_holder_id ?? payment.collected_by;
       events.push({
         id: `payment:${payment.id}:cash`,
         source_type: "payment",
         source_id: payment.id,
+        business_type: payment.business_type,
         component: "cash",
-        profile_id: profileId,
+        profile_id: payment.collected_by,
         counterparty_profile_id: null,
         direction: "in",
         amount: cashAmount,
@@ -96,8 +134,9 @@ export function buildDailyPostingEvents({
         id: `payment:${payment.id}:online`,
         source_type: "payment",
         source_id: payment.id,
+        business_type: payment.business_type,
         component: "online",
-        profile_id: payment.assigned_profile_id ?? payment.collected_by,
+        profile_id: payment.collected_by,
         counterparty_profile_id: null,
         direction: "in",
         amount: onlineAmount,
@@ -120,6 +159,7 @@ export function buildDailyPostingEvents({
       id: `expense:${expense.id}`,
       source_type: "expense",
       source_id: expense.id,
+      business_type: expense.business_type ?? "general",
       component: online ? "online" : "cash",
       profile_id: ledgerEntry?.account_profile_id ?? expense.spent_by,
       counterparty_profile_id: null,
@@ -135,18 +175,29 @@ export function buildDailyPostingEvents({
   });
 
   movements.forEach((movement) => {
-    if (movement.payment_id) return;
     if (movement.status !== "accepted" || !movement.to_profile_id) return;
-    const amount = numberValue(movement.amount);
+    const payment = movement.payment_id
+      ? payments.find((candidate) => candidate.id === movement.payment_id)
+      : null;
+    const paymentCashAmount = payment ? paymentCashValue(payment) : 0;
+    if (payment && (
+      paymentCashAmount <= 0 ||
+      !paymentValueApproved(payment, "cash", ownerProfileIds)
+    )) return;
+    const amount = payment ? paymentCashAmount : numberValue(movement.amount);
     const transactionDate = dateIsoInTimeZone(movement.created_at, timezone);
     const outgoingLedger = recordLedgerEntry(ledger, movement.type, movement.id, "out");
     const incomingLedger = recordLedgerEntry(ledger, movement.type, movement.id, "in");
-    const approvalDate = outgoingLedger?.entry_date ?? incomingLedger?.entry_date ?? dateIsoInTimeZone(movement.responded_at ?? movement.created_at, timezone);
+    const movementPostedOn = outgoingLedger?.entry_date ?? incomingLedger?.entry_date ?? dateIsoInTimeZone(movement.responded_at ?? movement.created_at, timezone);
+    const approvalDate = payment
+      ? [payment.cash_posted_on ?? payment.payment_date, movementPostedOn].sort().at(-1) ?? movementPostedOn
+      : movementPostedOn;
     const sourceType = movement.type;
     events.push({
       id: `${sourceType}:${movement.id}:out`,
       source_type: sourceType,
       source_id: movement.id,
+      business_type: movement.business_type ?? payment?.business_type ?? null,
       component: "cash",
       profile_id: movement.from_profile_id,
       counterparty_profile_id: movement.to_profile_id,
@@ -163,6 +214,7 @@ export function buildDailyPostingEvents({
       id: `${sourceType}:${movement.id}:in`,
       source_type: sourceType,
       source_id: movement.id,
+      business_type: movement.business_type ?? payment?.business_type ?? null,
       component: "cash",
       profile_id: movement.to_profile_id,
       counterparty_profile_id: movement.from_profile_id,
@@ -188,6 +240,7 @@ export function buildDailyPostingEvents({
       id: `agent-settlement:${settlement.id}:out`,
       source_type: "agent_settlement",
       source_id: settlement.id,
+      business_type: null,
       component: "cash",
       profile_id: settlement.paid_by,
       counterparty_profile_id: settlement.agent_id,
@@ -204,6 +257,7 @@ export function buildDailyPostingEvents({
       id: `agent-settlement:${settlement.id}:in`,
       source_type: "agent_settlement",
       source_id: settlement.id,
+      business_type: null,
       component: "cash",
       profile_id: settlement.agent_id,
       counterparty_profile_id: settlement.paid_by,

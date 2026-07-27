@@ -48,6 +48,34 @@ where business_id = '72000000-0000-4000-8000-000000000001'
     '71000000-0000-4000-8000-000000000004'
   );
 
+insert into public.business_manager_unit_scopes (
+  business_id, manager_profile_id, business_type, created_by
+) values
+  ('72000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000006', 'general', '71000000-0000-4000-8000-000000000001'),
+  ('72000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000006', 'library', '71000000-0000-4000-8000-000000000001'),
+  ('72000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000006', 'course', '71000000-0000-4000-8000-000000000001');
+
+insert into public.business_staff_unit_assignments (
+  business_id, staff_profile_id, business_type, manager_profile_id, created_by
+)
+select
+  '72000000-0000-4000-8000-000000000001',
+  staff_id,
+  unit,
+  '71000000-0000-4000-8000-000000000006',
+  '71000000-0000-4000-8000-000000000001'
+from unnest(array[
+  '71000000-0000-4000-8000-000000000002'::uuid,
+  '71000000-0000-4000-8000-000000000003'::uuid,
+  '71000000-0000-4000-8000-000000000004'::uuid,
+  '71000000-0000-4000-8000-000000000005'::uuid
+]) staff_id
+cross join unnest(array[
+  'general'::public.payment_business,
+  'library'::public.payment_business,
+  'course'::public.payment_business
+]) unit;
+
 insert into public.payments (
   id, business_id, business_type, mode, amount, cash_collection, online_collection,
   description, collected_by, assigned_profile_id, current_holder_id, approval_status,
@@ -74,9 +102,7 @@ insert into public.money_movements (
   ('74000000-0000-4000-8000-000000000002', '72000000-0000-4000-8000-000000000001', 'transfer', 'online', 75,
     '73000000-0000-4000-8000-000000000002', '71000000-0000-4000-8000-000000000002', '71000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000002'),
   ('74000000-0000-4000-8000-000000000003', '72000000-0000-4000-8000-000000000001', 'transfer', 'cash', 25,
-    '73000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000002', '71000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000002'),
-  ('74000000-0000-4000-8000-000000000004', '72000000-0000-4000-8000-000000000001', 'transfer', 'cash', 30,
-    '73000000-0000-4000-8000-000000000004', '71000000-0000-4000-8000-000000000002', '71000000-0000-4000-8000-000000000005', '71000000-0000-4000-8000-000000000002');
+    '73000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000002', '71000000-0000-4000-8000-000000000003', '71000000-0000-4000-8000-000000000002');
 
 do $$
 begin
@@ -254,6 +280,7 @@ begin
   end;
 end $$;
 
+reset role;
 do $$
 begin
   if not exists (
@@ -271,6 +298,8 @@ begin
 end $$;
 
 -- Repeating the same response is idempotent.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-000000000003', true);
 select public.lenden_respond_payment_transfer(
   '74000000-0000-4000-8000-000000000001', 'accepted', current_date
 );
@@ -306,16 +335,22 @@ begin
   ) then raise exception 'Rejected transfer changed assignment or custody'; end if;
 end $$;
 
-select set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-000000000005', true);
+select set_config('request.jwt.claim.sub', '71000000-0000-4000-8000-000000000002', true);
 do $$
 begin
   begin
-    perform public.lenden_respond_payment_transfer(
-      '74000000-0000-4000-8000-000000000004', 'accepted', current_date
+    insert into public.money_movements (
+      id, type, mode, amount, payment_id, from_profile_id, to_profile_id, requested_by,
+      business_type, client_request_id
+    ) values (
+      '74000000-0000-4000-8000-000000000004', 'transfer', 'cash', 30,
+      '73000000-0000-4000-8000-000000000004', '71000000-0000-4000-8000-000000000002',
+      '71000000-0000-4000-8000-000000000005', '71000000-0000-4000-8000-000000000002',
+      'general', 'recipient-permission-denied'
     );
-    raise exception 'Recipient without permission accepted a transfer';
+    raise exception 'Recipient without collection permission received a transfer request';
   exception when others then
-    if sqlerrm = 'Recipient without permission accepted a transfer' then raise; end if;
+    if sqlerrm = 'Recipient without collection permission received a transfer request' then raise; end if;
   end;
 end $$;
 

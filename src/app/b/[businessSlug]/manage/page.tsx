@@ -5,7 +5,17 @@ import { safeReturnPath, withReturnTo } from "@/lib/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { invitationState } from "@/lib/invitations";
 import { canManageBusinessMemberRole, isBusinessOwner, isPrimaryOwner, resolveBusinessContext } from "@/lib/tenancy";
-import type { BusinessMembership, BusinessType, ChangeRequest, Course, Profile, ReferralCode, Room } from "@/lib/types";
+import type {
+  BusinessMembership,
+  BusinessType,
+  ChangeRequest,
+  Course,
+  ManagerUnitScope,
+  Profile,
+  ReferralCode,
+  Room,
+  StaffUnitAssignment,
+} from "@/lib/types";
 import BusinessUsersSettings from "./business-users-settings";
 import {
   BusinessModulesSettings,
@@ -42,6 +52,8 @@ export default async function BusinessManagePage({
     { data: profiles },
     { data: modules },
     { data: memberPermissions },
+    { data: managerUnitScopes },
+    { data: staffUnitAssignments },
     { data: invitations, error: invitationError },
     { data: rooms, error: roomError },
     { data: courses, error: courseError },
@@ -52,7 +64,9 @@ export default async function BusinessManagePage({
     client.from("profiles").select("id,email,full_name,avatar_url,platform_role,account_status,must_change_password,last_business_id,active").order("full_name"),
     client.from("business_modules").select("module,enabled").eq("business_id", context.business.id),
     client.from("business_member_permissions").select("membership_id,permission"),
-    createAdminClient().from("business_invitations").select("id,email,intended_role,permissions,status,expires_at,delivery_status,delivery_error,last_sent_at,created_at,updated_at").eq("business_id", context.business.id).eq("status", "pending").order("created_at", { ascending: false }),
+    client.from("business_manager_unit_scopes").select("business_id,manager_profile_id,business_type,created_by,created_at").eq("business_id", context.business.id),
+    client.from("business_staff_unit_assignments").select("business_id,staff_profile_id,business_type,manager_profile_id,created_by,created_at,updated_at").eq("business_id", context.business.id),
+    createAdminClient().from("business_invitations").select("id,email,intended_role,permissions,unit_scopes,unit_manager_assignments,status,expires_at,delivery_status,delivery_error,last_sent_at,created_at,updated_at").eq("business_id", context.business.id).eq("status", "pending").order("created_at", { ascending: false }),
     client.from("rooms").select("*").eq("business_id", context.business.id).order("room_number"),
     client.from("courses").select("*").eq("business_id", context.business.id).order("kind").order("name"),
     client.from("referral_codes").select("*").eq("business_id", context.business.id).order("code"),
@@ -65,7 +79,25 @@ export default async function BusinessManagePage({
   if (changeRequestError) throw new Error(changeRequestError.message);
   const profileMap = new Map(((profiles ?? []) as Array<Pick<Profile, "id" | "full_name" | "email" | "active">>).map((profile) => [profile.id, profile]));
   const memberRows = (memberships ?? []) as BusinessMembership[];
-  const managers = memberRows.filter((membership) => membership.role === "co_owner" && membership.status === "active");
+  const managerScopeRows = (managerUnitScopes ?? []) as ManagerUnitScope[];
+  const staffAssignmentRows = (staffUnitAssignments ?? []) as StaffUnitAssignment[];
+  const actorIsManager = context.accessMode === "member" && context.membership?.role === "co_owner";
+  const managerStaffIds = new Set(
+    staffAssignmentRows
+      .filter((assignment) => assignment.manager_profile_id === identity.id)
+      .map((assignment) => assignment.staff_profile_id),
+  );
+  const visibleMemberRows = actorIsManager
+    ? memberRows.filter((membership) =>
+        membership.profile_id === identity.id
+        || membership.role === "primary_owner"
+        || membership.role === "sales_agent"
+        || (membership.role === "staff" && managerStaffIds.has(membership.profile_id)))
+    : memberRows;
+  const managers = memberRows.filter((membership) =>
+    membership.role === "co_owner"
+    && membership.status === "active"
+    && (!actorIsManager || membership.profile_id === identity.id));
   const enabledModules = new Set((modules ?? []).filter((module) => module.enabled).map((module) => module.module));
   const canManageBusinessSettings = context.accessMode === "support" || isPrimaryOwner(context.membership?.role);
   const canTransferOwnership = context.accessMode === "member" && isPrimaryOwner(context.membership?.role);
@@ -83,7 +115,7 @@ export default async function BusinessManagePage({
     rows[membershipId] = [...(rows[membershipId] ?? []), String(permission.permission)];
     return rows;
   }, {});
-  const businessUsers = memberRows.map((membership) => {
+  const businessUsers = visibleMemberRows.map((membership) => {
     const member = profileMap.get(membership.profile_id);
     return {
       membershipId: membership.id,
@@ -95,6 +127,18 @@ export default async function BusinessManagePage({
       profileActive: member?.active ?? false,
       canManage: canManageBusinessMemberRole(context.membership?.role, membership.role, context.accessMode),
       permissions: permissionsByMembership[membership.id] ?? [],
+      unitScopes: membership.role === "co_owner"
+        ? managerScopeRows.filter((scope) => scope.manager_profile_id === membership.profile_id).map((scope) => scope.business_type)
+        : membership.role === "staff"
+          ? staffAssignmentRows.filter((assignment) => assignment.staff_profile_id === membership.profile_id).map((assignment) => assignment.business_type)
+          : [],
+      unitManagers: membership.role === "staff"
+        ? Object.fromEntries(
+            staffAssignmentRows
+              .filter((assignment) => assignment.staff_profile_id === membership.profile_id)
+              .map((assignment) => [assignment.business_type, assignment.manager_profile_id ?? ""]),
+          )
+        : {},
       joinedAt: membership.joined_at,
       suspendedAt: membership.suspended_at ?? null,
       updatedAt: membership.updated_at ?? null,
@@ -111,6 +155,22 @@ export default async function BusinessManagePage({
     fullName: member.fullName,
     role: member.role,
   }));
+  const managerOptions = managers.map((membership) => ({
+    profileId: membership.profile_id,
+    fullName: profileMap.get(membership.profile_id)?.full_name ?? membership.profile_id,
+    unitScopes: managerScopeRows
+      .filter((scope) => scope.manager_profile_id === membership.profile_id)
+      .map((scope) => scope.business_type),
+  }));
+  const visibleInvitations = actorIsManager
+    ? (invitations ?? []).filter((invitation) =>
+        invitation.intended_role === "sales_agent"
+        || (
+          invitation.intended_role === "staff"
+          && Object.values((invitation.unit_manager_assignments ?? {}) as Record<string, string>)
+            .includes(identity.id)
+        ))
+    : (invitations ?? []);
 
   return (
     <div className="authenticated-focused-page">
@@ -138,11 +198,13 @@ export default async function BusinessManagePage({
         <BusinessUsersSettings
           businessName={context.business.name}
           members={businessUsers}
-          invitations={(invitations ?? []).map((invitation) => ({
+          invitations={visibleInvitations.map((invitation) => ({
             id: invitation.id,
             email: invitation.email,
             role: invitation.intended_role,
             permissions: invitation.permissions ?? [],
+            unitScopes: invitation.unit_scopes ?? [],
+            unitManagers: (invitation.unit_manager_assignments ?? {}) as Record<string, string>,
             state: invitationState(invitation) === "expired" ? "expired" as const : "pending" as const,
             expiresAt: invitation.expires_at,
             lastSentAt: invitation.last_sent_at,
@@ -154,6 +216,7 @@ export default async function BusinessManagePage({
           canManageModules={canManageBusinessSettings}
           currentProfileId={identity.id}
           enabledModules={enabledModuleList}
+          managers={managerOptions}
         />
       ) : null}
 

@@ -18,9 +18,12 @@ import type {
   Course,
   CourseStudent,
   DashboardPayload,
+  DashboardSummary,
   Expense,
+  FinancialActivity,
   LedgerEntry,
   LibraryStudent,
+  ManagerUnitScope,
   MoneyMovement,
   OperationalPagePayload,
   Payment,
@@ -28,6 +31,7 @@ import type {
   ReferralCode,
   Room,
   StaffPermission,
+  StaffUnitAssignment,
   StudentCollectionPage,
   StudentDetailPayload,
   StudentRosterPayload,
@@ -128,10 +132,22 @@ async function loadBootstrap(
   profile: Profile,
   businessContext: BusinessContext,
 ): Promise<BootstrapPayload> {
-  const [membershipsResult, profilesResult, memberPermissionsResult, roomsResult, coursesResult, referralsResult, notificationsResult] = await Promise.all([
+  const [
+    membershipsResult,
+    profilesResult,
+    memberPermissionsResult,
+    managerUnitScopesResult,
+    staffUnitAssignmentsResult,
+    roomsResult,
+    coursesResult,
+    referralsResult,
+    notificationsResult,
+  ] = await Promise.all([
     supabase.from("business_memberships").select("id,business_id,profile_id,role,status,joined_at").eq("business_id", businessContext.business.id),
     supabase.from("profiles").select("id,email,full_name,avatar_url,platform_role,account_status,must_change_password,last_business_id,active").order("full_name"),
     supabase.from("business_member_permissions").select("membership_id,permission"),
+    supabase.from("business_manager_unit_scopes").select("business_id,manager_profile_id,business_type").eq("business_id", businessContext.business.id),
+    supabase.from("business_staff_unit_assignments").select("business_id,staff_profile_id,business_type,manager_profile_id").eq("business_id", businessContext.business.id),
     supabase.from("rooms").select("*").eq("business_id", businessContext.business.id).order("room_number"),
     supabase.from("courses").select("*").eq("business_id", businessContext.business.id).order("kind").order("name"),
     supabase.from("referral_codes").select("*").eq("business_id", businessContext.business.id).order("code"),
@@ -175,6 +191,8 @@ async function loadBootstrap(
         .filter((permission) => permission.profile_id === userId && !salesAgent)
         .map((permission) => permission.permission) ?? [],
     allPermissions: salesAgent ? [] : allPermissions,
+    managerUnitScopes: salesAgent ? [] : (managerUnitScopesResult.data ?? []) as ManagerUnitScope[],
+    staffUnitAssignments: salesAgent ? [] : (staffUnitAssignmentsResult.data ?? []) as StaffUnitAssignment[],
     profiles: salesAgent
       ? allProfiles.filter((item) => item.id === userId || isBusinessOwner(item.membership_role))
       : allProfiles,
@@ -303,6 +321,10 @@ async function loadDashboard(
     ledgerResult,
     closingSummariesResult,
     cashBalancesResult,
+    dashboardSummaryResult,
+    dashboardBusinessStatusResult,
+    dashboardCashPositionResult,
+    financialActivityResult,
     changesResult,
     agentSettlementsResult,
     closingMembershipsResult,
@@ -361,6 +383,36 @@ async function loadDashboard(
     needsDashboard
       ? supabase.rpc("lenden_current_cash_balances")
       : Promise.resolve({ data: [], error: null }),
+    needsDashboard
+      ? supabase.rpc("lenden_dashboard_summary", {
+          p_from: range.from,
+          p_to: range.to,
+          p_date_basis: dateFilterKey,
+          p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+        })
+      : Promise.resolve({ data: null, error: null }),
+    needsDashboard
+      ? supabase.rpc("lenden_dashboard_business_status", {
+          p_from: range.from,
+          p_to: range.to,
+          p_date_basis: dateFilterKey,
+          p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+        })
+      : Promise.resolve({ data: [], error: null }),
+    needsDashboard
+      ? supabase.rpc("lenden_dashboard_cash_position", {
+          p_as_of: range.to,
+          p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+        })
+      : Promise.resolve({ data: null, error: null }),
+    needsTransactions
+      ? supabase.rpc("lenden_financial_activity", {
+          p_from: range.from,
+          p_to: range.to,
+          p_date_basis: dateFilterKey,
+          p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+        })
+      : Promise.resolve({ data: [], error: null }),
     needsDashboard || needsTransactions || needsSettings
       ? supabase.from("record_change_requests").select("*").eq("business_id", bootstrap.businessContext.business.id).order("created_at", { ascending: false }).limit(100)
       : Promise.resolve({ data: [], error: null }),
@@ -388,6 +440,10 @@ async function loadDashboard(
   if (ledgerResult.error) throw new Error(ledgerResult.error.message);
   if (movementsResult.error) throw new Error(movementsResult.error.message);
   if (closingMembershipsResult.error) throw new Error(closingMembershipsResult.error.message);
+  if (dashboardSummaryResult.error) throw new Error(dashboardSummaryResult.error.message);
+  if (dashboardBusinessStatusResult.error) throw new Error(dashboardBusinessStatusResult.error.message);
+  if (dashboardCashPositionResult.error) throw new Error(dashboardCashPositionResult.error.message);
+  if (financialActivityResult.error) throw new Error(financialActivityResult.error.message);
 
   const movementRows = (movementsResult.data ?? []) as MoneyMovement[];
   const visibleMovementPaymentIds = new Set(
@@ -432,6 +488,44 @@ async function loadDashboard(
   }));
   const paymentRows = mergeById((paymentsResult.data ?? []) as Payment[], (pendingPaymentsResult.data ?? []) as Payment[]);
   const expenseRows = mergeById((expensesResult.data ?? []) as Expense[], (pendingExpensesResult.data ?? []) as Expense[]);
+  const dashboardBusinessStatus = ((dashboardBusinessStatusResult.data ?? []) as Array<{
+    business_type: BusinessType;
+    collections: number | string | null;
+    cash_collections: number | string | null;
+    online_collections: number | string | null;
+    expenses: number | string | null;
+    cash_expenses: number | string | null;
+    online_expenses: number | string | null;
+    pending_amount: number | string | null;
+    pending_count: number | string | null;
+  }>).map((unit) => ({
+    businessType: unit.business_type,
+    collections: Number(unit.collections ?? 0),
+    cashCollections: Number(unit.cash_collections ?? 0),
+    onlineCollections: Number(unit.online_collections ?? 0),
+    expenses: Number(unit.expenses ?? 0),
+    cashExpenses: Number(unit.cash_expenses ?? 0),
+    onlineExpenses: Number(unit.online_expenses ?? 0),
+    pendingAmount: Number(unit.pending_amount ?? 0),
+    pendingCount: Number(unit.pending_count ?? 0),
+  }));
+  const baseDashboardSummary = dashboardSummaryResult.data
+    ? {
+        ...(dashboardSummaryResult.data as DashboardSummary),
+        businessUnits: dashboardBusinessStatus,
+      }
+    : null;
+  const dashboardCashPosition = dashboardCashPositionResult.data as {
+    cashSelf?: number | string | null;
+    cashWithStaff?: number | string | null;
+  } | null;
+  const dashboardSummary = baseDashboardSummary && dashboardCashPosition
+    ? {
+        ...baseDashboardSummary,
+        cashSelf: Number(dashboardCashPosition.cashSelf ?? 0),
+        cashWithStaff: Number(dashboardCashPosition.cashWithStaff ?? 0),
+      }
+    : baseDashboardSummary;
   const visiblePayments = visibleData(paymentRows, (payment) =>
     salesAgent
       ? payment.referral_agent_id === userId || (payment.referral_code_id ? agentReferralIds.has(payment.referral_code_id) : false)
@@ -483,8 +577,11 @@ async function loadDashboard(
       ? []
       : ((cashBalancesResult.data ?? []) as CashBalanceSummary[]).map((summary) => ({
           profile_id: String(summary.profile_id),
+          business_type: summary.business_type ?? null,
           balance: Number(summary.balance ?? 0),
         })),
+    dashboardSummary: salesAgent ? null : dashboardSummary,
+    financialActivity: salesAgent ? [] : (financialActivityResult.data ?? []) as FinancialActivity[],
     changeRequests: visibleData((changesResult.data ?? []) as ChangeRequest[], (request) =>
       !salesAgent && (ownerish || request.requested_by === userId),
     ),
@@ -505,6 +602,8 @@ function operationalReadBootstrap(
     profile: profileForBusiness(identity, role),
     permissions: businessContext.permissions,
     allPermissions: [],
+    managerUnitScopes: [],
+    staffUnitAssignments: [],
     profiles: [],
     rooms: [],
     courses: [],
@@ -521,6 +620,7 @@ export function operationalPagePayload(tab: AppTab, dashboard: DashboardPayload)
       expenses: dashboard.expenses,
       movements: dashboard.movements,
       ledger: dashboard.ledger,
+      financialActivity: dashboard.financialActivity,
       changeRequests: dashboard.changeRequests,
       agentSettlements: dashboard.agentSettlements,
       notifications: dashboard.notifications,
@@ -568,6 +668,8 @@ export function operationalPagePayload(tab: AppTab, dashboard: DashboardPayload)
     ledger: dashboard.ledger,
     closingSummaries: dashboard.closingSummaries,
     cashBalances: dashboard.cashBalances,
+    dashboardSummary: dashboard.dashboardSummary,
+    financialActivity: dashboard.financialActivity,
     changeRequests: dashboard.changeRequests,
     agentSettlements: dashboard.agentSettlements,
     notifications: dashboard.notifications,
@@ -876,6 +978,8 @@ export function emptyDashboardData(): DashboardPayload {
     ledger: [],
     closingSummaries: [],
     cashBalances: [],
+    dashboardSummary: null,
+    financialActivity: [],
     changeRequests: [],
     agentSettlements: [],
     notifications: [],

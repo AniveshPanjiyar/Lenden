@@ -24,6 +24,8 @@ export type BusinessSettingsMember = {
   profileActive: boolean;
   canManage: boolean;
   permissions: string[];
+  unitScopes: BusinessType[];
+  unitManagers: Partial<Record<BusinessType, string>>;
   joinedAt: string | null;
   suspendedAt: string | null;
   updatedAt: string | null;
@@ -34,6 +36,8 @@ export type PendingInvitation = {
   email: string;
   role: Exclude<BusinessRole, "primary_owner">;
   permissions: string[];
+  unitScopes: BusinessType[];
+  unitManagers: Partial<Record<BusinessType, string>>;
   state: "pending" | "expired";
   expiresAt: string;
   lastSentAt: string | null;
@@ -51,6 +55,11 @@ type DrawerState =
 type DirectoryTab = "active" | "pending" | "suspended";
 type EditableRole = Exclude<BusinessRole, "primary_owner">;
 type AccessAction = (state: BusinessUserActionState, formData: FormData) => Promise<BusinessUserActionState>;
+type ManagerOption = {
+  profileId: string;
+  fullName: string;
+  unitScopes: BusinessType[];
+};
 
 const initialActionState: BusinessUserActionState = { ok: null, message: "" };
 const moduleOrder: BusinessType[] = ["library", "guest_house", "course", "general"];
@@ -90,22 +99,30 @@ function enabledModuleLabels(enabledModules: BusinessType[]) {
   return moduleOrder.filter((module) => enabledModules.includes(module)).map((module) => businessLabels[module]);
 }
 
-function accessSummary(role: BusinessRole, permissions: string[], enabledModules: BusinessType[]) {
+function accessSummary(
+  role: BusinessRole,
+  permissions: string[],
+  enabledModules: BusinessType[],
+  unitScopes: BusinessType[] = [],
+) {
   if (role === "primary_owner") return "Full business and ownership control";
-  if (role === "co_owner") return `Operational access to ${enabledModuleLabels(enabledModules).join(", ") || "enabled modules"}`;
+  if (role === "co_owner") {
+    return `Manager for ${enabledModuleLabels(unitScopes).join(", ") || "no assigned units"}`;
+  }
   if (role === "sales_agent") return "Referral and incentive access";
 
-  const labels = moduleOrder.flatMap((module) => {
+  const capabilities = moduleOrder.flatMap((module) => {
     const permission = businessPermissions[module];
     return permissions.includes(permission) && enabledModules.includes(module) ? [businessLabels[module]] : [];
   });
-  if (permissions.includes("add_expense")) labels.push("Add expenses");
-  if (permissions.includes("transfer_money")) labels.push("Transfer assigned transactions");
+  if (permissions.includes("add_expense")) capabilities.push("Add expenses");
+  if (permissions.includes("transfer_money")) capabilities.push("Transfer assigned transactions");
   const paused = permissions.filter((permission) => {
     const moduleKey = permissionToModule[permission];
     return moduleKey && !enabledModules.includes(moduleKey);
   }).length;
-  const base = labels.length ? labels.join(", ") : "No operational permissions";
+  const unitLabel = enabledModuleLabels(unitScopes).join(", ") || "no assigned units";
+  const base = `${unitLabel} · ${capabilities.length ? capabilities.join(", ") : "No operational permissions"}`;
   return paused ? `${base} · ${paused} paused module${paused === 1 ? "" : "s"}` : base;
 }
 
@@ -232,13 +249,94 @@ function StaffAccessFields({ permissions, setPermissions, enabledModules, preser
   );
 }
 
+function UnitAccessFields({
+  role,
+  selectedUnits,
+  setSelectedUnits,
+  unitManagers,
+  setUnitManagers,
+  enabledModules,
+  managers,
+  requireSelfManager,
+}: {
+  role: "co_owner" | "staff";
+  selectedUnits: BusinessType[];
+  setSelectedUnits: (units: BusinessType[]) => void;
+  unitManagers: Partial<Record<BusinessType, string>>;
+  setUnitManagers: (managers: Partial<Record<BusinessType, string>>) => void;
+  enabledModules: BusinessType[];
+  managers: ManagerOption[];
+  requireSelfManager: boolean;
+}) {
+  function toggleUnit(unit: BusinessType, checked: boolean) {
+    setSelectedUnits(checked
+      ? [...new Set([...selectedUnits, unit])]
+      : selectedUnits.filter((item) => item !== unit));
+    if (!checked) setUnitManagers({ ...unitManagers, [unit]: "" });
+  }
+
+  return (
+    <fieldset className="business-access-choice-grid business-unit-access-fields">
+      <legend>{role === "co_owner" ? "Manager business units" : "Business visibility and reporting line"}</legend>
+      <p>
+        {role === "co_owner"
+          ? "The Manager sees business activity only for these units and the Staff assigned to them."
+          : "Choose the units this Staff member can see. A different Manager may be selected for each unit."}
+      </p>
+      <div className="business-module-access-list">
+        {moduleOrder.filter((unit) => enabledModules.includes(unit)).map((unit) => {
+          const selected = selectedUnits.includes(unit);
+          const eligibleManagers = managers.filter((manager) => manager.unitScopes.includes(unit));
+          const managerValue = unitManagers[unit]
+            || (requireSelfManager ? eligibleManagers[0]?.profileId ?? "" : "");
+          return (
+            <div className={`business-unit-assignment ${selected ? "selected" : ""}`} key={unit}>
+              <label>
+                <input
+                  checked={selected}
+                  name="unit_scopes"
+                  onChange={(event) => toggleUnit(unit, event.target.checked)}
+                  type="checkbox"
+                  value={unit}
+                />
+                <span>
+                  <strong>{businessLabels[unit]}</strong>
+                  <small>{role === "co_owner" ? "Include this unit in Manager reporting" : "Show this unit and assigned team activity"}</small>
+                </span>
+              </label>
+              {role === "staff" && selected ? (
+                <label className="business-unit-manager-select">
+                  <span>Reports to</span>
+                  <select
+                    name={`unit_manager_${unit}`}
+                    onChange={(event) => setUnitManagers({ ...unitManagers, [unit]: event.target.value })}
+                    value={managerValue}
+                  >
+                    {!requireSelfManager ? <option value="">Owner-managed</option> : null}
+                    {eligibleManagers.map((manager) => (
+                      <option key={manager.profileId} value={manager.profileId}>{manager.fullName}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
 function AccessConfigurationForm({
   action,
   canCreateManager,
   defaultPermissions,
   defaultRole,
+  defaultUnitManagers,
+  defaultUnitScopes,
   enabledModules,
   hiddenFields,
+  managers,
   profileActive = true,
   submitLabel,
 }: {
@@ -246,14 +344,19 @@ function AccessConfigurationForm({
   canCreateManager: boolean;
   defaultPermissions: string[];
   defaultRole: EditableRole;
+  defaultUnitManagers: Partial<Record<BusinessType, string>>;
+  defaultUnitScopes: BusinessType[];
   enabledModules: BusinessType[];
   hiddenFields: Array<{ name: string; value: string }>;
+  managers: ManagerOption[];
   profileActive?: boolean;
   submitLabel: string;
 }) {
   const [state, formAction, pending] = useActionState(action, initialActionState);
   const [role, setRole] = useState<EditableRole>(defaultRole);
   const [permissions, setPermissions] = useState(defaultPermissions);
+  const [selectedUnits, setSelectedUnits] = useState(defaultUnitScopes);
+  const [unitManagers, setUnitManagers] = useState(defaultUnitManagers);
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -271,6 +374,18 @@ function AccessConfigurationForm({
     <form ref={formRef} action={formAction} className="business-access-editor-form">
       {hiddenFields.map((field) => <input key={field.name} name={field.name} type="hidden" value={field.value} />)}
       <RoleCards role={role} setRole={setRole} canCreateManager={canCreateManager} />
+      {role === "co_owner" || role === "staff" ? (
+        <UnitAccessFields
+          enabledModules={enabledModules}
+          managers={managers}
+          requireSelfManager={!canCreateManager}
+          role={role}
+          selectedUnits={selectedUnits}
+          setSelectedUnits={setSelectedUnits}
+          setUnitManagers={setUnitManagers}
+          unitManagers={unitManagers}
+        />
+      ) : null}
       {role === "staff" ? (
         <StaffAccessFields
           permissions={permissions}
@@ -286,7 +401,7 @@ function AccessConfigurationForm({
       )}
       <div className="business-access-summary-card">
         <span>Access summary</span>
-        <strong>{accessSummary(role, permissions, enabledModules)}</strong>
+        <strong>{accessSummary(role, permissions, enabledModules, selectedUnits)}</strong>
       </div>
       {!profileActive ? <p className="business-user-action-message error">A platform administrator must reactivate this global Lenden account before business access can be restored.</p> : null}
       <ActionMessage state={state} />
@@ -330,9 +445,10 @@ function BusinessAccessDrawer({ title, eyebrow, onClose, children }: {
   );
 }
 
-function AddPersonFlow({ canCreateManager, enabledModules, members, onEditMember }: {
+function AddPersonFlow({ canCreateManager, enabledModules, managers, members, onEditMember }: {
   canCreateManager: boolean;
   enabledModules: BusinessType[];
+  managers: ManagerOption[];
   members: BusinessSettingsMember[];
   onEditMember: (id: string) => void;
 }) {
@@ -370,8 +486,11 @@ function AddPersonFlow({ canCreateManager, enabledModules, members, onEditMember
           canCreateManager={canCreateManager}
           defaultPermissions={[]}
           defaultRole="staff"
+          defaultUnitManagers={{}}
+          defaultUnitScopes={[]}
           enabledModules={enabledModules}
           hiddenFields={[{ name: "email", value: lookupState.email ?? "" }]}
+          managers={managers}
           submitLabel={lookupState.lookup === "invite" ? "Send invitation" : "Grant access"}
         />
       ) : null}
@@ -379,10 +498,11 @@ function AddPersonFlow({ canCreateManager, enabledModules, members, onEditMember
   );
 }
 
-function MemberAccessEditor({ member, canCreateManager, enabledModules }: {
+function MemberAccessEditor({ member, canCreateManager, enabledModules, managers }: {
   member: BusinessSettingsMember;
   canCreateManager: boolean;
   enabledModules: BusinessType[];
+  managers: ManagerOption[];
 }) {
   return (
     <div className="business-member-editor">
@@ -396,8 +516,11 @@ function MemberAccessEditor({ member, canCreateManager, enabledModules }: {
         canCreateManager={canCreateManager}
         defaultPermissions={member.permissions}
         defaultRole={member.role === "primary_owner" ? "co_owner" : member.role}
+        defaultUnitManagers={member.unitManagers}
+        defaultUnitScopes={member.unitScopes}
         enabledModules={enabledModules}
         hiddenFields={[{ name: "membership_id", value: member.membershipId }]}
+        managers={managers}
         profileActive={member.profileActive}
         submitLabel={member.status === "suspended" ? "Restore access" : "Save access"}
       />
@@ -409,10 +532,11 @@ function MemberAccessEditor({ member, canCreateManager, enabledModules }: {
   );
 }
 
-function InvitationEditor({ invitation, canCreateManager, enabledModules }: {
+function InvitationEditor({ invitation, canCreateManager, enabledModules, managers }: {
   invitation: PendingInvitation;
   canCreateManager: boolean;
   enabledModules: BusinessType[];
+  managers: ManagerOption[];
 }) {
   return (
     <div className="business-member-editor">
@@ -425,8 +549,11 @@ function InvitationEditor({ invitation, canCreateManager, enabledModules }: {
         canCreateManager={canCreateManager}
         defaultPermissions={invitation.permissions}
         defaultRole={invitation.role}
+        defaultUnitManagers={invitation.unitManagers}
+        defaultUnitScopes={invitation.unitScopes}
         enabledModules={enabledModules}
         hiddenFields={[{ name: "email", value: invitation.email }]}
+        managers={managers}
         submitLabel="Save & send fresh invitation"
       />
     </div>
@@ -507,7 +634,7 @@ function MemberDirectoryRow({ member, currentProfileId, enabledModules, onEdit, 
           : <div className="business-person-open">{identityContent}</div>}
       </div>
       <div className="business-person-cell" role="cell"><span className="business-mobile-label">Role</span><span className="status-pill">{roleLabel(member.role)}</span></div>
-      <div className="business-person-cell access" role="cell"><span className="business-mobile-label">Access</span><span>{accessSummary(member.role, member.permissions, enabledModules)}</span></div>
+      <div className="business-person-cell access" role="cell"><span className="business-mobile-label">Access</span><span>{accessSummary(member.role, member.permissions, enabledModules, member.unitScopes)}</span></div>
       <div className="business-person-cell" role="cell"><span className="business-mobile-label">Status</span><span className={`status-pill ${member.profileActive ? member.status : "suspended"}`}>{member.profileActive ? member.status : "account inactive"}</span></div>
       <div className="business-person-cell actions" role="cell">
         {member.canManage ? (
@@ -533,7 +660,7 @@ function InvitationDirectoryRow({ invitation, enabledModules, onEdit }: {
     <div className="business-people-row invitation" role="row">
       <div className="business-person-cell identity" role="cell"><div className="business-person-open"><div className="business-avatar pending">@</div><div><strong>{invitation.email}</strong><span>Waiting for signup and acceptance</span></div></div></div>
       <div className="business-person-cell" role="cell"><span className="business-mobile-label">Role</span><span className="status-pill">{roleLabel(invitation.role)}</span></div>
-      <div className="business-person-cell access" role="cell"><span className="business-mobile-label">Access</span><span>{accessSummary(invitation.role, invitation.permissions, enabledModules)}</span></div>
+      <div className="business-person-cell access" role="cell"><span className="business-mobile-label">Access</span><span>{accessSummary(invitation.role, invitation.permissions, enabledModules, invitation.unitScopes)}</span></div>
       <div className="business-person-cell invitation-state" role="cell">
         <span className={`status-pill ${invitation.state}`}>{invitation.state}</span>
         <small>{invitation.deliveryStatus === "failed" ? "Email failed" : invitation.lastSentAt ? `Sent ${formatDateTime(invitation.lastSentAt)}` : "Not sent"}</small>
@@ -564,6 +691,7 @@ export default function BusinessUsersSettings({
   canManageModules,
   currentProfileId,
   enabledModules,
+  managers,
 }: {
   businessName: string;
   members: BusinessSettingsMember[];
@@ -572,6 +700,7 @@ export default function BusinessUsersSettings({
   canManageModules: boolean;
   currentProfileId: string;
   enabledModules: BusinessType[];
+  managers: ManagerOption[];
 }) {
   const [tab, setTab] = useState<DirectoryTab>("active");
   const [query, setQuery] = useState("");
@@ -652,17 +781,17 @@ export default function BusinessUsersSettings({
 
       {drawer?.kind === "add" ? (
         <BusinessAccessDrawer eyebrow="People & access" onClose={() => setDrawer(null)} title="Add a person">
-          <AddPersonFlow canCreateManager={canCreateManager} enabledModules={enabledModules} members={members} onEditMember={openMember} />
+          <AddPersonFlow canCreateManager={canCreateManager} enabledModules={enabledModules} managers={managers} members={members} onEditMember={openMember} />
         </BusinessAccessDrawer>
       ) : null}
       {selectedMember ? (
         <BusinessAccessDrawer eyebrow="Member access" onClose={() => setDrawer(null)} title={`Edit ${selectedMember.fullName}`}>
-          <MemberAccessEditor member={selectedMember} canCreateManager={canCreateManager} enabledModules={enabledModules} />
+          <MemberAccessEditor member={selectedMember} canCreateManager={canCreateManager} enabledModules={enabledModules} managers={managers} />
         </BusinessAccessDrawer>
       ) : null}
       {selectedInvitation ? (
         <BusinessAccessDrawer eyebrow="Pending invitation" onClose={() => setDrawer(null)} title="Edit invited access">
-          <InvitationEditor invitation={selectedInvitation} canCreateManager={canCreateManager} enabledModules={enabledModules} />
+          <InvitationEditor invitation={selectedInvitation} canCreateManager={canCreateManager} enabledModules={enabledModules} managers={managers} />
         </BusinessAccessDrawer>
       ) : null}
       {suspendMember ? <SuspendMemberDialog member={suspendMember} onClose={() => setSuspendMemberId(null)} /> : null}

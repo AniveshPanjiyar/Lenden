@@ -36,6 +36,22 @@ insert into public.business_memberships (business_id, profile_id, role, status, 
   ('20000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', 'co_owner', 'active', now()),
   ('20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000004', 'staff', 'active', now());
 
+insert into public.business_manager_unit_scopes (
+  business_id, manager_profile_id, business_type, created_by
+) values
+  ('20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000003', 'general', '10000000-0000-4000-8000-000000000001'),
+  ('20000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', 'general', '10000000-0000-4000-8000-000000000002');
+
+insert into public.business_staff_unit_assignments (
+  business_id, staff_profile_id, business_type, manager_profile_id, created_by
+) values (
+  '20000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000004',
+  'general',
+  '10000000-0000-4000-8000-000000000003',
+  '10000000-0000-4000-8000-000000000001'
+);
+
 insert into public.payments (id, business_id, business_type, mode, amount, cash_collection, online_collection, description, collected_by, assigned_profile_id, current_holder_id, approval_status) values
   ('30000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', 'general', 'cash', 100, 100, 0, 'Tenant A payment', '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', 'approved'),
   ('30000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', 'general', 'cash', 200, 200, 0, 'Tenant B payment', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', 'approved');

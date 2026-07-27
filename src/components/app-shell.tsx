@@ -64,8 +64,8 @@ import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } fr
 import { clearPersistedQueryCache } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, todayIso } from "@/lib/constants";
-import { buildDailyPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, Expense, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
+import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -84,6 +84,7 @@ import {
   type StudentFilterState,
   type TransactionFilter,
   type TransactionFilterState,
+  type TransactionLens,
   type TransactionModeFilter,
   type TransactionRecordType,
 } from "@/lib/view-state";
@@ -1971,6 +1972,8 @@ function bootstrapFromAppData(data: AppData): BootstrapPayload {
     profile: data.profile,
     permissions: data.permissions,
     allPermissions: data.allPermissions,
+    managerUnitScopes: data.managerUnitScopes,
+    staffUnitAssignments: data.staffUnitAssignments,
     profiles: data.profiles,
     rooms: data.rooms,
     courses: data.courses,
@@ -1990,6 +1993,8 @@ function emptyDashboardPayload(): DashboardPayload {
     ledger: [],
     closingSummaries: [],
     cashBalances: [],
+    dashboardSummary: null,
+    financialActivity: [],
     changeRequests: [],
     agentSettlements: [],
     notifications: [],
@@ -2173,15 +2178,25 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     ? "home"
     : initialViewState.tab;
   const initialEnabledModules = new Set(data.businessContext.enabledModules);
+  const initialScopedBusinessTypes = data.businessContext.accessMode === "support"
+    || data.profile.membership_role === "primary_owner"
+    ? new Set(data.businessContext.enabledModules)
+    : data.profile.membership_role === "co_owner"
+      ? new Set(
+          data.managerUnitScopes
+            .filter((scope) => scope.manager_profile_id === data.profile.id)
+            .map((scope) => scope.business_type),
+        )
+      : new Set(
+          data.staffUnitAssignments
+            .filter((assignment) => assignment.staff_profile_id === data.profile.id)
+            .map((assignment) => assignment.business_type),
+        );
   const initialAvailableBusinessTypes = (Object.keys(businessLabels) as BusinessType[]).filter((businessType) =>
-    initialEnabledModules.has(businessType) && (
-      isOwnerish(data.profile.role) ||
-      data.businessContext.accessMode === "support" ||
-      data.permissions.includes(businessPermissions[businessType])
-    ),
+    initialEnabledModules.has(businessType) && initialScopedBusinessTypes.has(businessType),
   );
   const initialTransactionProfileId = initialViewState.transactionFilters.profileId === "all"
-    ? data.profile.id
+    ? (initialViewState.transactionFilters.lens === "business" ? "all" : data.profile.id)
     : data.profiles.some((profile) => profile.id === initialViewState.transactionFilters.profileId)
     ? initialViewState.transactionFilters.profileId
     : data.profile.id;
@@ -2318,8 +2333,23 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     const moduleType = (Object.keys(businessPermissions) as BusinessType[]).find((key) => businessPermissions[key] === permission);
     return !moduleType || enabledModules.has(moduleType);
   }), [appData.permissions, appData.profile.role, enabledModules]);
-  const canViewLibraryStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_library"));
-  const canViewCourseStudents = !currentUserIsSalesAgent && (owner || permissions.includes("collect_course"));
+  const scopedBusinessTypes = useMemo(() => {
+    if (supportMode || primaryOwner) return new Set(appData.businessContext.enabledModules);
+    if (manager) {
+      return new Set(
+        appData.managerUnitScopes
+          .filter((scope) => scope.manager_profile_id === appData.profile.id)
+          .map((scope) => scope.business_type),
+      );
+    }
+    return new Set(
+      appData.staffUnitAssignments
+        .filter((assignment) => assignment.staff_profile_id === appData.profile.id)
+        .map((assignment) => assignment.business_type),
+    );
+  }, [appData.businessContext.enabledModules, appData.managerUnitScopes, appData.profile.id, appData.staffUnitAssignments, manager, primaryOwner, supportMode]);
+  const canViewLibraryStudents = !currentUserIsSalesAgent && scopedBusinessTypes.has("library") && permissions.includes("collect_library");
+  const canViewCourseStudents = !currentUserIsSalesAgent && scopedBusinessTypes.has("course") && permissions.includes("collect_course");
   const canViewStudentRecords = canViewLibraryStudents || canViewCourseStudents;
   const studentFilterSources = useMemo(
     () => studentRecordSources(appData.courses, t, canViewLibraryStudents, canViewCourseStudents),
@@ -2332,9 +2362,9 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const effectiveStudentFilters = { sourceId: effectiveStudentSourceId, status: studentFilters.status };
   const availableBusinessTypes = useMemo(
     () => (Object.keys(businessLabels) as BusinessType[]).filter((businessType) =>
-      enabledModules.has(businessType) && (owner || supportMode || permissions.includes(businessPermissions[businessType])),
+      enabledModules.has(businessType) && scopedBusinessTypes.has(businessType),
     ),
-    [enabledModules, owner, permissions, supportMode],
+    [enabledModules, scopedBusinessTypes],
   );
   const visibleTabItems = useMemo(() => currentUserIsSalesAgent
     ? tabItems.filter((item) => item.id === "home" || item.id === "payments")
@@ -2605,7 +2635,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
   useEffect(() => {
     function restoreHistoryState() {
-      const parsed = parseAppViewState(Object.fromEntries(new URLSearchParams(window.location.search)), appData.profile.id);
+      const parsed = parseAppViewState(
+        Object.fromEntries(new URLSearchParams(window.location.search)),
+        appData.profile.id,
+        appData.profile.membership_role,
+      );
       const nextTab = currentUserIsSalesAgent && (parsed.tab === "closing" || parsed.tab === "settings" || parsed.tab === "library_students")
         ? "home"
         : parsed.tab === "library_students" && !canViewStudentRecords
@@ -2646,7 +2680,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
     window.addEventListener("popstate", restoreHistoryState);
     return () => window.removeEventListener("popstate", restoreHistoryState);
-  }, [appData.profile.id, appData.profiles, availableBusinessTypes, canViewStudentRecords, currentUserIsSalesAgent, defaultStudentSourceId, setHistoryShouldPush, studentFilterSources]);
+  }, [appData.profile.id, appData.profile.membership_role, appData.profiles, availableBusinessTypes, canViewStudentRecords, currentUserIsSalesAgent, defaultStudentSourceId, setHistoryShouldPush, studentFilterSources]);
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
@@ -2807,10 +2841,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     (referral) => referral.active && referral.agent_id === appData.profile.id,
   );
   const canViewSharedBusinessHistory =
-    owner ||
-    (Object.keys(businessPermissions) as BusinessType[]).some((type) =>
-      permissions.includes(businessPermissions[type]),
-    );
+    !currentUserIsSalesAgent && (owner || scopedBusinessTypes.size > 0);
   const mainCourses = appData.courses.filter((course) => course.kind === "main" && course.active);
   const skillCourses = appData.courses.filter((course) => course.kind === "skill" && course.active);
   const activeRooms = appData.rooms.filter((room) => room.active);
@@ -2818,7 +2849,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
     if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
-    if (manager) return item.membership_role === "staff";
+    if (manager) {
+      return item.membership_role === "staff"
+        && appData.staffUnitAssignments.some((assignment) =>
+          assignment.staff_profile_id === item.id
+          && assignment.manager_profile_id === appData.profile.id,
+        );
+    }
     return false;
   });
   const sendMoneyProfiles = appData.profiles.filter((item) => {
@@ -2853,6 +2890,15 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       timezone: appData.businessContext.business.timezone,
     }),
     [appData.agentSettlements, appData.businessContext.business.timezone, appData.expenses, appData.ledger, appData.movements, appData.payments, appData.profiles],
+  );
+  const transactionPostingEvents = useMemo(
+    () => appData.financialActivity.length > 0
+      ? [
+          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens),
+          ...postingEvents.filter((event) => event.source_type === "agent_settlement"),
+        ]
+      : postingEvents,
+    [appData.financialActivity, postingEvents, transactionFilters.lens],
   );
   const selectedBusiness = dashboardFilters.businessType;
   const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
@@ -2983,7 +3029,13 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
 
   const cashBalances = useMemo(() => {
     if (appData.cashBalances.length > 0) {
-      const balancesByProfile = new Map(appData.cashBalances.map((summary) => [summary.profile_id, numberValue(summary.balance)]));
+      const balancesByProfile = appData.cashBalances.reduce<Map<string, number>>((balances, summary) => {
+        balances.set(
+          summary.profile_id,
+          (balances.get(summary.profile_id) ?? 0) + numberValue(summary.balance),
+        );
+        return balances;
+      }, new Map());
       return appData.profiles
         .filter((profile) => balancesByProfile.has(profile.id))
         .map((profile) => ({ profile, balance: balancesByProfile.get(profile.id) ?? 0 }));
@@ -3005,18 +3057,39 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, [appData.cashBalances, appData.ledger, appData.profiles, closingSummaries]);
   const transactionSelectableProfiles = (() => {
     if (currentUserIsSalesAgent) return [];
-    if (owner) return appData.profiles.filter((item) => item.active);
+    if (primaryOwner) return appData.profiles.filter((item) => item.active);
+    if (manager) {
+      const visibleProfileIds = new Set<string>([appData.profile.id]);
+      appData.profiles
+        .filter((item) => item.membership_role === "primary_owner")
+        .forEach((item) => visibleProfileIds.add(item.id));
+      appData.staffUnitAssignments
+        .filter((assignment) => assignment.manager_profile_id === appData.profile.id)
+        .forEach((assignment) => visibleProfileIds.add(assignment.staff_profile_id));
+      return appData.profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
+    }
     const visibleProfileIds = new Set<string>([appData.profile.id]);
     appData.payments.forEach((payment) => visibleProfileIds.add(paymentReviewProfileId(payment)));
     appData.expenses.forEach((expense) => visibleProfileIds.add(expense.spent_by));
+    appData.staffUnitAssignments
+      .filter((mine) => mine.staff_profile_id === appData.profile.id)
+      .forEach((mine) => {
+        appData.staffUnitAssignments
+          .filter((peer) =>
+            peer.business_type === mine.business_type
+            && peer.manager_profile_id === mine.manager_profile_id,
+          )
+          .forEach((peer) => visibleProfileIds.add(peer.staff_profile_id));
+        if (mine.manager_profile_id) visibleProfileIds.add(mine.manager_profile_id);
+      });
     visibleProfileIds.add(transactionUserId);
     return appData.profiles.filter((item) => item.active && visibleProfileIds.has(item.id));
   })();
 
   function canUsePayment(type: BusinessType | "expense") {
     if (currentUserIsSalesAgent) return false;
-    if (type === "expense") return permissions.includes("add_expense");
-    return permissions.includes(businessPermissions[type]);
+    if (type === "expense") return permissions.includes("add_expense") && availableBusinessTypes.length > 0;
+    return availableBusinessTypes.includes(type) && permissions.includes(businessPermissions[type]);
   }
 
   function changeTab(nextTab: Tab) {
@@ -3029,6 +3102,28 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     }
     setFilterDrawerOpen(false);
     setSidebarOpen(false);
+  }
+
+  function openTransactions(
+    lens: TransactionLens,
+    activity: TransactionFilter,
+    target?: {
+      businessType?: BusinessTypeFilter;
+      mode?: TransactionModeFilter;
+    },
+  ) {
+    setTransactionFilters((current) => ({
+      ...current,
+      dateRange: dashboardFilters.dateRange,
+      dateFilterKey: dashboardFilters.dateFilterKey,
+      lens,
+      activity,
+      profileId: lens === "personal" ? appData.profile.id : "all",
+      recordType: "all",
+      mode: target?.mode ?? "all",
+      businessType: target?.businessType ?? dashboardFilters.businessType,
+    }));
+    changeTab("payments");
   }
 
   function leaveFocusedPage() {
@@ -3055,10 +3150,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
   const dateBasisLabel = (key: DateFilterKey) => key === "approval" ? t("approvalDate") : t("transactionDate");
   const transactionActivityLabel = (activity: TransactionFilter) => {
+    if (activity === "collections") return t("collections");
+    if (activity === "expenses") return t("expenses");
     if (activity === "cash_in") return t("cashIn");
     if (activity === "cash_out") return t("cashOut");
     if (activity === "pending") return t("pending");
-    if (activity === "transactions") return t("transactions");
     return t("all");
   };
   const transactionRecordLabel = (recordType: TransactionRecordType) => {
@@ -3087,7 +3183,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   } else if (tab === "payments") {
     if (transactionFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: transactionDateRangeLabel, clear: () => setTransactionFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
     if (transactionFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(transactionFilters.dateFilterKey), clear: () => setTransactionFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
-    if (transactionFilters.profileId !== appData.profile.id) activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: appData.profile.id })) });
+    if (transactionFilters.lens === "business" && transactionFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: "all" })) });
     if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
     if (transactionFilters.recordType !== "all") activeFilterChips.push({ key: "type", label: transactionRecordLabel(transactionFilters.recordType), clear: () => setTransactionFilters((current) => ({ ...current, recordType: "all" })) });
     if (transactionFilters.mode !== "all") activeFilterChips.push({ key: "mode", label: transactionModeLabel(transactionFilters.mode), clear: () => setTransactionFilters((current) => ({ ...current, mode: "all" })) });
@@ -3102,7 +3198,10 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       ? t("saving")
       : null;
   const pageUsesOperationalQuery = tab !== "notifications" && tab !== "library_students";
-  const operationalPagePending = pageUsesOperationalQuery && dashboardQuery.isPending && !dashboardQuery.data;
+  const operationalPagePending = pageUsesOperationalQuery && (
+    !hasHydrated
+    || (dashboardQuery.isPending && !dashboardQuery.data)
+  );
   const operationalPageRefreshing = pageUsesOperationalQuery && hasHydrated && dashboardQuery.isFetching && !operationalPagePending;
   const operationalPageBusy = hasHydrated && (operationalPagePending || operationalPageRefreshing);
   const workspaceReturnParams = applyAppViewStateToSearchParams(
@@ -3169,6 +3268,20 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           </span>
         </div>
         <div className="app-header-actions flex items-center gap-3">
+          {showOperationalFilters ? (
+            <button
+              type="button"
+              className="header-icon-button header-filter-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 cursor-pointer"
+              onClick={() => setFilterDrawerOpen(true)}
+              aria-label={`${t("filters")}: ${activeScopeLabel}`}
+              title={`${t("filters")} · ${activeScopeLabel}`}
+            >
+              <SlidersHorizontal size={22} />
+              {activeFilterChips.length > 0 ? (
+                <span className="header-filter-count">{activeFilterChips.length}</span>
+              ) : null}
+            </button>
+          ) : null}
           <button
             type="button"
             className="header-icon-button notification-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 relative cursor-pointer"
@@ -3307,37 +3420,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 <span />
               </div>
             ) : null}
-            {showOperationalFilters ? (
-              <section className="operational-filter-toolbar" aria-label={t("activeFilters")}>
-                <div className="operational-filter-heading">
-                  <div>
-                    <h1>{t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard")}</h1>
-                    <p>{activeScopeLabel}</p>
-                  </div>
-                  <button className="operational-filter-trigger" type="button" onClick={() => setFilterDrawerOpen(true)}>
-                    <SlidersHorizontal size={18} />
-                    <span>{t("filters")}</span>
-                    {activeFilterChips.length > 0 ? <strong>{activeFilterChips.length}</strong> : null}
-                  </button>
-                </div>
-                {activeFilterChips.length > 0 ? (
-                  <div className="operational-filter-chips">
-                    {activeFilterChips.map((chip) => (
-                      <button key={chip.key} type="button" onClick={chip.clear} aria-label={`${t("resetFilters")}: ${chip.label}`}>
-                        <span>{chip.label}</span>
-                        <X size={14} />
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </section>
-            ) : !focusedPage ? (
-              <div className="page-heading-row flex justify-between items-center md:hidden">
-                <h1 className="mobile-page-title font-headline text-2xl font-bold text-on-surface">
-                  {currentPageTitle}
-                </h1>
-              </div>
-            ) : null}
 
             {showQuickActions ? (
               <BottomActions
@@ -3395,6 +3477,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
+                openTransactions={openTransactions}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -3408,18 +3491,26 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 dateRange={transactionDateRange}
                 dateRangePreset={transactionFilters.dateRange.preset}
                 dateFilterKey={transactionFilters.dateFilterKey}
+                transactionLens={transactionFilters.lens}
                 transactionFilter={transactionFilters.activity}
                 transactionProfileId={transactionUserId}
                 recordTypeFilter={transactionFilters.recordType}
                 modeFilter={transactionFilters.mode}
                 businessTypeFilter={transactionFilters.businessType}
-                openFilters={() => setFilterDrawerOpen(true)}
+                onSelectLens={(lens) => setTransactionFilters((current) => ({
+                  ...current,
+                  lens,
+                  activity: "all",
+                  profileId: lens === "personal" ? appData.profile.id : "all",
+                }))}
+                onSelectActivity={(activity) => setTransactionFilters((current) => ({ ...current, activity }))}
                 payments={appData.payments}
                 expenses={appData.expenses}
                 movements={appData.movements}
                 ledger={appData.ledger}
                 agentSettlements={appData.agentSettlements}
-                postingEvents={postingEvents}
+                financialActivity={appData.financialActivity}
+                postingEvents={transactionPostingEvents}
                 profiles={appData.profiles}
                 profile={appData.profile}
                 owner={owner}
@@ -3427,6 +3518,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
                 permissionsByProfile={permissionsByProfile}
+                staffUnitAssignments={appData.staffUnitAssignments}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -3508,6 +3600,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           setSelectedPositive={setSelectedPositive}
           setSelectedNegative={setSelectedNegative}
           canUsePayment={canUsePayment}
+          businessTypes={availableBusinessTypes}
           rooms={activeRooms}
           mainCourses={mainCourses}
           skillCourses={skillCourses}
@@ -3916,7 +4009,7 @@ function OperationalFilterDrawer({
   function resetDraft() {
     setError("");
     if (tab === "home") setDashboardDraft(defaultDashboardFilters());
-    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId));
+    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId, owner ? "co_owner" : "staff"));
     if (tab === "closing") setClosingDraft(defaultClosingFilters());
   }
 
@@ -3931,19 +4024,33 @@ function OperationalFilterDrawer({
       if (tab === "home") onApplyDashboard(dashboardDraft);
       if (tab === "payments") onApplyTransactions({
         ...transactionDraft,
-        profileId: showTransactionProfile ? transactionDraft.profileId : defaultProfileId,
+        profileId: transactionDraft.lens === "personal"
+          ? defaultProfileId
+          : showTransactionProfile
+            ? transactionDraft.profileId
+            : defaultProfileId,
       });
       if (tab === "closing") onApplyClosing(closingDraft);
     });
   }
 
-  const activityOptions = owner
-    ? (["all", "cash_in", "cash_out", "transactions"] as TransactionFilter[])
+  const activityOptions = transactionDraft.lens === "business"
+    ? (["all", "collections", "expenses", "pending"] as TransactionFilter[])
     : (["all", "cash_in", "cash_out", "pending"] as TransactionFilter[]);
   const recordTypeOptions = salesAgent
     ? (["all", "agent_payout"] as TransactionRecordType[])
     : (["all", "payment", "expense", "transfer", "agent_payout"] as TransactionRecordType[]);
-  const activityLabel = (activity: TransactionFilter) => activity === "cash_in" ? t("cashIn") : activity === "cash_out" ? t("cashOut") : activity === "pending" ? t("pending") : activity === "transactions" ? t("transactions") : t("all");
+  const activityLabel = (activity: TransactionFilter) => activity === "collections"
+    ? t("collections")
+    : activity === "expenses"
+      ? t("expenses")
+      : activity === "cash_in"
+        ? t("cashIn")
+        : activity === "cash_out"
+          ? t("cashOut")
+          : activity === "pending"
+            ? t("pending")
+            : t("all");
   const recordTypeLabel = (recordType: TransactionRecordType) => recordType === "payment" ? t("payments") : recordType === "expense" ? t("expenses") : recordType === "transfer" ? t("cashTransfers") : recordType === "agent_payout" ? t("agentPayouts") : t("allTypes");
 
   return (
@@ -3980,10 +4087,29 @@ function OperationalFilterDrawer({
             <>
               <FilterDateRangeFields value={transactionDraft.dateRange} onChange={(dateRange) => setTransactionDraft((current) => ({ ...current, dateRange }))} />
               <FilterDateBasisFields value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
-              {showTransactionProfile ? (
+              <label className="operational-filter-field operational-filter-section">
+                <span>View</span>
+                <select
+                  value={transactionDraft.lens}
+                  onChange={(event) => {
+                    const lens = event.target.value as TransactionLens;
+                    setTransactionDraft((current) => ({
+                      ...current,
+                      lens,
+                      activity: "all",
+                      profileId: lens === "personal" ? defaultProfileId : "all",
+                    }));
+                  }}
+                >
+                  <option value="business">Business activity</option>
+                  <option value="personal">My activity</option>
+                </select>
+              </label>
+              {showTransactionProfile && transactionDraft.lens === "business" ? (
                 <label className="operational-filter-field operational-filter-section">
-                  <span>{t("user")}</span>
+                  <span>Person or team</span>
                   <select value={transactionDraft.profileId} onChange={(event) => setTransactionDraft((current) => ({ ...current, profileId: event.target.value }))}>
+                    <option value="all">All accessible people</option>
                     {transactionProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.id === defaultProfileId ? `${profile.full_name} (${t("self")})` : profile.full_name}</option>)}
                   </select>
                 </label>
@@ -4040,6 +4166,230 @@ function OperationalFilterDrawer({
   );
 }
 
+function RoleDashboardView({
+  summary,
+  dateLabel,
+  dateFilterKey,
+  asOfDate,
+  openTransactions,
+}: {
+  summary: DashboardSummary;
+  dateLabel: string;
+  dateFilterKey: DateFilterKey;
+  asOfDate: string;
+  openTransactions: (
+    lens: TransactionLens,
+    activity: TransactionFilter,
+    target?: {
+      businessType?: BusinessTypeFilter;
+      mode?: TransactionModeFilter;
+    },
+  ) => void;
+}) {
+  const { t } = useLanguage();
+  const primaryOwner = summary.role === "primary_owner";
+  const staff = summary.role === "staff";
+  const businessScopeLabel = summary.role === "primary_owner"
+    ? "Full business"
+    : summary.role === "co_owner"
+      ? "Assigned units and Staff"
+      : "Assigned unit and team";
+  const dateBasisLabel = dateFilterKey === "transaction" ? "Transaction date" : "Approval date";
+
+  const summaryMetric = (
+    title: string,
+    value: number,
+    note: string,
+    tone: "primary" | "negative" | "pending" = "primary",
+    onClick?: () => void,
+    prefix = "",
+  ) => (
+    <button
+      aria-label={`${title}: ${formatMoney(value)}. ${note}`}
+      className={`dashboard-summary-metric tone-${tone}`}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="dashboard-summary-label">{title}</span>
+      <strong className="dashboard-summary-value">{prefix}{formatMoney(Math.abs(value))}</strong>
+      <small className="dashboard-summary-note">{note}</small>
+      <span aria-hidden="true" className="dashboard-summary-open"><ChevronRight size={14} /></span>
+    </button>
+  );
+
+  const pairedSummary = (first: ReactNode, second?: ReactNode) => (
+    <div className={`dashboard-paired-summary${second ? "" : " single"}`}>
+      <div className="dashboard-paired-cell">{first}</div>
+      {second ? (
+        <>
+          <div aria-hidden="true" className="dashboard-summary-divider" />
+          <div className="dashboard-paired-cell">{second}</div>
+        </>
+      ) : null}
+    </div>
+  );
+
+  const pendingStrip = (amount: number, count: number, onClick: () => void) => (
+    <button
+      aria-label={`Pending: ${formatMoney(amount)}. ${count} records awaiting review.`}
+      className="dashboard-pending-strip"
+      onClick={onClick}
+      type="button"
+    >
+      <span className="dashboard-pending-icon"><ClipboardList aria-hidden="true" size={18} /></span>
+      <span className="dashboard-pending-copy">
+        <strong>Pending</strong>
+        <small>Awaiting review</small>
+      </span>
+      <span className="dashboard-pending-total">
+        <span className="dashboard-pending-amount">
+          <strong>{formatMoney(amount)}</strong>
+          <ChevronRight aria-hidden="true" size={14} />
+        </span>
+        <small>{count} {count === 1 ? "record" : "records"}</small>
+      </span>
+    </button>
+  );
+
+  const cashSelfMetric = !primaryOwner
+    ? summaryMetric(
+      "Cash in hand — You",
+      summary.cashSelf,
+      `Approved cash you currently hold · As of ${asOfDate}`,
+      summary.cashSelf < 0 ? "negative" : "primary",
+      () => openTransactions("personal", "all", { mode: "cash" }),
+    )
+    : null;
+  const cashStaffMetric = !staff
+    ? summaryMetric(
+      "Cash in hand with Staff",
+      summary.cashWithStaff,
+      primaryOwner
+        ? "Managers + Staff · Approved cash only"
+        : "Assigned Staff in your units · Approved cash only",
+      "primary",
+      () => openTransactions("business", "all", { mode: "cash" }),
+    )
+    : null;
+
+  return (
+    <div className="role-dashboard">
+      <section className="dashboard-metric-group dashboard-summary-section">
+        <header>
+          <div><p className="eyebrow">Cash position</p><h2>Approved cash custody</h2></div>
+          <span>As of {asOfDate}</span>
+        </header>
+        {pairedSummary(
+          primaryOwner ? cashStaffMetric : cashSelfMetric,
+          !primaryOwner && !staff ? cashStaffMetric : undefined,
+        )}
+      </section>
+
+      <section className="dashboard-metric-group dashboard-summary-section">
+        <header>
+          <div><p className="eyebrow">Business activity</p><h2>{businessScopeLabel}</h2></div>
+          <span>{dateLabel} · {dateBasisLabel}</span>
+        </header>
+        {pairedSummary(
+          summaryMetric(
+            t("collections"),
+            summary.collections.total,
+            `${t("cash")} ${formatMoney(summary.collections.cash)} · ${t("online")} ${formatMoney(summary.collections.online)}`,
+            "primary",
+            () => openTransactions("business", "collections"),
+            "+",
+          ),
+          summaryMetric(
+            t("expenses"),
+            summary.expenses.total,
+            `${t("cash")} ${formatMoney(summary.expenses.cash)} · ${t("online")} ${formatMoney(summary.expenses.online)}`,
+            "negative",
+            () => openTransactions("business", "expenses"),
+            "-",
+          ),
+        )}
+        {pendingStrip(
+          summary.pending.amount,
+          summary.pending.count,
+          () => openTransactions(staff ? "personal" : "business", "pending"),
+        )}
+      </section>
+
+      <section className="dashboard-metric-group dashboard-summary-section">
+        <header>
+          <div><p className="eyebrow">Your activity</p><h2>Your money movement</h2></div>
+          <span>{dateLabel} · {dateBasisLabel}</span>
+        </header>
+        {pairedSummary(
+          summaryMetric(
+            "IN",
+            summary.personalIn.total,
+            `${t("cash")} ${formatMoney(summary.personalIn.cash)} · ${t("online")} ${formatMoney(summary.personalIn.online)}`,
+            "primary",
+            () => openTransactions("personal", "cash_in"),
+            "+",
+          ),
+          summaryMetric(
+            "OUT",
+            summary.personalOut.total,
+            `${t("cash")} ${formatMoney(summary.personalOut.cash)} · ${t("online")} ${formatMoney(summary.personalOut.online)}`,
+            "negative",
+            () => openTransactions("personal", "cash_out"),
+            "-",
+          ),
+        )}
+      </section>
+
+      <section className="business-status-panel">
+        <div className="business-status-heading">
+          <div><h3>{t("businessStatus")}</h3><p>Approved Collections and Expenses by business unit.</p></div>
+        </div>
+        <div className="business-status-grid role-business-status-grid">
+          {summary.businessUnits.map((unit) => (
+            <article className={`business-unit-activity-card tone-${unit.businessType}`} key={unit.businessType}>
+              <header className="business-unit-activity-heading">
+                <div>
+                  <span className="business-unit-activity-icon">
+                    {unit.businessType === "guest_house" ? <Hotel size={20} /> : unit.businessType === "library" ? <BookOpen size={20} /> : unit.businessType === "course" ? <GraduationCap size={20} /> : <WalletCards size={20} />}
+                  </span>
+                  <span>
+                    <small>Business activity</small>
+                    <h3>{labelForBusiness(unit.businessType, t)}</h3>
+                  </span>
+                </div>
+                <small>{dateLabel} · {dateBasisLabel}</small>
+              </header>
+              {pairedSummary(
+                summaryMetric(
+                  t("collections"),
+                  unit.collections,
+                  `${t("cash")} ${formatMoney(unit.cashCollections)} · ${t("online")} ${formatMoney(unit.onlineCollections)}`,
+                  "primary",
+                  () => openTransactions("business", "collections", { businessType: unit.businessType }),
+                  "+",
+                ),
+                summaryMetric(
+                  t("expenses"),
+                  unit.expenses,
+                  `${t("cash")} ${formatMoney(unit.cashExpenses)} · ${t("online")} ${formatMoney(unit.onlineExpenses)}`,
+                  "negative",
+                  () => openTransactions("business", "expenses", { businessType: unit.businessType }),
+                  "-",
+                ),
+              )}
+              {pendingStrip(
+                unit.pendingAmount,
+                unit.pendingCount,
+                () => openTransactions("business", "pending", { businessType: unit.businessType }),
+              )}
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function HomeView({
   totals,
   cashBalances,
@@ -4054,6 +4404,7 @@ function HomeView({
   agentIncentiveSummary,
   agentReferralCodes,
   changeTab,
+  openTransactions,
   setNotice,
   startTransition,
 }: {
@@ -4077,6 +4428,14 @@ function HomeView({
   agentIncentiveSummary: AgentIncentiveSummary;
   agentReferralCodes: ReferralCode[];
   changeTab: (tab: AppTab) => void;
+  openTransactions: (
+    lens: TransactionLens,
+    activity: TransactionFilter,
+    target?: {
+      businessType?: BusinessTypeFilter;
+      mode?: TransactionModeFilter;
+    },
+  ) => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -4123,6 +4482,18 @@ function HomeView({
           </div>
         </section>
       </div>
+    );
+  }
+
+  if (data.dashboardSummary) {
+    return (
+      <RoleDashboardView
+        summary={data.dashboardSummary}
+        dateLabel={dateLabel}
+        dateFilterKey={dateFilterKey}
+        asOfDate={dateRange.to}
+        openTransactions={openTransactions}
+      />
     );
   }
 
@@ -4771,17 +5142,20 @@ function TransactionsView({
   dateRange,
   dateRangePreset,
   dateFilterKey,
+  transactionLens,
   transactionFilter,
   transactionProfileId,
   recordTypeFilter,
   modeFilter,
   businessTypeFilter,
-  openFilters,
+  onSelectLens,
+  onSelectActivity,
   payments,
   expenses,
   movements,
   ledger,
   agentSettlements,
+  financialActivity,
   postingEvents,
   profiles,
   profile,
@@ -4790,6 +5164,7 @@ function TransactionsView({
   agentIncentiveSummary,
   agentReferralCodes,
   permissionsByProfile,
+  staffUnitAssignments,
   setNotice,
   startTransition,
 }: {
@@ -4799,17 +5174,20 @@ function TransactionsView({
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
   dateFilterKey: DateFilterKey;
+  transactionLens: TransactionLens;
   transactionFilter: TransactionFilter;
   transactionProfileId: string;
   recordTypeFilter: TransactionRecordType;
   modeFilter: TransactionModeFilter;
   businessTypeFilter: BusinessTypeFilter;
-  openFilters: () => void;
+  onSelectLens: (lens: TransactionLens) => void;
+  onSelectActivity: (activity: TransactionFilter) => void;
   payments: Payment[];
   expenses: Expense[];
   movements: MoneyMovement[];
   ledger: LedgerEntry[];
   agentSettlements: AgentSettlement[];
+  financialActivity: FinancialActivity[];
   postingEvents: DailyPostingEvent[];
   profiles: Profile[];
   profile: Profile;
@@ -4818,6 +5196,7 @@ function TransactionsView({
   agentIncentiveSummary: AgentIncentiveSummary;
   agentReferralCodes: ReferralCode[];
   permissionsByProfile: Record<string, string[]>;
+  staffUnitAssignments: StaffUnitAssignment[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -4839,7 +5218,6 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  const effectiveTransactionFilter = owner && transactionFilter === "pending" ? "transactions" : transactionFilter;
   const allTransactionRecords = useMemo(() => {
     type HistoryRecordFilter = Exclude<TransactionFilter, "all" | "pending">;
     type HistoryRecord = {
@@ -4887,9 +5265,14 @@ function TransactionsView({
       transactionDate?: string;
       approvalDate?: string;
     };
-    const selectedUserId = canUseProfileFilter ? transactionProfileId : profile.id;
+    const selectedUserId = transactionLens === "personal"
+      ? profile.id
+      : canUseProfileFilter
+        ? transactionProfileId
+        : profile.id;
     const userMatches = (userId: string | null | undefined) => selectedUserId === "all" || userId === selectedUserId;
-    const eventMatchesSelectedUser = (event: DailyPostingEvent) => selectedUserId === "all" || event.profile_id === selectedUserId;
+    const eventMatchesSelectedUser = (event: DailyPostingEvent) =>
+      transactionLens === "business" || selectedUserId === "all" || event.profile_id === selectedUserId;
     const visibleSourceEvents = (sourceType: DailyPostingEvent["source_type"], sourceId: string) =>
       postingEvents.filter((event) =>
         event.source_type === sourceType &&
@@ -4933,7 +5316,7 @@ function TransactionsView({
     };
     const ownerProfileIds = ownerProfileIdSet(profiles);
     const isOwnerProfile = (profileId: string | null | undefined) => Boolean(profileId && ownerProfileIds.has(profileId));
-    const paymentMatchesSelectedProfile = (payment: Payment) => userMatches(paymentReviewProfileId(payment));
+    const paymentMatchesSelectedProfile = (payment: Payment) => userMatches(payment.collected_by);
 
     const paymentRows = currentUserIsSalesAgent ? [] : payments
       .filter((payment) => payment.record_status === "active")
@@ -4955,18 +5338,43 @@ function TransactionsView({
         const pendingTransfer = linkedTransfers.find((movement) => movement.status === "pending") ?? null;
         const activeTransfer = linkedTransfers.some((movement) => movement.status === "pending" || movement.status === "accepted");
         const requiredPermission = businessPermissions[payment.business_type];
+        const assignee = profiles.find((item) => item.id === reviewProfileId);
+        const assigneeUnitAssignment = staffUnitAssignments.find((assignment) =>
+          assignment.staff_profile_id === reviewProfileId
+          && assignment.business_type === payment.business_type,
+        );
+        const currentStaffAssignment = staffUnitAssignments.find((assignment) =>
+          assignment.staff_profile_id === profile.id
+          && assignment.business_type === payment.business_type,
+        );
         const transferRecipients = requiredPermission
           ? profiles.filter((item) =>
               item.active &&
               item.membership_status === "active" &&
               item.id !== reviewProfileId &&
               item.role === "staff" &&
-              (permissionsByProfile[item.id] ?? []).includes(requiredPermission),
+              (permissionsByProfile[item.id] ?? []).includes(requiredPermission) &&
+              staffUnitAssignments.some((assignment) =>
+                assignment.staff_profile_id === item.id
+                && assignment.business_type === payment.business_type
+                && (
+                  profile.membership_role === "primary_owner"
+                  || (profile.membership_role === "co_owner" && assignment.manager_profile_id === profile.id)
+                  || (
+                    profile.membership_role === "staff"
+                    && assignment.manager_profile_id === currentStaffAssignment?.manager_profile_id
+                  )
+                ),
+              ),
             )
           : [];
+        const assigneeCanTransfer = assignee?.membership_role !== "staff"
+          || (permissionsByProfile[reviewProfileId] ?? []).includes("transfer_money");
         const canRequestTransfer =
           (owner || reviewProfileId === profile.id) &&
           (owner || (permissionsByProfile[profile.id] ?? []).includes("transfer_money")) &&
+          assigneeCanTransfer &&
+          (profile.membership_role !== "co_owner" || reviewProfileId === profile.id || assigneeUnitAssignment?.manager_profile_id === profile.id) &&
           (effectivePaymentPending || (profile.membership_role === "primary_owner" && effectivePaymentApproved)) &&
           (profile.membership_role === "primary_owner" || !hasApprovedComponent) &&
           !pendingTransfer;
@@ -5011,7 +5419,10 @@ function TransactionsView({
         };
 
         const rows: HistoryRecord[] = [];
-        groupEventsByDisplayDate(visibleSourceEvents("payment", payment.id)).forEach(([displayDate, events]) => {
+        const approvedPaymentEvents = matchesActivityProfile
+          ? visibleSourceEvents("payment", payment.id)
+          : [];
+        groupEventsByDisplayDate(approvedPaymentEvents).forEach(([displayDate, events]) => {
           const amount = events.reduce((sum, event) => sum + event.amount, 0);
           const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
           const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
@@ -5020,7 +5431,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${payment.id}-${displayDate}`,
             kind: "collection",
-            filter: "cash_in",
+            filter: transactionLens === "business" ? "collections" : "cash_in",
             date: displayDate,
             sortAt: approvedAt,
             amount,
@@ -5029,7 +5440,7 @@ function TransactionsView({
             amountTone: onlineAmount > 0 && cashAmount === 0 ? "online-approved" : "positive",
             status: labelForStatus("approved", t),
             statusTone: "approved",
-            meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            meta: `${profileName(profiles, payment.collected_by, t)} · ${labelForBusiness(payment.business_type, t)}`,
             pendingApproval: false,
             canApprove: false,
             approvalBlockedByTransfer: false,
@@ -5038,7 +5449,7 @@ function TransactionsView({
           });
         });
 
-        if (incomingTransferId && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
+        if (transactionLens === "personal" && incomingTransferId && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-transfer-pending`,
@@ -5066,7 +5477,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${payment.id}-pending`,
             kind: "collection",
-            filter: owner ? "transactions" : "cash_in",
+            filter: transactionLens === "business" ? "collections" : "cash_in",
             date: payment.payment_date,
             sortAt: payment.created_at,
             amount: pendingAmount,
@@ -5080,71 +5491,12 @@ function TransactionsView({
           });
         }
 
-        if (owner && matchesActivityProfile && pendingAmount === 0) {
-          const sourceEvents = postingEvents.filter((event) => event.source_type === "payment" && event.source_id === payment.id);
-          const activityDate = dateFilterKey === "transaction"
-            ? payment.payment_date
-            : sourceEvents.map((event) => event.approval_date).sort().at(-1) ?? payment.payment_date;
-          if (dateInRange(activityDate, dateRange)) {
-            rows.push({
-              ...baseRecord,
-              id: payment.id,
-              kind: "collection",
-              filter: "transactions",
-              date: activityDate,
-              sortAt: payment.approved_at ?? payment.created_at,
-              amount: numberValue(payment.amount),
-              cashAmount: cashImpact,
-              onlineAmount: onlineImpact,
-              amountTone: "neutral",
-              meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
-              pendingApproval: false,
-              transactionDate: payment.payment_date,
-              approvalDate: sourceEvents.map((event) => event.approval_date).sort().at(-1),
-            });
-          }
-        }
-
-        if (!owner && reviewProfileId === selectedUserId) {
-          const collectorActivityEvents = postingEvents.filter((event) =>
-            event.source_type === "payment" &&
-            event.source_id === payment.id &&
-            event.profile_id !== selectedUserId &&
-            dateInRange(postingEventDate(event, dateFilterKey), dateRange),
-          );
-          groupEventsByDisplayDate(collectorActivityEvents).forEach(([displayDate, events]) => {
-            const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
-            const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
-            rows.push({
-              ...baseRecord,
-              id: `${payment.id}-activity-${displayDate}`,
-              kind: "collection",
-              filter: "transactions",
-              date: displayDate,
-              sortAt: events.map((event) => event.approved_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? payment.created_at,
-              amount: cashAmount + onlineAmount,
-              cashAmount,
-              onlineAmount,
-              amountTone: "neutral",
-              status: labelForStatus("approved", t),
-              statusTone: "approved",
-              meta: `${labelForBusiness(payment.business_type, t)} · ${t("ownerAccountCredit")}`,
-              pendingApproval: false,
-              canApprove: false,
-              canEdit: false,
-              canDelete: false,
-              canRequestTransfer: false,
-              transactionDate: payment.payment_date,
-              approvalDate: events.map((event) => event.approval_date).sort().at(-1),
-            });
-          });
-        }
-
         return rows;
       });
     const expenseRows = currentUserIsSalesAgent ? [] : expenses
       .filter((expense) => expense.record_status === "active")
       .flatMap((expense): HistoryRecord[] => {
+        if (!userMatches(expense.spent_by)) return [];
         const expenseEffectiveStatus = effectiveExpenseStatus(expense, ownerProfileIds);
         const pendingApproval = isEffectivelyPendingExpense(expense, ownerProfileIds);
         const baseRecord = {
@@ -5180,7 +5532,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${expense.id}-${displayDate}`,
             kind: "expense",
-            filter: "cash_out",
+            filter: transactionLens === "business" ? "expenses" : "cash_out",
             date: displayDate,
             sortAt: event.approved_at ?? expense.created_at,
             amount: -event.amount,
@@ -5198,7 +5550,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${expense.id}-pending`,
             kind: "expense",
-            filter: owner ? "transactions" : "cash_out",
+            filter: transactionLens === "business" ? "expenses" : "cash_out",
             date: expense.expense_date,
             sortAt: expense.created_at,
             amount: -numberValue(expense.amount),
@@ -5211,33 +5563,11 @@ function TransactionsView({
           });
         }
 
-        if (owner && !pendingApproval && userMatches(expense.spent_by)) {
-          const sourceEvent = postingEvents.find((event) => event.source_type === "expense" && event.source_id === expense.id);
-          const activityDate = dateFilterKey === "transaction" ? expense.expense_date : sourceEvent?.approval_date ?? expense.expense_date;
-          if (dateInRange(activityDate, dateRange)) {
-            rows.push({
-              ...baseRecord,
-              id: expense.id,
-              kind: "expense",
-              filter: "transactions",
-              date: activityDate,
-              sortAt: expense.approved_at ?? expense.created_at,
-              amount: -numberValue(expense.amount),
-              cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
-              onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
-              amountTone: "neutral",
-              pendingApproval: false,
-              transactionDate: expense.expense_date,
-              approvalDate: sourceEvent?.approval_date,
-            });
-          }
-        }
-
         return rows;
       });
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
-      // Payment transfers are custody/assignment chain steps, never generic IN/OUT rows.
-      if (movement.payment_id) return [];
+      if (transactionLens === "business") return [];
+      if (movement.payment_id && movement.status === "pending") return [];
       if (movement.status !== "accepted" && movement.status !== "pending") return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
       const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
@@ -5263,7 +5593,7 @@ function TransactionsView({
           sourceId: movement.id,
           kind: direction === "in" ? "collection" : "settlement",
           recordCategory: "transfer",
-          businessType: null,
+          businessType: movement.business_type,
           filter: direction === "in" ? "cash_in" : "cash_out",
           date: transactionDate,
           sortAt: movement.created_at,
@@ -5305,7 +5635,7 @@ function TransactionsView({
           sourceId: movement.id,
           kind: incoming ? "collection" as const : "settlement" as const,
           recordCategory: "transfer" as const,
-          businessType: null,
+          businessType: event.business_type,
           filter: incoming ? "cash_in" as const : "cash_out" as const,
           date: postingEventDate(event, dateFilterKey),
           sortAt: movement.responded_at ?? movement.created_at,
@@ -5332,7 +5662,7 @@ function TransactionsView({
         };
       });
     });
-    const agentRows = agentSettlements.flatMap((settlement): HistoryRecord[] => {
+    const agentRows = transactionLens === "business" ? [] : agentSettlements.flatMap((settlement): HistoryRecord[] => {
       if (settlement.status === "rejected") return [];
       const amount = numberValue(settlement.amount);
       const transactionDate = indiaDateIso(settlement.created_at);
@@ -5408,9 +5738,113 @@ function TransactionsView({
       });
     });
 
-    return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows]
+    // The canonical server feed is intentionally uncapped. Keep the rich
+    // source-backed cards when a source row is loaded, and render a read-only
+    // feed card for older rows beyond the operational detail window.
+    const loadedPaymentIds = new Set(payments.map((payment) => payment.id));
+    const loadedExpenseIds = new Set(expenses.map((expense) => expense.id));
+    const loadedMovementIds = new Set(movements.map((movement) => movement.id));
+    const unloadedActivityGroups = new Map<string, FinancialActivity[]>();
+    financialActivity
+      .filter((activity) => {
+        if (activity.lens !== transactionLens) return false;
+        if (
+          transactionLens === "business"
+          && selectedUserId !== "all"
+          && activity.actor_profile_id !== selectedUserId
+        ) return false;
+        if (activity.source_type === "payment") return !loadedPaymentIds.has(activity.source_id);
+        if (activity.source_type === "expense") return !loadedExpenseIds.has(activity.source_id);
+        return !loadedMovementIds.has(activity.source_id);
+      })
+      .forEach((activity) => {
+        const displayDate = activity.approval_date ?? activity.transaction_date;
+        const key = `${activity.source_type}:${activity.source_id}:${activity.category}:${displayDate}`;
+        unloadedActivityGroups.set(key, [...(unloadedActivityGroups.get(key) ?? []), activity]);
+      });
+    const feedFallbackRows = [...unloadedActivityGroups.values()].map((activities): HistoryRecord => {
+      const activity = activities[0];
+      const pendingApproval = activity.category === "pending";
+      const amountValue = activities.reduce((sum, item) => sum + numberValue(item.amount), 0);
+      const cashAmount = activities.reduce((sum, item) => sum + numberValue(item.cash_amount), 0);
+      const onlineAmount = activities.reduce((sum, item) => sum + numberValue(item.online_amount), 0);
+      const incoming = activity.category === "collection"
+        || activity.category === "in"
+        || (pendingApproval && activity.source_type === "payment");
+      const actorId = activity.flow_profile_id ?? activity.actor_profile_id;
+      const kind = activity.source_type === "expense"
+        ? "expense" as const
+        : incoming
+          ? "collection" as const
+          : "settlement" as const;
+      const recordCategory = activity.source_type === "payment"
+        ? "payment" as const
+        : activity.source_type === "expense"
+          ? "expense" as const
+          : "transfer" as const;
+      const filter = transactionLens === "business"
+        ? activity.source_type === "expense" ? "expenses" as const : "collections" as const
+        : incoming ? "cash_in" as const : "cash_out" as const;
+      const title = activity.source_type === "payment"
+        ? "Collection"
+        : activity.source_type === "expense"
+          ? "Expense"
+          : incoming
+            ? t("cashReceived")
+            : t("cashSent");
+      const displayDate = activity.approval_date ?? activity.transaction_date;
+      return {
+        id: `feed-${activity.source_id}-${activity.category}-${displayDate}`,
+        sourceId: activity.source_id,
+        kind,
+        recordCategory,
+        businessType: activity.business_type,
+        filter,
+        date: displayDate,
+        sortAt: activities.map((item) => item.created_at).sort().at(-1) ?? `${displayDate}T00:00:00.000Z`,
+        amount: incoming ? amountValue : -amountValue,
+        cashAmount,
+        onlineAmount,
+        amountTone: pendingApproval ? "neutral" : incoming ? "positive" : "negative",
+        title,
+        meta: `${profileName(profiles, actorId, t)} · ${activity.business_type ? labelForBusiness(activity.business_type, t) : t("cashTransfer")}`,
+        status: labelForStatus(activity.status, t),
+        statusTone: activity.status,
+        modeLabel: cashAmount > 0 && onlineAmount > 0
+          ? t("mixed")
+          : onlineAmount > 0
+            ? t("online")
+            : t("cash"),
+        recordStatus: "active",
+        ownerId: actorId,
+        description: "",
+        remark: "",
+        reason: null,
+        businessLabel: activity.business_type
+          ? transactionBusinessTag(activity.business_type, t)
+          : t("cashTransfer"),
+        recordType: activity.source_type === "payment" || activity.source_type === "expense"
+          ? activity.source_type
+          : undefined,
+        pendingApproval,
+        canApprove: false,
+        canEdit: false,
+        canDelete: false,
+        transactionDate: activity.transaction_date,
+        approvalDate: activity.approval_date ?? undefined,
+        icon: activity.source_type === "payment"
+          ? <WalletCards size={24} />
+          : activity.source_type === "expense"
+            ? <ReceiptText size={24} />
+            : incoming
+              ? <ArrowDown size={24} />
+              : <ArrowUp size={24} />,
+      };
+    });
+
+    return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows, ...feedFallbackRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, t, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, financialActivity, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -5461,13 +5895,12 @@ function TransactionsView({
   }, [businessTypeFilter, modeFilter, recordTypeFilter]);
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
     if (!matchesSecondaryFilters(record)) return false;
-    if (effectiveTransactionFilter === "all") return owner ? record.filter !== "transactions" && !record.pendingApproval : true;
-    if (effectiveTransactionFilter === "transactions") return owner ? record.filter === "transactions" || Boolean(record.pendingApproval) : record.filter === "transactions";
-    if (effectiveTransactionFilter === "pending") return Boolean(record.pendingApproval);
-    return record.filter === effectiveTransactionFilter && !record.pendingApproval;
-  }), [allTransactionRecords, effectiveTransactionFilter, matchesSecondaryFilters, owner]);
+    if (transactionFilter === "all") return !record.pendingApproval;
+    if (transactionFilter === "pending") return Boolean(record.pendingApproval);
+    return record.filter === transactionFilter && !record.pendingApproval;
+  }), [allTransactionRecords, matchesSecondaryFilters, transactionFilter]);
   const totalTransactionRecords = allTransactionRecords.filter((record) =>
-    record.filter !== "transactions" && !record.pendingApproval && matchesSecondaryFilters(record),
+    !record.pendingApproval && matchesSecondaryFilters(record),
   );
   const inCashTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) > 0)
@@ -5492,6 +5925,21 @@ function TransactionsView({
     groups.push({ date: record.date, records: [record] });
     return groups;
   }, []);
+  const activityOptions: { value: TransactionFilter; label: string }[] = transactionLens === "business"
+    ? [
+        { value: "all", label: t("all") },
+        { value: "collections", label: t("collections") },
+        { value: "expenses", label: t("expenses") },
+        { value: "pending", label: t("pending") },
+      ]
+    : [
+        { value: "all", label: t("all") },
+        { value: "cash_in", label: "IN" },
+        { value: "cash_out", label: "OUT" },
+        { value: "pending", label: t("pending") },
+      ];
+  const positiveLabel = transactionLens === "business" ? t("collections") : "IN";
+  const negativeLabel = transactionLens === "business" ? t("expenses") : "OUT";
 
   return (
     <div className="view-stack mobile-clean transaction-history-view">
@@ -5502,6 +5950,44 @@ function TransactionsView({
         </>
       ) : null}
 
+      {!currentUserIsSalesAgent ? (
+        <nav className="transaction-primary-filters" aria-label="Transaction classification">
+          <div className="transaction-lens-tabs" role="tablist" aria-label="Transaction lens">
+            <button
+              aria-selected={transactionLens === "business"}
+              className={transactionLens === "business" ? "active" : ""}
+              onClick={() => onSelectLens("business")}
+              role="tab"
+              type="button"
+            >
+              Business
+            </button>
+            <button
+              aria-selected={transactionLens === "personal"}
+              className={transactionLens === "personal" ? "active" : ""}
+              onClick={() => onSelectLens("personal")}
+              role="tab"
+              type="button"
+            >
+              My activity
+            </button>
+          </div>
+          <div className="transaction-activity-chips" aria-label={transactionLens === "business" ? "Business activity filters" : "My activity filters"}>
+            {activityOptions.map((option) => (
+              <button
+                aria-pressed={transactionFilter === option.value}
+                className={transactionFilter === option.value ? "active" : ""}
+                key={option.value}
+                onClick={() => onSelectActivity(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
+
       <section className="history-summary-panel">
         <div className="history-summary-context">
           <span>{dateLabel}</span>
@@ -5510,13 +5996,13 @@ function TransactionsView({
         {!currentUserIsSalesAgent ? (
           <div className="history-total-card">
             <div>
-              <span>{t("totalIn")}</span>
+              <span>{positiveLabel}</span>
               <strong className="positive">+{formatMoney(positiveTotal)}</strong>
               <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
             </div>
             <div className="history-total-divider" />
             <div>
-              <span>{t("totalOut")}</span>
+              <span>{negativeLabel}</span>
               <strong className="negative">-{formatMoney(negativeTotal)}</strong>
               <small className="history-total-breakdown">{t("cash")} {formatMoney(outCashTotal)} · {t("online")} {formatMoney(outOnlineTotal)}</small>
             </div>
@@ -5681,7 +6167,6 @@ function TransactionsView({
         ) : (
           <div className="operational-filter-empty">
             <p className="muted">{t("noRecordsForFilter")}</p>
-            <button className="secondary-button" type="button" onClick={openFilters}>{t("filters")}</button>
           </div>
         )}
       </section>
@@ -7720,6 +8205,7 @@ function ActionSheet({
   setSelectedPositive,
   setSelectedNegative,
   canUsePayment,
+  businessTypes,
   rooms,
   mainCourses,
   skillCourses,
@@ -7743,6 +8229,7 @@ function ActionSheet({
   setSelectedPositive: (type: PositiveFlow | null) => void;
   setSelectedNegative: (type: NegativeFlow | null) => void;
   canUsePayment: (type: BusinessType | "expense") => boolean;
+  businessTypes: BusinessType[];
   rooms: { id: string; room_number: string; label: string | null }[];
   mainCourses: Course[];
   skillCourses: Course[];
@@ -7865,6 +8352,7 @@ function ActionSheet({
               {t("selectAnotherType")}
             </button>
             <MoneySettlementForm
+              businessTypes={businessTypes}
               direction="received_from_user"
               profiles={receiveMoneyProfiles}
               settlementDate={settlementDate}
@@ -7880,7 +8368,7 @@ function ActionSheet({
             <button className="back-link" type="button" onClick={() => setSelectedNegative(null)}>
               {t("selectAnotherType")}
             </button>
-            <ExpenseForm setNotice={setNotice} startTransition={startTransition} onSuccess={closeAction} />
+            <ExpenseForm businessTypes={businessTypes} setNotice={setNotice} startTransition={startTransition} onSuccess={closeAction} />
           </>
         ) : null}
 
@@ -7904,6 +8392,7 @@ function ActionSheet({
               {t("selectAnotherType")}
             </button>
             <MoneySettlementForm
+              businessTypes={businessTypes}
               direction="sent_to_user"
               profiles={sendMoneyProfiles}
               settlementDate={settlementDate}
@@ -9311,10 +9800,12 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
 }
 
 function ExpenseForm({
+  businessTypes,
   setNotice,
   startTransition,
   onSuccess,
 }: {
+  businessTypes: BusinessType[];
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
   onSuccess?: () => void;
@@ -9333,8 +9824,8 @@ function ExpenseForm({
       <input type="hidden" name="mode" value="cash" />
       <label>
         {t("business")}
-        <select name="business_type" defaultValue="general">
-          {(Object.keys(businessLabels) as BusinessType[]).map((business) => (
+        <select name="business_type" defaultValue={businessTypes.includes("general") ? "general" : businessTypes[0]} required>
+          {businessTypes.map((business) => (
             <option key={business} value={business}>
               {labelForBusiness(business, t)}
             </option>
@@ -9373,6 +9864,7 @@ function ExpenseForm({
 }
 
 function MoneySettlementForm({
+  businessTypes,
   direction,
   profiles,
   settlementDate,
@@ -9382,6 +9874,7 @@ function MoneySettlementForm({
   defaultProfileId = "",
   defaultAmount = 0,
 }: {
+  businessTypes: BusinessType[];
   direction: SettlementDirection;
   profiles: Profile[];
   settlementDate: string;
@@ -9402,6 +9895,14 @@ function MoneySettlementForm({
     >
       <input type="hidden" name="settlement_direction" value={direction} />
       <input type="hidden" name="settlement_date" value={settlementDate} />
+      <label>
+        {t("business")}
+        <select name="business_type" defaultValue={businessTypes[0]} required>
+          {businessTypes.map((businessType) => (
+            <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>
+          ))}
+        </select>
+      </label>
       <SearchableProfileSelect
         label={t("user")}
         name="profile_id"

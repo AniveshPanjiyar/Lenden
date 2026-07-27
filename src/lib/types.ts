@@ -152,6 +152,19 @@ export type StaffPermission = {
   permission: string;
 };
 
+export type ManagerUnitScope = {
+  business_id: string;
+  manager_profile_id: string;
+  business_type: BusinessType;
+};
+
+export type StaffUnitAssignment = {
+  business_id: string;
+  staff_profile_id: string;
+  business_type: BusinessType;
+  manager_profile_id: string | null;
+};
+
 export type Room = {
   id: string;
   business_id: string;
@@ -424,6 +437,7 @@ export type Expense = {
 export type MoneyMovement = {
   id: string;
   business_id: string;
+  business_type: BusinessType | null;
   type: "transfer" | "settlement";
   mode: PaymentMode;
   amount: number;
@@ -442,6 +456,7 @@ export type MoneyMovement = {
 export type LedgerEntry = {
   id: string;
   business_id: string;
+  business_type: BusinessType | null;
   account_profile_id: string;
   amount: number;
   entry_date: string;
@@ -456,6 +471,7 @@ export type DailyPostingEvent = {
   id: string;
   source_type: "payment" | "expense" | "transfer" | "settlement" | "agent_settlement";
   source_id: string;
+  business_type: BusinessType | null;
   component: "cash" | "online" | null;
   profile_id: string;
   counterparty_profile_id: string | null;
@@ -529,7 +545,49 @@ export type ClosingSummary = {
 
 export type CashBalanceSummary = {
   profile_id: string;
+  business_type: BusinessType | null;
   balance: number;
+};
+
+export type DashboardSummary = {
+  role: BusinessRole;
+  cashSelf: number;
+  cashWithStaff: number;
+  collections: { total: number; cash: number; online: number };
+  expenses: { total: number; cash: number; online: number };
+  personalIn: { total: number; cash: number; online: number };
+  personalOut: { total: number; cash: number; online: number };
+  pending: { amount: number; count: number };
+  businessUnits: Array<{
+    businessType: BusinessType;
+    collections: number;
+    cashCollections: number;
+    onlineCollections: number;
+    expenses: number;
+    cashExpenses: number;
+    onlineExpenses: number;
+    pendingAmount: number;
+    pendingCount: number;
+  }>;
+};
+
+export type FinancialActivity = {
+  activity_id: string;
+  source_type: "payment" | "expense" | "transfer" | "settlement";
+  source_id: string;
+  lens: "business" | "personal";
+  category: "collection" | "expense" | "in" | "out" | "pending";
+  business_type: BusinessType | null;
+  actor_profile_id: string;
+  flow_profile_id: string | null;
+  counterparty_profile_id: string | null;
+  cash_amount: number;
+  online_amount: number;
+  amount: number;
+  status: string;
+  transaction_date: string;
+  approval_date: string | null;
+  created_at: string;
 };
 
 export type PaymentTransferMutationPatch = {
@@ -570,6 +628,8 @@ export type AppData = {
   profile: Profile;
   permissions: string[];
   allPermissions: StaffPermission[];
+  managerUnitScopes: ManagerUnitScope[];
+  staffUnitAssignments: StaffUnitAssignment[];
   profiles: Profile[];
   rooms: Room[];
   courses: Course[];
@@ -583,6 +643,8 @@ export type AppData = {
   ledger: LedgerEntry[];
   closingSummaries: ClosingSummary[];
   cashBalances: CashBalanceSummary[];
+  dashboardSummary: DashboardSummary | null;
+  financialActivity: FinancialActivity[];
   changeRequests: ChangeRequest[];
   agentSettlements: AgentSettlement[];
   notifications: AppNotification[];
@@ -591,6 +653,7 @@ export type AppData = {
 export type BootstrapPayload = Pick<
   AppData,
   "businessContext" | "profile" | "permissions" | "allPermissions" | "profiles" | "rooms" | "courses" | "referrals" | "notifications"
+  | "managerUnitScopes" | "staffUnitAssignments"
 >;
 
 export type WorkspaceBootstrapPayload = BootstrapPayload;
@@ -606,6 +669,8 @@ export type DashboardPayload = Pick<
   | "ledger"
   | "closingSummaries"
   | "cashBalances"
+  | "dashboardSummary"
+  | "financialActivity"
   | "changeRequests"
   | "agentSettlements"
   | "notifications"
@@ -625,6 +690,8 @@ export type DashboardOverviewPayload = {
   ledger: LedgerEntry[];
   closingSummaries: ClosingSummary[];
   cashBalances: CashBalanceSummary[];
+  dashboardSummary: DashboardSummary | null;
+  financialActivity: FinancialActivity[];
   changeRequests: ChangeRequest[];
   agentSettlements: AgentSettlement[];
   notifications: AppNotification[];
@@ -636,6 +703,7 @@ export type TransactionPagePayload = {
   expenses: Expense[];
   movements: MoneyMovement[];
   ledger: LedgerEntry[];
+  financialActivity: FinancialActivity[];
   changeRequests: ChangeRequest[];
   agentSettlements: AgentSettlement[];
   notifications: AppNotification[];

@@ -42,6 +42,7 @@ export default async function BusinessHome({
     initialViewState = parseAppViewState(
       resolvedSearchParams,
       identity.id,
+      context.membership?.role,
     );
   } catch (error) {
     if (error instanceof BusinessAccessError && error.details) {

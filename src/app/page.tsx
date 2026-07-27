@@ -15,7 +15,7 @@ export default async function Home({
   const last = available.find(({ business }) => business.id === profile.last_business_id);
   const destination = last ?? available[0];
   if (destination) {
-    const viewState = parseAppViewState(resolvedSearchParams, user.id);
+    const viewState = parseAppViewState(resolvedSearchParams, user.id, destination.membership.role);
     const canonical = applyAppViewStateToSearchParams(
       new URLSearchParams(),
       viewState,

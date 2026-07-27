@@ -116,7 +116,7 @@ select set_config('request.jwt.claim.sub', '81000000-0000-4000-8000-000000000004
 do $$
 begin
   begin
-    perform public.accept_business_invitation('83000000-0000-4000-8000-000000000001');
+    perform public.accept_business_invitation('83000000-0000-4000-8000-000000000001'::uuid);
     raise exception 'Wrong-email user unexpectedly accepted invitation';
   exception when insufficient_privilege then null;
   end;
@@ -124,7 +124,7 @@ end;
 $$;
 
 select set_config('request.jwt.claim.sub', '81000000-0000-4000-8000-000000000003', true);
-select public.accept_business_invitation('83000000-0000-4000-8000-000000000001');
+select public.accept_business_invitation('83000000-0000-4000-8000-000000000001'::uuid);
 
 do $$
 begin
@@ -220,6 +220,7 @@ select public.create_business_with_owner(
   'granted-user@test.invalid'
 );
 
+reset role;
 do $$
 begin
   if not exists (
@@ -247,6 +248,7 @@ begin
 end;
 $$;
 
+set local role authenticated;
 select set_config('request.jwt.claim.sub', '81000000-0000-4000-8000-000000000006', true);
 do $$
 begin
