@@ -235,15 +235,53 @@ type PendingContextRecord = {
 
 const actionIdempotencyField = "_action_idempotency_key";
 
-function getProfileImage(fullName: string, avatarUrl?: string | null) {
-  if (avatarUrl) return avatarUrl;
+function fallbackProfileImage(fullName: string) {
+  const initials = fullName
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.match(/[a-z0-9]/i)?.[0] ?? "")
+    .join("")
+    .toUpperCase() || "U";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" fill="#dce8dc"/><text x="80" y="88" text-anchor="middle" dominant-baseline="middle" fill="#173c32" font-family="Arial,sans-serif" font-size="58" font-weight="700">${initials}</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
 
-  const name = fullName.toLowerCase();
-  if (name.includes("alex")) return "https://lh3.googleusercontent.com/aida-public/AB6AXuCKWCI0NmjmpzJ1Ou2dOGYzT_SqCk-zMQSUHuWDPj_63UFU9HjpIXkgUGc6quxycauzhwBCadMr96AaOYuGtlG7LHci7q461fo8T55rkGDe7_eQ0vTJk1QLVn85jsmc8uyNmIc7EEcm64Y41gKH7DCfPXadqRCa8Zocve1EXXVsoeOy4Rcw0MpArfkFOe5Yx2gk2NP5t-_v6Zz7bx53fJX1q2x3IFMcLa6QtRKAGn5HLXzeTXxPIuYoEKeCR9uxzztIDpwnkpr_4Q";
-  if (name.includes("altamash")) return "https://lh3.googleusercontent.com/aida-public/AB6AXuDf2QPj4Z950V9MxBXiG9oe269_76pWubhnTjuc1HBILwGR7F0slFHrB4jw0PyJA51rGSxLWI1FbNTd6dw_KUdOjw8THKM9Z_OYZkBIFPuwTQBTpjpMJ3W1GP25VBmEwH9wPZjcBI0ViMlbEQAzkhpxHgeEB8Csnvmvwa4NvX_KCoJbUM3bdSMljm--QQKi6fh_NMng8kYlyUg835dC2ViVLTviZK3o-4RRpvTrL4UlC2sHihyILbk6Iwcs-zKrWyNj-QLNpkuH_A";
-  if (name.includes("anivesh")) return "https://lh3.googleusercontent.com/aida-public/AB6AXuBHMvZIaJASvGEBfDthL6ypfh1vBLMwtCra6pNz6Tcy_bKUPIvvZhyctDwQOmMUmAsluHA6sjentAvFQuR6sGxpITLJDo9CoSakBvFmft5f4XejNWMnUC30uKKxpmImL_przYNWVIz3tGGH0qessaEuFgkIixw3DuLoFqZYacrYdwEvPWJzmWLroLHn62gd1u7dY9xmsVh2G0F7JAlbGZE4ELXsjTNh4rka97FDKl7Dde1uA0hoq8JtuJjyJM0whgwALe5LLDdLAQ";
-  if (name.includes("monira")) return "https://lh3.googleusercontent.com/aida-public/AB6AXuDh99_4mUjnxTvzPDseWFd1yGf9701A2EOZW4Adntw-5OZ3G-QaYf0EAqPk07G4Abw_OtyuAJmGyNoGdIigFBwtmJpnd0FDH59zzqOv6l_tasJDX3QXL_PCsMOCpsMi283ShI_gVr1uN4e6UZQf7ygF5gNpda1NEAUnXfWWCPbYseV6bqdfqhJqemeiT-vtIsikhxwlVUQekxRRUhJPKcq-qm_8dp20QW03GZLzc1owf1G463EhcL8oKxQ7zZRcv7BvaSxWh4jDKQ";
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=c8e8d0&color=002110`;
+function getProfileImage(fullName: string, avatarUrl?: string | null) {
+  const candidate = avatarUrl?.trim();
+  if (candidate && /^(?:https?:\/\/|data:image\/|blob:|\/(?!\/))/i.test(candidate)) return candidate;
+  return fallbackProfileImage(fullName);
+}
+
+function SafeAvatarImage({
+  fullName,
+  avatarUrl,
+  alt,
+  className,
+}: {
+  fullName: string;
+  avatarUrl?: string | null;
+  alt: string;
+  className?: string;
+}) {
+  const preferredSource = getProfileImage(fullName, avatarUrl);
+  const fallbackSource = fallbackProfileImage(fullName);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const source = failedSource === preferredSource ? fallbackSource : preferredSource;
+
+  return (
+    // Signed private-storage URLs and data-URL fallbacks are intentionally not
+    // routed through the Next image optimizer.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      alt={alt}
+      className={className}
+      src={source}
+      onError={() => {
+        if (source !== fallbackSource) setFailedSource(preferredSource);
+      }}
+    />
+  );
 }
 
 function getTabIcon(id: Tab) {
@@ -632,6 +670,7 @@ const messages: Record<Language, Record<string, string>> = {
     settlementLikePending: "Pending cash movements",
     settlementActivity: "Settlement activity",
     settlementDate: "Settlement date",
+    transferDate: "Transfer date",
     settlementHistory: "Settlement history",
     settlements: "Settlements",
     shikshanSansthan: "Shikshan Sansthan",
@@ -1048,6 +1087,7 @@ const messages: Record<Language, Record<string, string>> = {
     settlementLikePending: "बाकी नकद एंट्री",
     settlementActivity: "सेटलमेंट गतिविधि",
     settlementDate: "सेटलमेंट तारीख",
+    transferDate: "ट्रांसफर तारीख",
     settlementHistory: "सेटलमेंट हिसाब",
     settlements: "सेटलमेंट",
     shikshanSansthan: "शिक्षण संस्थान",
@@ -2895,14 +2935,14 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const salesAgents = appData.profiles.filter((profile) => profile.active && profile.membership_status === "active" && profile.role === "sales_agent");
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
-    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
-    if (manager) return item.membership_role === "staff";
+    if (primaryOwner) return ["co_owner", "staff", "sales_agent"].includes(item.membership_role);
+    if (manager) return item.membership_role === "staff" || item.membership_role === "sales_agent";
     return false;
   });
   const sendMoneyProfiles = appData.profiles.filter((item) => {
     if (currentUserIsSalesAgent || !item.active || item.membership_status !== "active" || item.id === appData.profile.id) return false;
-    if (primaryOwner) return item.membership_role === "co_owner" || item.membership_role === "staff";
-    if (manager) return item.membership_role === "primary_owner";
+    if (primaryOwner) return ["co_owner", "staff", "sales_agent"].includes(item.membership_role);
+    if (manager) return item.membership_role === "staff" || item.membership_role === "sales_agent";
     return false;
   });
   const permissionsByProfile = useMemo(() => {
@@ -3282,7 +3322,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             className="mobile-menu-button profile-menu-trigger rounded-full overflow-hidden border border-outline-variant/30 shadow-soft focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-surface md:hidden"
             onClick={() => setSidebarOpen(true)}
           >
-            <img alt="" className="w-full h-full object-cover" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)} />
+            <SafeAvatarImage alt="" className="w-full h-full object-cover" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
           </button>
           <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
           <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
@@ -3368,7 +3408,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
             <X size={20} />
           </button>
           <div className="app-sidebar-profile px-6 mb-8 flex items-center gap-4">
-            <img alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" src={getProfileImage(appData.profile.full_name, appData.profile.avatar_url)}/>
+            <SafeAvatarImage alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
             <div>
               <h2 className="font-headline text-lg font-bold text-primary">{appData.profile.full_name}</h2>
               <p className="font-body text-body-md text-on-surface-variant">{profileRoleLabel(appData.profile, t)}</p>
@@ -4356,7 +4396,7 @@ function RoleDashboardView({
 
   return (
     <div className="role-dashboard">
-      <section className="dashboard-metric-group dashboard-summary-section">
+      <section className="dashboard-metric-group dashboard-summary-section tone-cash-position">
         <header>
           <div><p className="eyebrow">Cash position</p><h2>Approved cash custody</h2></div>
           <span>As of {asOfDate}</span>
@@ -4367,7 +4407,7 @@ function RoleDashboardView({
         )}
       </section>
 
-      <section className="dashboard-metric-group dashboard-summary-section">
+      <section className="dashboard-metric-group dashboard-summary-section tone-business-activity">
         <header>
           <div><p className="eyebrow">Business activity</p><h2>{businessScopeLabel}</h2></div>
           <span>{dateLabel} · {dateBasisLabel}</span>
@@ -4397,7 +4437,7 @@ function RoleDashboardView({
         )}
       </section>
 
-      <section className="dashboard-metric-group dashboard-summary-section">
+      <section className="dashboard-metric-group dashboard-summary-section tone-user-activity">
         <header>
           <div><p className="eyebrow">Your activity</p><h2>Your money movement</h2></div>
           <span>{dateLabel} · {dateBasisLabel}</span>
@@ -6032,7 +6072,7 @@ function TransactionsView({
   const negativeLabel = transactionLens === "business" ? t("expenses") : "OUT";
 
   return (
-    <div className="view-stack mobile-clean transaction-history-view">
+    <div className={`view-stack mobile-clean transaction-history-view lens-${transactionLens} activity-${transactionFilter}`}>
       {currentUserIsSalesAgent ? (
         <>
           <AgentCodePanel profile={profile} referrals={agentReferralCodes} setNotice={setNotice} />
@@ -6117,7 +6157,7 @@ function TransactionsView({
               <div className="history-card-list">
                 {group.records.map((record) => (
                   <article
-                    className={`history-card ${record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}`}
+                    className={`history-card ${record.amountTone ?? (record.amount === 0 ? "neutral" : record.amount > 0 ? "positive" : "negative")}${record.pendingApproval ? " pending" : ""}`}
                     key={`${record.kind}-${record.id}`}
                   >
                     <div className="history-card-icon">{record.icon}</div>
@@ -6758,14 +6798,15 @@ function StudentAvatar({
   imageUrl?: string | null;
   className?: string;
 }) {
-  const avatarUrl = imageUrl ?? getProfileImage(displayName);
   return (
-    <span
-      className={`library-student-photo ${className}`}
-      role="img"
-      aria-label={`${displayName} photo`}
-      style={{ backgroundImage: `url("${avatarUrl.replace(/"/g, "%22")}")` }}
-    />
+    <span className={`library-student-photo ${className}`}>
+      <SafeAvatarImage
+        alt={`${displayName} photo`}
+        className="library-student-photo-image"
+        fullName={displayName}
+        avatarUrl={imageUrl}
+      />
+    </span>
   );
 }
 
@@ -6778,8 +6819,7 @@ function StudentPhoto({
   displayName: string;
   className?: string;
 }) {
-  const imageUrl = getProfileImage(displayName, student.photo_url);
-  return <StudentAvatar displayName={displayName} imageUrl={imageUrl} className={className} />;
+  return <StudentAvatar displayName={displayName} imageUrl={student.photo_url} className={className} />;
 }
 
 async function compressUploadImage(file: File) {
@@ -8448,7 +8488,6 @@ function ActionSheet({
               {t("selectAnotherType")}
             </button>
             <MoneySettlementForm
-              businessTypes={businessTypes}
               direction="received_from_user"
               profiles={receiveMoneyProfiles}
               settlementDate={settlementDate}
@@ -8488,7 +8527,6 @@ function ActionSheet({
               {t("selectAnotherType")}
             </button>
             <MoneySettlementForm
-              businessTypes={businessTypes}
               direction="sent_to_user"
               profiles={sendMoneyProfiles}
               settlementDate={settlementDate}
@@ -9969,7 +10007,6 @@ function ExpenseForm({
 }
 
 function MoneySettlementForm({
-  businessTypes,
   direction,
   profiles,
   settlementDate,
@@ -9979,7 +10016,6 @@ function MoneySettlementForm({
   defaultProfileId = "",
   defaultAmount = 0,
 }: {
-  businessTypes: BusinessType[];
   direction: SettlementDirection;
   profiles: Profile[];
   settlementDate: string;
@@ -10000,14 +10036,6 @@ function MoneySettlementForm({
     >
       <input type="hidden" name="settlement_direction" value={direction} />
       <input type="hidden" name="settlement_date" value={settlementDate} />
-      <label>
-        {t("business")}
-        <select name="business_type" defaultValue={businessTypes[0]} required>
-          {businessTypes.map((businessType) => (
-            <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>
-          ))}
-        </select>
-      </label>
       <SearchableProfileSelect
         label={t("user")}
         name="profile_id"
@@ -10029,7 +10057,7 @@ function MoneySettlementForm({
         />
       </label>
       <label>
-        {t("settlementDate")}
+        {t("transferDate")}
         <input value={settlementDate} readOnly />
       </label>
       <label className="full-span">
@@ -10183,7 +10211,7 @@ function SearchableProfileSelect({
                 onPointerMove={() => setActiveIndex(index)}
                 onClick={() => chooseProfile(profile)}
               >
-                <img alt="" src={getProfileImage(profile.full_name, profile.avatar_url)} />
+                <SafeAvatarImage alt="" fullName={profile.full_name} avatarUrl={profile.avatar_url} />
                 <span>
                   <strong>{profile.full_name}</strong>
                   <small>{profile.email} · {profileRoleLabel(profile, t)}</small>
@@ -10374,11 +10402,11 @@ function ClosingView({
   };
   const visibleSummaries = summaries
     .filter((summary) => {
-      if (!summary.profile.active || summary.profile.membership_role === "sales_agent") return false;
+      if (!summary.profile.active) return false;
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
         if (summary.profile.membership_role === "co_owner") return true;
-        return summary.profile.membership_role === "staff";
+        return summary.profile.membership_role === "staff" || summary.profile.membership_role === "sales_agent";
       }
       return summary.profile.id === profile.id;
     })
@@ -10499,24 +10527,16 @@ function ClosingView({
             const cashToReceive = Math.max(summary.closing, 0);
             const custodyCashIn = summary.collected + summary.received;
             const custodyCashOut = summary.expenses + summary.sent;
-            const receivableBusinessTypes = [...new Set(
-              summary.profile.membership_role === "staff"
-                ? staffUnitAssignments
-                    .filter((assignment) => assignment.staff_profile_id === summary.profile.id)
-                    .map((assignment) => assignment.business_type)
-                : summary.profile.membership_role === "co_owner"
-                  ? managerUnitScopes
-                      .filter((scope) => scope.manager_profile_id === summary.profile.id)
-                      .map((scope) => scope.business_type)
-                  : [],
-            )];
             const settlementProfileKey = `${date}:${summary.profile.id}`;
-            const canReceiveFromUser = receivableBusinessTypes.length > 0 && summary.profile.id !== profile.id && (
+            const canReceiveFromUser = summary.profile.id !== profile.id && (
               (
                 profile.membership_role === "primary_owner"
-                && (summary.profile.membership_role === "co_owner" || summary.profile.membership_role === "staff")
+                && ["co_owner", "staff", "sales_agent"].includes(summary.profile.membership_role)
               ) ||
-              (profile.membership_role === "co_owner" && summary.profile.membership_role === "staff")
+              (
+                profile.membership_role === "co_owner"
+                && (summary.profile.membership_role === "staff" || summary.profile.membership_role === "sales_agent")
+              )
             );
             const settlementEntryKey = settlementProfileKey;
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
@@ -10533,13 +10553,15 @@ function ClosingView({
                   <span className="closing-avatar">{profileInitials(summary.profile)}</span>
                   <span>
                     <strong>{summary.profile.full_name}{summary.profile.id === profile.id ? ` (${t("self")})` : ""}</strong>
-                    <small>{profileRoleLabel(summary.profile, t)}</small>
+                    <small className={`closing-role-chip role-${summary.profile.membership_role}`}>
+                      {profileRoleLabel(summary.profile, t)}
+                    </small>
                   </span>
-                  <span className={pendingSummary.totalRecordCount > 0 ? "closing-status warning" : "closing-status"}>
-                    {pendingSummary.totalRecordCount > 0
-                      ? `${pendingSummary.totalRecordCount} ${t("pending")}`
-                      : t("active")}
-                  </span>
+                  {pendingSummary.totalRecordCount > 0 ? (
+                    <span className="closing-status warning">
+                      {pendingSummary.totalRecordCount} {t("pending")}
+                    </span>
+                  ) : null}
                 </div>
                 <section className="closing-cash-custody">
                   <div className="closing-section-heading">
@@ -10622,7 +10644,6 @@ function ClosingView({
                         <input type="hidden" name="settlement_direction" value="received_from_user" />
                         <input type="hidden" name="profile_id" value={summary.profile.id} />
                         <input type="hidden" name="settlement_date" value={date} />
-                        <input type="hidden" name="auto_allocate_business_units" value="true" />
                         <label className="closing-receive-field">
                           <span>{t("amountReceived")}</span>
                           <input

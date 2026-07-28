@@ -1,5 +1,5 @@
 import { businessPermissions } from "@/lib/constants";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { isBusinessOwner, isBusinessSalesAgent, profileForBusiness } from "@/lib/tenancy";
 import { rangeForPreset, type AppTab, type AppViewState } from "@/lib/view-state";
 import type {
@@ -92,7 +92,15 @@ async function signedStorageUrlMap(
   }))];
   if (paths.length === 0) return result;
 
-  const { data } = await supabase.storage.from(bucket).createSignedUrls(paths, 60 * 60);
+  let signer: SupabaseServerClient | ReturnType<typeof createAdminClient> = supabase;
+  try {
+    // These private assets are only signed after the business-scoped query has
+    // established that the current user may see the corresponding record.
+    signer = createAdminClient();
+  } catch {
+    // Local/read-only environments may intentionally omit the service key.
+  }
+  const { data } = await signer.storage.from(bucket).createSignedUrls(paths, 60 * 60);
   (data ?? []).forEach((item) => {
     if (item.path && item.signedUrl) result.set(item.path, item.signedUrl);
   });
@@ -333,7 +341,7 @@ async function loadDashboard(
     needsStudents && canViewLibraryStudents && studentSourceId === "library"
       ? supabase
           .from("library_students")
-          .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at")
+          .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at")
           .eq("business_id", bootstrap.businessContext.business.id)
           .eq("active", studentActive)
           .eq("placeholder", false)
@@ -344,7 +352,7 @@ async function loadDashboard(
     needsStudents && canViewCourseStudents && Boolean(studentCourseId)
       ? supabase
           .from("course_students")
-          .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at")
+          .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at")
           .eq("business_id", bootstrap.businessContext.business.id)
           .eq("source_course_id", studentCourseId ?? "")
           .eq("active", studentActive)
@@ -472,9 +480,14 @@ async function loadDashboard(
   const courseStudentRows = isMissingCourseStudentSchemaError(courseStudentsResult.error)
     ? []
     : (courseStudentsResult.data ?? []) as CourseStudent[];
+  const rosterPhotoUrls = await signedStorageUrlMap(
+    supabase,
+    "library-student-photos",
+    [...libraryStudents, ...courseStudentRows].map((student) => student.photo_url),
+  );
   const rosterLibraryStudents = libraryStudents.map((student) => ({
     ...student,
-    photo_url: null,
+    photo_url: student.photo_url ? rosterPhotoUrls.get(student.photo_url) ?? null : null,
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
     status_note: null,
@@ -482,7 +495,7 @@ async function loadDashboard(
   }));
   const rosterCourseStudents = courseStudentRows.map((student) => ({
     ...student,
-    photo_url: null,
+    photo_url: student.photo_url ? rosterPhotoUrls.get(student.photo_url) ?? null : null,
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
   }));
@@ -542,10 +555,9 @@ async function loadDashboard(
   const closingVisibleProfileIds = new Set(
     (closingMembershipsResult.data ?? [])
       .filter((item) => {
-        if (item.role === "sales_agent") return false;
         if (bootstrap.businessContext.accessMode === "support" || viewerBusinessRole === "primary_owner") return true;
         if (viewerBusinessRole === "co_owner") {
-          return item.role === "co_owner" || item.role === "staff";
+          return item.role === "co_owner" || item.role === "staff" || item.role === "sales_agent";
         }
         return item.profile_id === userId;
       })
@@ -817,7 +829,7 @@ export async function getStudentCollectionPage(
   if (isLibrary) {
     let query = supabase
       .from("library_students")
-      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
+      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
       .eq("active", true)
       .eq("placeholder", false);
@@ -828,9 +840,11 @@ export async function getStudentCollectionPage(
       .order("id")
       .range(offset, offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
-    const students = ((result.data ?? []) as LibraryStudent[]).map((student) => ({
+    const rawStudents = (result.data ?? []) as LibraryStudent[];
+    const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawStudents.map((student) => student.photo_url));
+    const students = rawStudents.map((student) => ({
       ...student,
-      photo_url: null,
+      photo_url: student.photo_url ? photoUrls.get(student.photo_url) ?? null : null,
       aadhar_photo_url: null,
       aadhar_back_photo_url: null,
       status_note: null,
@@ -847,7 +861,7 @@ export async function getStudentCollectionPage(
 
   let query = supabase
     .from("course_students")
-    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
+    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
     .eq("source_course_id", sourceCourseId)
     .eq("active", true);
@@ -858,9 +872,11 @@ export async function getStudentCollectionPage(
     .order("id")
     .range(offset, offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
-  const students = ((result.data ?? []) as CourseStudent[]).map((student) => ({
+  const rawStudents = (result.data ?? []) as CourseStudent[];
+  const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawStudents.map((student) => student.photo_url));
+  const students = rawStudents.map((student) => ({
     ...student,
-    photo_url: null,
+    photo_url: student.photo_url ? photoUrls.get(student.photo_url) ?? null : null,
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
   }));
@@ -895,16 +911,18 @@ export async function getStudentRosterPage(
     }
     let query = supabase
       .from("library_students")
-      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
+      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
       .eq("active", active)
       .eq("placeholder", false);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
-    const items = ((result.data ?? []) as LibraryStudent[]).map((student) => ({
+    const rawItems = (result.data ?? []) as LibraryStudent[];
+    const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawItems.map((student) => student.photo_url));
+    const items = rawItems.map((student) => ({
       ...student,
-      photo_url: null,
+      photo_url: student.photo_url ? photoUrls.get(student.photo_url) ?? null : null,
       aadhar_photo_url: null,
       aadhar_back_photo_url: null,
       status_note: null,
@@ -921,16 +939,18 @@ export async function getStudentRosterPage(
   }
   let query = supabase
     .from("course_students")
-    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
+    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
     .eq("source_course_id", sourceCourseId)
     .eq("active", active);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
-  const items = ((result.data ?? []) as CourseStudent[]).map((student) => ({
+  const rawItems = (result.data ?? []) as CourseStudent[];
+  const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawItems.map((student) => student.photo_url));
+  const items = rawItems.map((student) => ({
     ...student,
-    photo_url: null,
+    photo_url: student.photo_url ? photoUrls.get(student.photo_url) ?? null : null,
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
   }));

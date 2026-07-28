@@ -4845,6 +4845,39 @@ summary::-webkit-details-marker {
   color: var(--closing-muted);
 }
 
+.closing-role-chip {
+  width: fit-content;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  margin-top: 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.closing-role-chip.role-primary_owner {
+  border-color: color-mix(in srgb, var(--closing-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--closing-primary) 13%, transparent);
+  color: var(--closing-primary);
+}
+
+.closing-role-chip.role-co_owner {
+  border-color: rgba(49, 95, 158, 0.24);
+  background: rgba(49, 95, 158, 0.12);
+  color: #315f9e;
+}
+
+.closing-role-chip.role-staff {
+  border-color: rgba(148, 97, 24, 0.22);
+  background: rgba(201, 137, 46, 0.12);
+  color: #855716;
+}
+
 .closing-status {
   border-radius: 999px;
   min-height: 26px;
@@ -4873,7 +4906,7 @@ summary::-webkit-details-marker {
 .closing-cash-custody {
   border: 1px solid color-mix(in srgb, var(--closing-primary) 22%, var(--closing-line));
   border-radius: 16px;
-  background: color-mix(in srgb, var(--closing-panel) 58%, var(--closing-card));
+  background: color-mix(in srgb, var(--closing-primary) 7%, var(--closing-card));
   padding: 10px;
 }
 
@@ -6195,12 +6228,19 @@ summary::-webkit-details-marker {
   height: 48px;
   display: block;
   flex: 0 0 auto;
+  overflow: hidden;
   border: 2px solid rgba(255, 253, 248, 0.95);
   border-radius: 999px;
   background-color: rgba(47, 111, 94, 0.12);
-  background-position: center;
-  background-size: cover;
   box-shadow: 0 8px 18px rgba(49, 66, 57, 0.16);
+}
+
+.library-student-photo-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
 }
 
 .library-student-photo.list {
@@ -8061,11 +8101,40 @@ option {
 }
 
 .dashboard-summary-section {
+  --dashboard-section-accent: var(--color-primary);
+  --dashboard-section-tint: var(--color-surface);
   border: 1px solid color-mix(in srgb, var(--color-outline-variant) 58%, transparent);
   border-radius: 22px;
-  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  background: var(--dashboard-section-tint);
   padding: 18px;
   box-shadow: 0 12px 28px rgba(49, 66, 57, 0.08);
+}
+
+.dashboard-summary-section.tone-cash-position {
+  --dashboard-section-accent: #2f6f5e;
+  --dashboard-section-tint: color-mix(in srgb, #dcefe5 72%, var(--color-surface));
+  border-color: color-mix(in srgb, #2f6f5e 25%, var(--color-outline-variant));
+}
+
+.dashboard-summary-section.tone-business-activity {
+  --dashboard-section-accent: #946118;
+  --dashboard-section-tint: color-mix(in srgb, #fff0cf 72%, var(--color-surface));
+  border-color: color-mix(in srgb, #c9892e 31%, var(--color-outline-variant));
+}
+
+.dashboard-summary-section.tone-user-activity {
+  --dashboard-section-accent: #315f9e;
+  --dashboard-section-tint: color-mix(in srgb, #e4effc 76%, var(--color-surface));
+  border-color: color-mix(in srgb, #315f9e 24%, var(--color-outline-variant));
+}
+
+.dashboard-summary-section > header .eyebrow {
+  color: var(--dashboard-section-accent);
+}
+
+.dashboard-summary-section .dashboard-paired-summary {
+  border-color: color-mix(in srgb, var(--dashboard-section-accent) 20%, var(--color-outline-variant));
+  background: color-mix(in srgb, var(--dashboard-section-tint) 42%, var(--color-surface));
 }
 
 .dashboard-metric-group > header {
@@ -8811,6 +8880,65 @@ option {
 .history-total-card,
 .history-card {
   box-shadow: var(--history-shadow);
+}
+
+.transaction-history-view {
+  --transaction-lens-accent: #946118;
+  --transaction-lens-tint: #fff0cf;
+}
+
+.transaction-history-view.lens-personal {
+  --transaction-lens-accent: #315f9e;
+  --transaction-lens-tint: #e4effc;
+}
+
+.transaction-history-view .transaction-primary-filters {
+  border: 1px solid color-mix(in srgb, var(--transaction-lens-accent) 22%, var(--history-line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--transaction-lens-tint) 68%, var(--history-card));
+  padding: 10px;
+}
+
+.transaction-history-view .history-summary-panel {
+  border-color: color-mix(in srgb, var(--transaction-lens-accent) 22%, var(--history-line));
+  background: color-mix(in srgb, var(--transaction-lens-tint) 54%, var(--history-card));
+}
+
+.history-total-card > div:not(.history-total-divider):first-child {
+  background: color-mix(in srgb, #dcefe5 58%, var(--history-card));
+}
+
+.history-total-card > div:not(.history-total-divider):last-child {
+  background: color-mix(in srgb, #f8e3df 58%, var(--history-card));
+}
+
+.history-card.positive {
+  border-color: color-mix(in srgb, #2f6f5e 22%, var(--history-line));
+  background: color-mix(in srgb, #e3f2e9 48%, var(--history-card));
+}
+
+.history-card.negative {
+  border-color: color-mix(in srgb, #b64535 22%, var(--history-line));
+  background: color-mix(in srgb, #f9e3df 50%, var(--history-card));
+}
+
+.history-card.online-approved {
+  border-color: color-mix(in srgb, #315f9e 24%, var(--history-line));
+  background: color-mix(in srgb, #e4effc 58%, var(--history-card));
+}
+
+.history-card.neutral {
+  background: color-mix(in srgb, #eef0ed 50%, var(--history-card));
+}
+
+.history-card.pending {
+  border-color: color-mix(in srgb, #c9892e 34%, var(--history-line));
+  background: color-mix(in srgb, #fff0cf 66%, var(--history-card));
+}
+
+.history-card.settlement {
+  border-color: var(--history-amber-line);
+  background: var(--history-amber);
 }
 
 .closing-workspace,
