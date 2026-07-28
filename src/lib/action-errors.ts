@@ -1,3 +1,5 @@
+import { unstable_rethrow } from "next/navigation";
+
 export type UserActionStateBase = {
   ok: boolean | null;
   message: string;
@@ -114,6 +116,8 @@ export function normalizeActionError(
   error: unknown,
   context: ActionErrorContext,
 ): NormalizedActionError {
+  unstable_rethrow(error);
+
   if (error instanceof UserFacingActionError) {
     return {
       message: error.message,

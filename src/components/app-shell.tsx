@@ -168,6 +168,21 @@ type UserClosingSummary = {
   outOnline: number;
 };
 
+type ClosingPendingBreakdown = {
+  totalAmount: number;
+  totalRecordCount: number;
+  cashReviewAmount: number;
+  cashReviewCount: number;
+  ownerOnlineAmount: number;
+  ownerOnlineCount: number;
+  cashBlockingCount: number;
+};
+
+type ClosingCardViewModel = {
+  summary: UserClosingSummary;
+  pending: ClosingPendingBreakdown;
+};
+
 type AgentIncentiveSummary = {
   earned: number;
   settled: number;
@@ -199,6 +214,8 @@ type PendingReviewRecord = {
   note: string;
   status: string;
   statusLabel: string;
+  cashStatus?: ApprovalStatus | null;
+  onlineStatus?: ApprovalStatus | null;
   hasPendingTransfer?: boolean;
   tone: "positive" | "negative";
   icon: ReactNode;
@@ -305,10 +322,12 @@ const messages: Record<Language, Record<string, string>> = {
     amountLeft: "Amount left",
     amountReceived: "Amount received",
     approve: "Approve",
+    approvedActivity: "Approved activity",
     approveCollection: "Approve collection",
     approveExpense: "Approve expense",
     approvalDate: "Approval date",
     awaitingOwnerApproval: "Awaiting owner approval",
+    awaitingOwnerVerification: "Awaiting Owner verification",
     back: "Back",
     backlog: "Backlog",
     balanceIncentive: "Incentive due",
@@ -321,6 +340,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashBalances: "Cash balances",
     cashCollection: "Cash collection",
     cashCustody: "Cash custody moved",
+    cashExpenseReview: "Cash / expense review",
     cashIn: "IN",
     cashInFromOwner: "IN from owner",
     cashInHand: "Cash in hand",
@@ -338,6 +358,7 @@ const messages: Record<Language, Record<string, string>> = {
     closingBalance: "Closing balance",
     closingBalancePostingNote: "IN and OUT use transaction date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
     closingCash: "Closing cash",
+    closingCashInHand: "Closing cash in hand",
     code: "Code",
     closeNavigation: "Close navigation",
     closeModal: "Close modal",
@@ -487,10 +508,15 @@ const messages: Record<Language, Record<string, string>> = {
     noReason: "No reason",
     noRecords: "No records found.",
     noRecordsForFilter: "No records found for this range and filter.",
+    record: "record",
+    records: "records",
+    reviewed: "Reviewed",
     note: "Note",
     notifications: "Notifications",
     online: "Online",
     onlineCollection: "Online collection",
+    onlineOwnerBankNote: "Online is verified against the Owner’s bank and does not affect cash in hand.",
+    onlineIn: "Online IN",
     operationalAssignment: "Transaction assignment moved",
     onlinePart: "Online part",
     openNavigation: "Open navigation",
@@ -500,6 +526,8 @@ const messages: Record<Language, Record<string, string>> = {
     optional: "Optional",
     out: "OUT",
     owner: "Owner",
+    ownerOnlineVerification: "Online Collection verification",
+    ownerOnly: "Owner only",
     primaryOwner: "Owner",
     coOwner: "Manager",
     ownerSettlement: "Owner Settlement",
@@ -658,6 +686,8 @@ const messages: Record<Language, Record<string, string>> = {
     user: "User",
     verifyPayment: "Verify payment",
     verified: "Verified",
+    verifiedByOwner: "Verified by Owner",
+    verifyOnline: "Verify online",
     viewAll: "View all",
     yesterday: "Yesterday",
     receivedFromStaff: "Received from staff",
@@ -708,10 +738,12 @@ const messages: Record<Language, Record<string, string>> = {
     amountLeft: "बाकी रकम",
     amountReceived: "मिली रकम",
     approve: "ठीक है",
+    approvedActivity: "मंजूर गतिविधि",
     approveCollection: "कलेक्शन मंजूर करें",
     approveExpense: "खर्च मंजूर करें",
     approvalDate: "मंजूरी की तारीख",
     awaitingOwnerApproval: "मालिक की मंजूरी बाकी",
+    awaitingOwnerVerification: "मालिक की पुष्टि बाकी",
     back: "वापस",
     backlog: "बैकलॉग",
     balanceIncentive: "कमिशन बाकी",
@@ -724,6 +756,7 @@ const messages: Record<Language, Record<string, string>> = {
     cashBalances: "नकद बाकी",
     cashCollection: "नकद जमा",
     cashCustody: "नकद जिम्मेदारी बदली",
+    cashExpenseReview: "नकद / खर्च जांच",
     cashIn: "IN",
     cashInFromOwner: "मालिक से IN",
     cashInHand: "हाथ में नकद",
@@ -741,6 +774,7 @@ const messages: Record<Language, Record<string, string>> = {
     closingBalance: "बंद हिसाब",
     closingBalancePostingNote: "IN और OUT ट्रांजैक्शन तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
     closingCash: "दिन के अंत का नकद",
+    closingCashInHand: "बंद होते समय हाथ में नकद",
     code: "कोड",
     closeNavigation: "मेनू बंद करें",
     closeModal: "बंद करें",
@@ -890,10 +924,15 @@ const messages: Record<Language, Record<string, string>> = {
     noReason: "कारण नहीं",
     noRecords: "कोई एंट्री नहीं मिली।",
     noRecordsForFilter: "इस रेंज और छांट में कोई एंट्री नहीं मिली।",
+    record: "रिकॉर्ड",
+    records: "रिकॉर्ड",
+    reviewed: "जांचा गया",
     note: "नोट",
     notifications: "सूचनाएं",
     online: "ऑनलाइन",
     onlineCollection: "ऑनलाइन जमा",
+    onlineOwnerBankNote: "ऑनलाइन रकम मालिक के बैंक खाते से पक्की होती है और हाथ में नकद को नहीं बदलती।",
+    onlineIn: "ऑनलाइन IN",
     operationalAssignment: "ट्रांजैक्शन जिम्मेदारी बदली",
     onlinePart: "ऑनलाइन हिस्सा",
     openNavigation: "मेनू खोलें",
@@ -903,6 +942,8 @@ const messages: Record<Language, Record<string, string>> = {
     optional: "जरूरी नहीं",
     out: "OUT",
     owner: "मालिक",
+    ownerOnlineVerification: "ऑनलाइन कलेक्शन की पुष्टि",
+    ownerOnly: "सिर्फ मालिक",
     primaryOwner: "मालिक",
     coOwner: "मैनेजर",
     ownerSettlement: "मालिक को जमा",
@@ -1061,6 +1102,8 @@ const messages: Record<Language, Record<string, string>> = {
     user: "यूजर",
     verifyPayment: "पैसा जांचें",
     verified: "पक्का",
+    verifiedByOwner: "मालिक ने पक्का किया",
+    verifyOnline: "ऑनलाइन पक्का करें",
     viewAll: "सब देखें",
     yesterday: "कल",
     receivedFromStaff: "स्टाफ से मिला",
@@ -2265,6 +2308,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const [pending, startTransition] = useTransition();
   const [actionBusyMessageKey, setActionBusyMessageKey] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const initialBootstrapData = useMemo(() => bootstrapFromAppData(data), [data]);
   const dashboardParams = useMemo(
     () => dashboardDataSearchParams(tab, dashboardFilters, transactionFilters, closingFilters, studentFilters).toString(),
     [closingFilters, dashboardFilters, studentFilters, tab, transactionFilters],
@@ -2274,7 +2318,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const bootstrapQuery = useQuery({
     queryKey: ["bootstrap", cacheScope],
     queryFn: ({ signal }) => fetchJson<BootstrapPayload>(`/api/businesses/${businessId}/bootstrap`, signal),
-    initialData: () => bootstrapFromAppData(data),
+    initialData: initialBootstrapData,
     staleTime: 300_000,
     refetchOnWindowFocus: false,
   });
@@ -2316,8 +2360,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, [businessId, cacheScope, queryClient, studentFilters]);
   const emptyOperationalData = useMemo(() => emptyDashboardPayload(), []);
   const appData = useMemo(
-    () => mergeCachedAppData(bootstrapQuery.data, dashboardQuery.data ?? emptyOperationalData),
-    [bootstrapQuery.data, dashboardQuery.data, emptyOperationalData],
+    () => mergeCachedAppData(
+      hasHydrated ? bootstrapQuery.data : initialBootstrapData,
+      hasHydrated ? dashboardQuery.data ?? emptyOperationalData : emptyOperationalData,
+    ),
+    [bootstrapQuery.data, dashboardQuery.data, emptyOperationalData, hasHydrated, initialBootstrapData],
   );
   const t = useMemo(() => (key: string) => messages[language][key] ?? messages.en[key] ?? key, [language]);
   const notifications = notificationOverrides ?? appData.notifications ?? [];
@@ -3508,6 +3555,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 profiles={appData.profiles}
                 profile={appData.profile}
                 owner={owner}
+                canVerifyOnlineCollections={primaryOwner || supportMode}
                 sharedBusinessHistory={canViewSharedBusinessHistory}
                 agentIncentiveSummary={agentIncentiveSummary}
                 agentReferralCodes={agentReferralCodes}
@@ -3548,6 +3596,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 date={closingDate}
                 dateFilterKey={closingFilters.dateFilterKey}
                 owner={owner}
+                canVerifyOnlineCollections={primaryOwner || supportMode}
                 profile={appData.profile}
                 summaries={closingSummaries}
                 payments={appData.payments}
@@ -3758,12 +3807,14 @@ function StatCard({
 function PendingReviewSheet({
   records,
   contextRecords,
+  canVerifyOnlineCollections,
   close,
   setNotice,
   startTransition,
 }: {
   records: PendingReviewRecord[];
   contextRecords: PendingContextRecord[];
+  canVerifyOnlineCollections: boolean;
   close: () => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
@@ -3814,30 +3865,65 @@ function PendingReviewSheet({
                 {canReview ? (
                   <div className="pending-review-actions">
                     {record.recordType === "expense" ? (
-                      <MiniAction
-                        hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
-                        label={t("reject")}
-                        tone="reject"
-                        icon={<X size={18} />}
-                        action={approveRecordAction}
-                        setNotice={setNotice}
-                        startTransition={startTransition}
-                      />
-                    ) : null}
-                    {record.hasPendingTransfer ? (
-                      <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
-                        <Check size={18} />
-                      </button>
+                      <>
+                        <MiniAction
+                          hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                          label={t("reject")}
+                          tone="reject"
+                          icon={<X size={18} />}
+                          action={approveRecordAction}
+                          setNotice={setNotice}
+                          startTransition={startTransition}
+                        />
+                        <MiniAction
+                          hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                          label={t("approve")}
+                          tone="approve"
+                          icon={<Check size={18} />}
+                          action={approveRecordAction}
+                          setNotice={setNotice}
+                          startTransition={startTransition}
+                        />
+                      </>
                     ) : (
-                      <MiniAction
-                        hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
-                        label={t("approve")}
-                        tone="approve"
-                        icon={<Check size={18} />}
-                        action={approveRecordAction}
-                        setNotice={setNotice}
-                        startTransition={startTransition}
-                      />
+                      <>
+                        {record.cashStatus !== null && record.cashStatus !== undefined ? (
+                          record.cashStatus === "approved" ? (
+                            <span className="component-approved"><Check size={15} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                          ) : record.hasPendingTransfer ? (
+                            <button className="mini-action icon-mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")} aria-label={t("resolveTransferFirst")}>
+                              <Check size={18} />
+                            </button>
+                          ) : (
+                            <MiniAction
+                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
+                              label={`${t("approve")} ${t("cash")}`}
+                              tone="approve"
+                              icon={<Banknote size={17} />}
+                              action={approveRecordAction}
+                              setNotice={setNotice}
+                              startTransition={startTransition}
+                            />
+                          )
+                        ) : null}
+                        {record.onlineStatus !== null && record.onlineStatus !== undefined ? (
+                          record.onlineStatus === "approved" ? (
+                            <span className="component-owner-verification verified"><Landmark size={15} /> {t("verifiedByOwner")}</span>
+                          ) : canVerifyOnlineCollections && !record.hasPendingTransfer ? (
+                            <MiniAction
+                              hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
+                              label={t("verifyOnline")}
+                              tone="approve"
+                              icon={<Landmark size={17} />}
+                              action={approveRecordAction}
+                              setNotice={setNotice}
+                              startTransition={startTransition}
+                            />
+                          ) : (
+                            <span className="component-owner-verification pending"><Landmark size={15} /> {t("awaitingOwnerVerification")}</span>
+                          )
+                        ) : null}
+                      </>
                     )}
                   </div>
                 ) : (
@@ -4755,12 +4841,14 @@ function HomeView({
       staffName: profileName(data.profiles, paymentReviewProfileId(payment), t),
       serviceType: labelForBusiness(payment.business_type, t),
       amount: paymentPendingApprovalAmount(payment),
-      cashAmount: paymentCashAmount(payment),
-      onlineAmount: paymentOnlineAmount(payment),
+      cashAmount: paymentPendingCashAmount(payment),
+      onlineAmount: paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment),
       date: payment.payment_date,
       note: paymentReference(payment, t),
       status: payment.approval_status,
       statusLabel: labelForStatus(payment.approval_status, t),
+      cashStatus: paymentComponentStatus(payment, "cash"),
+      onlineStatus: paymentComponentStatus(payment, "online"),
       hasPendingTransfer: Boolean(pendingPaymentTransfer(data.movements, payment.id)),
       tone: "positive",
       icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : payment.business_type === "course" ? <GraduationCap size={22} /> : <WalletCards size={22} />,
@@ -4934,6 +5022,7 @@ function HomeView({
         <PendingReviewSheet
           records={pendingReviewRecords}
           contextRecords={pendingContextRecords}
+          canVerifyOnlineCollections={data.profile.membership_role === "primary_owner" || data.businessContext.accessMode === "support"}
           close={() => setPendingReviewOpen(false)}
           setNotice={setNotice}
           startTransition={startTransition}
@@ -5156,6 +5245,7 @@ function TransactionsView({
   profiles,
   profile,
   owner,
+  canVerifyOnlineCollections,
   sharedBusinessHistory,
   agentIncentiveSummary,
   agentReferralCodes,
@@ -5188,6 +5278,7 @@ function TransactionsView({
   profiles: Profile[];
   profile: Profile;
   owner: boolean;
+  canVerifyOnlineCollections: boolean;
   sharedBusinessHistory: boolean;
   agentIncentiveSummary: AgentIncentiveSummary;
   agentReferralCodes: ReferralCode[];
@@ -6104,37 +6195,43 @@ function TransactionsView({
                           ) : null}
                           {record.recordType && record.canApprove ? (
                             <div className="journey-action-row" aria-label={t("approve")}>
-                              {record.recordType === "payment" && record.isMixedPayment ? (
+                              {record.recordType === "payment" ? (
                                 <>
-                                  {record.cashApprovalStatus === "approved" ? (
-                                    <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
-                                  ) : canApproveRecordStatus(record.cashApprovalStatus ?? "pending") ? (
-                                    <MiniAction
-                                      hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "cash" }}
-                                      label={`${t("approve")} ${t("cash")}`}
-                                      tone="approve"
-                                      action={approveRecordAction}
-                                      setNotice={setNotice}
-                                      startTransition={startTransition}
-                                    />
+                                  {record.cashApprovalStatus !== null && record.cashApprovalStatus !== undefined ? (
+                                    record.cashApprovalStatus === "approved" ? (
+                                      <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                                    ) : canApproveRecordStatus(record.cashApprovalStatus) ? (
+                                      <MiniAction
+                                        hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "cash" }}
+                                        label={`${t("approve")} ${t("cash")}`}
+                                        tone="approve"
+                                        action={approveRecordAction}
+                                        setNotice={setNotice}
+                                        startTransition={startTransition}
+                                      />
+                                    ) : null
                                   ) : null}
-                                  {record.onlineApprovalStatus === "approved" ? (
-                                    <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
-                                  ) : canApproveRecordStatus(record.onlineApprovalStatus ?? "pending") ? (
-                                    <MiniAction
-                                      hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "online" }}
-                                      label={`${t("approve")} ${t("online")}`}
-                                      tone="approve"
-                                      action={approveRecordAction}
-                                      setNotice={setNotice}
-                                      startTransition={startTransition}
-                                    />
+                                  {record.onlineApprovalStatus !== null && record.onlineApprovalStatus !== undefined ? (
+                                    record.onlineApprovalStatus === "approved" ? (
+                                      <span className="component-owner-verification verified"><Landmark size={15} /> {t("verifiedByOwner")}</span>
+                                    ) : canVerifyOnlineCollections && canApproveRecordStatus(record.onlineApprovalStatus) ? (
+                                      <MiniAction
+                                        hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved", payment_component: "online" }}
+                                        label={t("verifyOnline")}
+                                        tone="approve"
+                                        action={approveRecordAction}
+                                        setNotice={setNotice}
+                                        startTransition={startTransition}
+                                      />
+                                    ) : (
+                                      <span className="component-owner-verification pending"><Landmark size={15} /> {t("awaitingOwnerVerification")}</span>
+                                    )
                                   ) : null}
                                 </>
                               ) : (
                                 <MiniAction
                                   hidden={{ record_type: record.recordType, id: record.sourceId ?? record.id, decision: "approved" }}
-                                  label={record.recordType === "payment" ? t("approveCollection") : t("approveExpense")}
+                                  label={t("approveExpense")}
                                   tone="approve"
                                   action={approveRecordAction}
                                   setNotice={setNotice}
@@ -10212,6 +10309,7 @@ function ClosingView({
   date,
   dateFilterKey,
   owner,
+  canVerifyOnlineCollections,
   profile,
   summaries,
   payments,
@@ -10228,6 +10326,7 @@ function ClosingView({
   date: string;
   dateFilterKey: DateFilterKey;
   owner: boolean;
+  canVerifyOnlineCollections: boolean;
   profile: Profile;
   summaries: UserClosingSummary[];
   payments: Payment[];
@@ -10292,7 +10391,6 @@ function ClosingView({
       };
       return rank(left) - rank(right) || left.profile.full_name.localeCompare(right.profile.full_name);
     });
-  const visibleClosingProfileIds = new Set(visibleSummaries.map((summary) => summary.profile.id));
   const closingBusinessTypesByProfile = new Map(
     visibleSummaries.map((summary) => [summary.profile.id, closingBusinessTypesForProfile(summary.profile)]),
   );
@@ -10304,15 +10402,21 @@ function ClosingView({
   const selectedReviewBusinessTypes = selectedReviewSummary
     ? closingBusinessTypesByProfile.get(selectedReviewSummary.profile.id) ?? null
     : null;
-  const pendingReviewSummary = (summary: UserClosingSummary) => {
-    const pendingPayments = payments.filter(
+  const pendingReviewSummary = (summary: UserClosingSummary): ClosingPendingBreakdown => {
+    const paymentBreakdowns = payments
+      .filter(
       (payment) =>
         paymentReviewProfileId(payment) === summary.profile.id &&
         recordInClosingScope(summary.profile.id, payment.business_type) &&
         payment.record_status === "active" &&
         belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
         isPendingReviewStatus(payment.approval_status),
-    );
+      )
+      .map((payment) => ({
+        cash: paymentPendingCashAmount(payment),
+        online: paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment),
+      }))
+      .filter((breakdown) => breakdown.cash > 0 || breakdown.online > 0);
     const pendingExpenses = expenses.filter(
       (expense) =>
         expense.spent_by === summary.profile.id &&
@@ -10329,65 +10433,28 @@ function ClosingView({
         indiaDateIso(movement.created_at) <= date &&
         (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
     );
+    const cashPaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.cash, 0);
+    const onlinePaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.online, 0);
+    const expenseAmount = pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+    const settlementAmount = pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
+    const cashPaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.cash > 0).length;
+    const onlinePaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.online > 0).length;
+    const cashExpenseCount = pendingExpenses.filter((expense) => expense.mode !== "online").length;
 
     return {
-      count: pendingPayments.length + pendingExpenses.length + pendingSettlementMovements.length,
-      amount:
-        pendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
-        pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
-        pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0),
+      totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount + settlementAmount,
+      totalRecordCount: paymentBreakdowns.length + pendingExpenses.length + pendingSettlementMovements.length,
+      cashReviewAmount: cashPaymentAmount + expenseAmount + settlementAmount,
+      cashReviewCount: cashPaymentCount + pendingExpenses.length + pendingSettlementMovements.length,
+      ownerOnlineAmount: onlinePaymentAmount,
+      ownerOnlineCount: onlinePaymentCount,
+      cashBlockingCount: cashPaymentCount + cashExpenseCount + pendingSettlementMovements.length,
     };
   };
-  const cumulativePendingPayments = payments.filter(
-    (payment) =>
-      visibleClosingProfileIds.has(paymentReviewProfileId(payment)) &&
-      recordInClosingScope(paymentReviewProfileId(payment), payment.business_type) &&
-      payment.record_status === "active" &&
-      belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
-      isPendingReviewStatus(payment.approval_status),
-  );
-  const cumulativePendingExpenses = expenses.filter(
-    (expense) =>
-      visibleClosingProfileIds.has(expense.spent_by) &&
-      recordInClosingScope(expense.spent_by, expense.business_type ?? "general") &&
-      expense.record_status === "active" &&
-      belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
-      isPendingReviewStatus(expense.approval_status),
-  );
-  const cumulativePendingMovements = movements.filter(
-    (movement) =>
-      movement.status === "pending" &&
-      movement.type === "settlement" &&
-      indiaDateIso(movement.created_at) <= date &&
-      (
-        (
-          visibleClosingProfileIds.has(movement.from_profile_id)
-          && recordInClosingScope(movement.from_profile_id, movement.business_type)
-        )
-        || (
-          visibleClosingProfileIds.has(movement.to_profile_id ?? "")
-          && recordInClosingScope(movement.to_profile_id ?? "", movement.business_type)
-        )
-      ),
-  );
-  const cumulativePendingAmount =
-    cumulativePendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
-    cumulativePendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
-    cumulativePendingMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-  const cumulativePendingCount = cumulativePendingPayments.length + cumulativePendingExpenses.length + cumulativePendingMovements.length;
-  const overview = {
-    opening: visibleSummaries.reduce((sum, summary) => sum + summary.opening, 0),
-    inCash: visibleSummaries.reduce((sum, summary) => sum + summary.inCash, 0),
-    inOnline: visibleSummaries.reduce((sum, summary) => sum + summary.inOnline, 0),
-    outCash: visibleSummaries.reduce((sum, summary) => sum + summary.outCash, 0),
-    outOnline: visibleSummaries.reduce((sum, summary) => sum + summary.outOnline, 0),
-    pendingAmount: cumulativePendingAmount,
-    pendingCount: cumulativePendingCount,
-  };
-  const overviewInCash = overview.inCash;
-  const overviewInOnline = overview.inOnline;
-  const overviewOutCash = overview.outCash;
-  const overviewOutOnline = overview.outOnline;
+  const closingCards: ClosingCardViewModel[] = visibleSummaries.map((summary) => ({
+    summary,
+    pending: pendingReviewSummary(summary),
+  }));
 
   if (selectedReviewSummary && owner) {
     return (
@@ -10403,6 +10470,7 @@ function ClosingView({
         dateFilterKey={dateFilterKey}
         profiles={profiles}
         businessTypes={selectedReviewBusinessTypes === null ? null : [...selectedReviewBusinessTypes]}
+        canVerifyOnlineCollections={canVerifyOnlineCollections}
         reviewActionsEnabled={
           profile.membership_role !== "co_owner"
           || selectedReviewSummary.profile.membership_role === "staff"
@@ -10417,29 +10485,6 @@ function ClosingView({
 
   return (
     <div className="view-stack closing-workspace">
-      {owner ? (
-        <div className="closing-overview-grid">
-          <article className="closing-overview-card opening">
-            <span>{t("openingBalance")}</span>
-            <strong>{formatMoney(overview.opening)}</strong>
-          </article>
-          <article className="closing-overview-card positive">
-            <span>{t("cashIn")}</span>
-            <strong>{formatMoney(overviewInCash + overviewInOnline)}</strong>
-            <p className="money-split-line">{t("cash")} {formatMoney(overviewInCash)} · {t("online")} {formatMoney(overviewInOnline)}</p>
-          </article>
-          <article className="closing-overview-card negative">
-            <span>{t("cashOut")}</span>
-            <strong>{formatMoney(overviewOutCash + overviewOutOnline)}</strong>
-            <p className="money-split-line">{t("cash")} {formatMoney(overviewOutCash)} · {t("online")} {formatMoney(overviewOutOnline)}</p>
-          </article>
-          <article className="closing-overview-card pending">
-            <span>{t("pending")}{overview.pendingCount > 0 ? ` · ${overview.pendingCount}` : ""}</span>
-            <strong>{formatMoney(overview.pendingAmount)}</strong>
-          </article>
-        </div>
-      ) : null}
-
       {dateFilterKey === "transaction" ? (
         <p className="date-filter-note closing-date-filter-note">{t("closingBalancePostingNote")}</p>
       ) : null}
@@ -10450,9 +10495,10 @@ function ClosingView({
           <span>{date}</span>
         </div>
         <div className="closing-user-grid">
-          {visibleSummaries.map((summary) => {
-            const pendingSummary = pendingReviewSummary(summary);
+          {closingCards.map(({ summary, pending: pendingSummary }) => {
             const cashToReceive = Math.max(summary.closing, 0);
+            const custodyCashIn = summary.collected + summary.received;
+            const custodyCashOut = summary.expenses + summary.sent;
             const receivableBusinessTypes = [...new Set(
               summary.profile.membership_role === "staff"
                 ? staffUnitAssignments
@@ -10476,7 +10522,7 @@ function ClosingView({
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
               ?? (cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
-            const receiveInputDisabled = pendingSummary.count > 0 || cashToReceive <= 0;
+            const receiveInputDisabled = pendingSummary.cashBlockingCount > 0 || cashToReceive <= 0;
             const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
             return (
               <article
@@ -10489,34 +10535,76 @@ function ClosingView({
                     <strong>{summary.profile.full_name}{summary.profile.id === profile.id ? ` (${t("self")})` : ""}</strong>
                     <small>{profileRoleLabel(summary.profile, t)}</small>
                   </span>
-                  <span className={pendingSummary.count > 0 ? "closing-status warning" : "closing-status"}>
-                    {pendingSummary.count > 0 ? `${pendingSummary.count} ${t("pending")}` : t("active")}
+                  <span className={pendingSummary.totalRecordCount > 0 ? "closing-status warning" : "closing-status"}>
+                    {pendingSummary.totalRecordCount > 0
+                      ? `${pendingSummary.totalRecordCount} ${t("pending")}`
+                      : t("active")}
                   </span>
                 </div>
-                <div className="closing-ledger-parts">
-                  <span>
-                    <small>{t("openingBalance")}</small>
-                    <strong>{formatMoney(summary.opening)}</strong>
-                  </span>
-                  <span className="positive">
-                    <small>{t("cashIn")}</small>
-                    <strong>{formatMoney(summary.inCash + summary.inOnline)}</strong>
-                    <em>{t("cash")} {formatMoney(summary.inCash)} · {t("online")} {formatMoney(summary.inOnline)}</em>
-                  </span>
-                  <span className="negative">
-                    <small>{t("cashOut")}</small>
-                    <strong>{formatMoney(summary.outCash + summary.outOnline)}</strong>
-                    <em>{t("cash")} {formatMoney(summary.outCash)} · {t("online")} {formatMoney(summary.outOnline)}</em>
-                  </span>
-                  <span className="warning">
-                    <small>{t("pending")}</small>
-                    <strong>{formatMoney(pendingSummary.amount)}</strong>
-                  </span>
-                </div>
-                <div className="closing-net-row">
-                  <span>{t("netBalance")}</span>
-                  <strong>{formatMoney(summary.closing)}</strong>
-                </div>
+                <section className="closing-cash-custody">
+                  <div className="closing-section-heading">
+                    <span><Banknote aria-hidden="true" size={17} /> {t("cashInHand")}</span>
+                    <small>{t("approvalDate")} · {date}</small>
+                  </div>
+                  <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
+                    <span>
+                      <small>{t("closingCashInHand")}</small>
+                      <em>{date}</em>
+                    </span>
+                    <strong>{formatMoney(summary.closing)}</strong>
+                  </div>
+                  <div className="closing-cash-equation" aria-label={`${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}>
+                    <span className="closing-equation-part">
+                      <small>{t("openingCash")}</small>
+                      <strong>{formatMoney(summary.opening)}</strong>
+                    </span>
+                    <span className="closing-equation-part positive">
+                      <small>+ {t("cashIn")}</small>
+                      <strong>{formatMoney(custodyCashIn)}</strong>
+                    </span>
+                    <span className="closing-equation-part negative">
+                      <small>− {t("cashOut")}</small>
+                      <strong>{formatMoney(custodyCashOut)}</strong>
+                    </span>
+                    {summary.adjustments !== 0 ? (
+                      <span className={`closing-equation-part${summary.adjustments < 0 ? " negative" : " positive"}`}>
+                        <small>{summary.adjustments < 0 ? "−" : "+"} {t("adjustments")}</small>
+                        <strong>{formatMoney(Math.abs(summary.adjustments))}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section
+                  className="closing-online-activity"
+                  title={t("onlineOwnerBankNote")}
+                  aria-label={`${t("onlineIn")} ${formatMoney(summary.inOnline)} · ${t("reviewed")} · ${t("verifiedByOwner")}`}
+                >
+                  <div className="closing-online-summary">
+                    <span className="closing-online-metric">
+                      <small><Landmark aria-hidden="true" size={15} /> {t("onlineIn")}</small>
+                      <strong>+{formatMoney(summary.inOnline)}</strong>
+                    </span>
+                    <span aria-hidden="true" className="closing-online-divider" />
+                    <span className="closing-online-metric reviewed">
+                      <small><ShieldCheck aria-hidden="true" size={15} /> {t("reviewed")}</small>
+                      <em>{t("verifiedByOwner")}</em>
+                    </span>
+                  </div>
+                </section>
+
+                <section className={`closing-pending-panel${pendingSummary.totalRecordCount > 0 ? " active" : ""}`}>
+                  <div className="closing-pending-head">
+                    <span className="closing-pending-icon">
+                      <ClipboardList aria-hidden="true" size={18} />
+                    </span>
+                    <span className="closing-pending-copy">
+                      <strong>{t("pending")}</strong>
+                      <small>{pendingSummary.totalRecordCount} {t(pendingSummary.totalRecordCount === 1 ? "record" : "records")}</small>
+                    </span>
+                    <strong className="closing-pending-amount">{formatMoney(pendingSummary.totalAmount)}</strong>
+                  </div>
+                </section>
                 {owner ? (
                   <div className="closing-staff-actions">
                     <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
@@ -10580,6 +10668,7 @@ function ClosingReviewDetail({
   postingEvents,
   profiles,
   businessTypes,
+  canVerifyOnlineCollections,
   reviewActionsEnabled,
   close,
   setNotice,
@@ -10595,6 +10684,7 @@ function ClosingReviewDetail({
   postingEvents: DailyPostingEvent[];
   profiles: Profile[];
   businessTypes: BusinessType[] | null;
+  canVerifyOnlineCollections: boolean;
   reviewActionsEnabled: boolean;
   close: () => void;
   setNotice: (notice: ActionResult | null) => void;
@@ -10899,7 +10989,7 @@ function ClosingReviewDetail({
 
       <section className="review-summary-grid">
         <article className="review-net-card">
-          <span>{t("netCashInHand")}</span>
+          <span>{t("closingCashInHand")}</span>
           <strong>{formatMoney(summary.closing)}</strong>
         </article>
         <article className="positive">
@@ -10917,6 +11007,7 @@ function ClosingReviewDetail({
           <strong>{formatMoney(pendingReviewAmount)}</strong>
         </article>
       </section>
+      <p className="closing-online-note review-online-note"><Landmark aria-hidden="true" size={15} /> {t("onlineOwnerBankNote")}</p>
 
       <section className="closing-info-banner">
         <AlertCircle size={20} />
@@ -10950,7 +11041,8 @@ function ClosingReviewDetail({
         <div className="review-transaction-list">
           {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
             const canReview = record.canReview && reviewActionsEnabled;
-            const isMixedPayment = record.isMixedPayment && reviewActionsEnabled;
+            const hasCashComponent = record.recordType === "payment" && record.cashStatus !== null;
+            const hasOnlineComponent = record.recordType === "payment" && record.onlineStatus !== null;
             const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
             return (
               <article className={`history-card closing-history-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
@@ -11000,39 +11092,45 @@ function ClosingReviewDetail({
                 <div className="history-card-flow">
                   <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
                     <div className="journey-action-row closing-history-approval-actions">
-                      {isMixedPayment ? (
+                      {record.recordType === "payment" ? (
                         <>
-                          {record.cashStatus === "approved" ? (
-                            <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
-                          ) : record.hasPendingTransfer ? (
-                            <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
-                              {t("approve")} {t("cash")}
-                            </button>
-                          ) : canApproveRecordStatus(record.cashStatus ?? record.status) ? (
-                            <MiniAction
-                              hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "cash" }}
-                              label={`${t("approve")} ${t("cash")}`}
-                              tone="approve"
-                              action={approveRecordAction}
-                              setNotice={setNotice}
-                              startTransition={startTransition}
-                            />
+                          {hasCashComponent ? (
+                            record.cashStatus === "approved" ? (
+                              <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                            ) : record.hasPendingTransfer && canReview ? (
+                              <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                                {t("approve")} {t("cash")}
+                              </button>
+                            ) : canReview && canApproveRecordStatus(record.cashStatus ?? record.status) ? (
+                              <MiniAction
+                                hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "cash" }}
+                                label={`${t("approve")} ${t("cash")}`}
+                                tone="approve"
+                                action={approveRecordAction}
+                                setNotice={setNotice}
+                                startTransition={startTransition}
+                              />
+                            ) : null
                           ) : null}
-                          {record.onlineStatus === "approved" ? (
-                            <span className="component-approved"><Check size={16} /> {t("online")} {labelForStatus("approved", t)}</span>
-                          ) : record.hasPendingTransfer ? (
-                            <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
-                              {t("approve")} {t("online")}
-                            </button>
-                          ) : canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
-                            <MiniAction
-                              hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}
-                              label={`${t("approve")} ${t("online")}`}
-                              tone="approve"
-                              action={approveRecordAction}
-                              setNotice={setNotice}
-                              startTransition={startTransition}
-                            />
+                          {hasOnlineComponent ? (
+                            record.onlineStatus === "approved" ? (
+                              <span className="component-owner-verification verified"><Landmark size={15} /> {t("verifiedByOwner")}</span>
+                            ) : canVerifyOnlineCollections && canReview && record.hasPendingTransfer ? (
+                              <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                                {t("verifyOnline")}
+                              </button>
+                            ) : canVerifyOnlineCollections && canReview && canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
+                              <MiniAction
+                                hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}
+                                label={t("verifyOnline")}
+                                tone="approve"
+                                action={approveRecordAction}
+                                setNotice={setNotice}
+                                startTransition={startTransition}
+                              />
+                            ) : (
+                              <span className="component-owner-verification pending"><Landmark size={15} /> {t("awaitingOwnerVerification")}</span>
+                            )
                           ) : null}
                         </>
                       ) : canReview ? (

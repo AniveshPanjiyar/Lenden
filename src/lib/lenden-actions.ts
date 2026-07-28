@@ -2629,6 +2629,17 @@ const handlers = {
       return fail("Managers can review Staff records and their own records.");
     }
     const currentDecision = String(existing.approval_status ?? "pending");
+    const canVerifyOnlineCollection = profile.accessMode === "support" || profile.businessRole === "primary_owner";
+    const collectionHasOnlineValue = recordType === "payment" && paymentOnlineCollection(existing) > 0;
+    if (
+      recordType === "payment" &&
+      decision === "approved" &&
+      collectionHasOnlineValue &&
+      !canVerifyOnlineCollection &&
+      paymentComponent !== "cash"
+    ) {
+      return fail("Online Collections must be verified by the Owner.");
+    }
 
     if (recordType === "payment" && decision === "approved") {
       const pendingTransferResponse = await admin
