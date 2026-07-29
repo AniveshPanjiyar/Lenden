@@ -394,7 +394,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "Change password",
     closing: "Closing",
     closingBalance: "Closing balance",
-    closingBalancePostingNote: "Activity uses transaction date. Opening and closing cash remain based on approval/posting date.",
+    closingBalancePostingNote: "IN and OUT use transaction date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
     closingCash: "Closing cash",
     closingCashInHand: "Closing cash in hand",
     code: "Code",
@@ -415,7 +415,7 @@ const messages: Record<Language, Record<string, string>> = {
     confirmedPayouts: "Paid incentive",
     collectedByStaff: "Collected payment",
     businessStatus: "Business status",
-    businessStatusHelp: "Collections, Expenses, and pending review by business.",
+    businessStatusHelp: "Total collection, OUT, and pending review by business.",
     cashImpact: "Cash impact",
     cashToSettle: "Cash to settle",
     course: "Course",
@@ -553,7 +553,6 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "Notifications",
     online: "Online",
     onlineCollection: "Online collection",
-    onlineExpenses: "Online expenses",
     onlineOwnerBankNote: "Online is verified against the Owner’s bank and does not affect cash in hand.",
     onlineIn: "Online IN",
     operationalAssignment: "Transaction assignment moved",
@@ -679,7 +678,7 @@ const messages: Record<Language, Record<string, string>> = {
     slotHours: "Slot hours",
     staff: "Staff",
     staffBusinessStatus: "My service status",
-    staffBusinessStatusHelp: "Collections, Expenses, and pending review by service.",
+    staffBusinessStatusHelp: "IN, OUT, and pending review by service.",
     staffDailyLedger: "Staff Daily Ledger",
     userDailyLedger: "User Daily Ledger",
     staffPermissions: "Staff permissions",
@@ -736,9 +735,6 @@ const messages: Record<Language, Record<string, string>> = {
     receiptPending: "Receipt pending",
     cashReceived: "Cash Received",
     cashSent: "Cash Sent",
-    cashCollections: "Cash Collections",
-    cashExpenses: "Cash Expenses",
-    needsReconciliation: "Needs reconciliation",
     cashSettled: "Cash Settled",
     recordReceived: "Record received",
     recordSent: "Record sent",
@@ -815,7 +811,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     closingBalance: "बंद हिसाब",
-    closingBalancePostingNote: "गतिविधि ट्रांजैक्शन तारीख से है। शुरुआती और बंद नकद मंजूरी की तारीख से रहते हैं।",
+    closingBalancePostingNote: "IN और OUT ट्रांजैक्शन तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
     closingCash: "दिन के अंत का नकद",
     closingCashInHand: "बंद होते समय हाथ में नकद",
     code: "कोड",
@@ -836,7 +832,7 @@ const messages: Record<Language, Record<string, string>> = {
     confirmedPayouts: "दिया गया कमिशन",
     collectedByStaff: "जमा पैसा",
     businessStatus: "काम का स्टेटस",
-    businessStatusHelp: "काम का कलेक्शन, खर्च और बाकी जांच।",
+    businessStatusHelp: "काम का कुल कलेक्शन, OUT और बाकी जांच।",
     cashImpact: "नकद असर",
     cashToSettle: "जमा करने की नकद",
     course: "कोर्स",
@@ -974,7 +970,6 @@ const messages: Record<Language, Record<string, string>> = {
     notifications: "सूचनाएं",
     online: "ऑनलाइन",
     onlineCollection: "ऑनलाइन जमा",
-    onlineExpenses: "ऑनलाइन खर्च",
     onlineOwnerBankNote: "ऑनलाइन रकम मालिक के बैंक खाते से पक्की होती है और हाथ में नकद को नहीं बदलती।",
     onlineIn: "ऑनलाइन IN",
     operationalAssignment: "ट्रांजैक्शन जिम्मेदारी बदली",
@@ -1100,7 +1095,7 @@ const messages: Record<Language, Record<string, string>> = {
     slotHours: "घंटा",
     staff: "स्टाफ",
     staffBusinessStatus: "मेरे काम का स्टेटस",
-    staffBusinessStatusHelp: "काम के हिसाब से कलेक्शन, खर्च और बाकी जांच।",
+    staffBusinessStatusHelp: "काम के हिसाब से IN, OUT और बाकी जांच।",
     staffDailyLedger: "स्टाफ का दिन का हिसाब",
     userDailyLedger: "सभी यूजर का दिन का हिसाब",
     staffPermissions: "स्टाफ अधिकार",
@@ -1157,9 +1152,6 @@ const messages: Record<Language, Record<string, string>> = {
     receiptPending: "प्राप्ति बाकी",
     cashReceived: "नकद मिला",
     cashSent: "नकद भेजा",
-    cashCollections: "नकद कलेक्शन",
-    cashExpenses: "नकद खर्च",
-    needsReconciliation: "हिसाब मिलाना है",
     cashSettled: "नकद जमा किया",
     recordReceived: "मिला हुआ जोड़ें",
     recordSent: "भेजा हुआ जोड़ें",
@@ -2778,7 +2770,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   }, [appData.profile.id, appData.profile.membership_role, appData.profiles, availableBusinessTypes, canViewStudentRecords, currentUserIsSalesAgent, defaultStudentSourceId, setHistoryShouldPush, studentFilterSources]);
 
   useEffect(() => {
-    const supabase = createBrowserSupabaseClient({ detectSessionInUrl: false });
+    const supabase = createBrowserSupabaseClient();
     const dispatchRemotePatch = (patch: MutationPatch) => {
       window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
         detail: { scope: "none", savingMessageKey: "savingChanges", patch },
@@ -2983,20 +2975,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const transactionPostingEvents = useMemo(
     () => appData.financialActivity.length > 0
       ? [
-          ...financialActivityPostingEvents(
-            appData.financialActivity.filter((activity) =>
-              activity.lens === "business"
-              || (
-                activity.lens === "personal"
-                && activity.source_type !== "payment"
-                && activity.source_type !== "expense"
-              ),
-            ),
-          ),
+          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens),
           ...postingEvents.filter((event) => event.source_type === "agent_settlement"),
         ]
       : postingEvents,
-    [appData.financialActivity, postingEvents],
+    [appData.financialActivity, postingEvents, transactionFilters.lens],
   );
   const selectedBusiness = dashboardFilters.businessType;
   const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
@@ -3210,7 +3193,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       mode?: TransactionModeFilter;
     },
   ) {
-    const cashTransferActivity = activity === "cash_received" || activity === "cash_sent";
     setTransactionFilters((current) => ({
       ...current,
       dateRange: dashboardFilters.dateRange,
@@ -3219,8 +3201,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       activity,
       profileId: lens === "personal" ? appData.profile.id : "all",
       recordType: "all",
-      mode: cashTransferActivity ? "cash" : target?.mode ?? "all",
-      businessType: cashTransferActivity ? "all" : target?.businessType ?? dashboardFilters.businessType,
+      mode: target?.mode ?? "all",
+      businessType: target?.businessType ?? dashboardFilters.businessType,
     }));
     changeTab("payments");
   }
@@ -3251,8 +3233,8 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   const transactionActivityLabel = (activity: TransactionFilter) => {
     if (activity === "collections") return t("collections");
     if (activity === "expenses") return t("expenses");
-    if (activity === "cash_received") return t("cashReceived");
-    if (activity === "cash_sent") return t("cashSent");
+    if (activity === "cash_in") return t("cashIn");
+    if (activity === "cash_out") return t("cashOut");
     if (activity === "pending") return t("pending");
     return t("all");
   };
@@ -3590,16 +3572,19 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 dateRange={transactionDateRange}
                 dateRangePreset={transactionFilters.dateRange.preset}
                 dateFilterKey={transactionFilters.dateFilterKey}
+                transactionLens={transactionFilters.lens}
                 transactionFilter={transactionFilters.activity}
                 transactionProfileId={transactionUserId}
                 recordTypeFilter={transactionFilters.recordType}
                 modeFilter={transactionFilters.mode}
                 businessTypeFilter={transactionFilters.businessType}
-                onSelectActivity={(activity) => setTransactionFilters((current) => ({
+                onSelectLens={(lens) => setTransactionFilters((current) => ({
                   ...current,
-                  activity,
-                  businessType: activity === "cash_received" || activity === "cash_sent" ? "all" : current.businessType,
+                  lens,
+                  activity: "all",
+                  profileId: lens === "personal" ? appData.profile.id : "all",
                 }))}
+                onSelectActivity={(activity) => setTransactionFilters((current) => ({ ...current, activity }))}
                 payments={appData.payments}
                 expenses={appData.expenses}
                 movements={appData.movements}
@@ -4161,16 +4146,19 @@ function OperationalFilterDrawer({
       if (tab === "home") onApplyDashboard(dashboardDraft);
       if (tab === "payments") onApplyTransactions({
         ...transactionDraft,
-        profileId: showTransactionProfile ? transactionDraft.profileId : defaultProfileId,
-        businessType: transactionDraft.activity === "cash_received" || transactionDraft.activity === "cash_sent"
-          ? "all"
-          : transactionDraft.businessType,
+        profileId: transactionDraft.lens === "personal"
+          ? defaultProfileId
+          : showTransactionProfile
+            ? transactionDraft.profileId
+            : defaultProfileId,
       });
       if (tab === "closing") onApplyClosing(closingDraft);
     });
   }
 
-  const activityOptions = ["all", "collections", "expenses", "cash_received", "cash_sent", "pending"] as TransactionFilter[];
+  const activityOptions = transactionDraft.lens === "business"
+    ? (["all", "collections", "expenses", "pending"] as TransactionFilter[])
+    : (["all", "cash_in", "cash_out", "pending"] as TransactionFilter[]);
   const recordTypeOptions = salesAgent
     ? (["all", "agent_payout"] as TransactionRecordType[])
     : (["all", "payment", "expense", "transfer", "agent_payout"] as TransactionRecordType[]);
@@ -4178,10 +4166,10 @@ function OperationalFilterDrawer({
     ? t("collections")
     : activity === "expenses"
       ? t("expenses")
-      : activity === "cash_received"
-        ? t("cashReceived")
-        : activity === "cash_sent"
-          ? t("cashSent")
+      : activity === "cash_in"
+        ? t("cashIn")
+        : activity === "cash_out"
+          ? t("cashOut")
           : activity === "pending"
             ? t("pending")
             : t("all");
@@ -4221,7 +4209,25 @@ function OperationalFilterDrawer({
             <>
               <FilterDateRangeFields value={transactionDraft.dateRange} onChange={(dateRange) => setTransactionDraft((current) => ({ ...current, dateRange }))} />
               <FilterDateBasisFields value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
-              {showTransactionProfile ? (
+              <label className="operational-filter-field operational-filter-section">
+                <span>View</span>
+                <select
+                  value={transactionDraft.lens}
+                  onChange={(event) => {
+                    const lens = event.target.value as TransactionLens;
+                    setTransactionDraft((current) => ({
+                      ...current,
+                      lens,
+                      activity: "all",
+                      profileId: lens === "personal" ? defaultProfileId : "all",
+                    }));
+                  }}
+                >
+                  <option value="business">Business activity</option>
+                  <option value="personal">My activity</option>
+                </select>
+              </label>
+              {showTransactionProfile && transactionDraft.lens === "business" ? (
                 <label className="operational-filter-field operational-filter-section">
                   <span>Person or team</span>
                   <select value={transactionDraft.profileId} onChange={(event) => setTransactionDraft((current) => ({ ...current, profileId: event.target.value }))}>
@@ -4231,18 +4237,8 @@ function OperationalFilterDrawer({
                 </label>
               ) : null}
               <label className="operational-filter-field operational-filter-section">
-                <span>{t("transactionType")}</span>
-                <select
-                  value={transactionDraft.activity}
-                  onChange={(event) => {
-                    const activity = event.target.value as TransactionFilter;
-                    setTransactionDraft((current) => ({
-                      ...current,
-                      activity,
-                      businessType: activity === "cash_received" || activity === "cash_sent" ? "all" : current.businessType,
-                    }));
-                  }}
-                >
+                <span>{t("direction")}</span>
+                <select value={transactionDraft.activity} onChange={(event) => setTransactionDraft((current) => ({ ...current, activity: event.target.value as TransactionFilter }))}>
                   {activityOptions.map((activity) => <option key={activity} value={activity}>{activityLabel(activity)}</option>)}
                 </select>
               </label>
@@ -4314,9 +4310,7 @@ function RoleDashboardView({
 }) {
   const { t } = useLanguage();
   const primaryOwner = summary.role === "primary_owner";
-  const staff = summary.role === "staff" || summary.role === "sales_agent";
-  const cashReceivedTotal = summary.cashReceived?.total ?? 0;
-  const cashSentTotal = summary.cashSent?.total ?? 0;
+  const staff = summary.role === "staff";
   const businessScopeLabel = summary.role === "primary_owner"
     ? "Full business"
     : summary.role === "co_owner"
@@ -4390,24 +4384,15 @@ function RoleDashboardView({
     : null;
   const cashStaffMetric = !staff
     ? summaryMetric(
-      primaryOwner ? "Cash with team" : "Cash with Staff and Agents",
+      "Cash in hand with Staff",
       summary.cashWithStaff,
       primaryOwner
-        ? "Managers, Staff and Sales Agents · Approved physical cash"
-        : "Lower roles in this business · Approved physical cash",
+        ? "Managers + Staff · Approved cash only"
+        : "Assigned Staff in your units · Approved cash only",
       "primary",
       () => openTransactions("business", "all", { mode: "cash" }),
     )
     : null;
-  const reconciliationMetric = summary.negativeBalanceCount > 0
-    ? summaryMetric(
-      "Needs reconciliation",
-      summary.negativeBalanceAmount,
-      `${summary.negativeBalanceCount} ${summary.negativeBalanceCount === 1 ? "user has" : "users have"} a negative cash ledger`,
-      "negative",
-      () => openTransactions("business", "all", { mode: "cash" }),
-    )
-    : undefined;
 
   return (
     <div className="role-dashboard">
@@ -4420,23 +4405,6 @@ function RoleDashboardView({
           primaryOwner ? cashStaffMetric : cashSelfMetric,
           !primaryOwner && !staff ? cashStaffMetric : undefined,
         )}
-        {reconciliationMetric ? <div className="dashboard-reconciliation-alert">{reconciliationMetric}</div> : null}
-        {primaryOwner && summary.reconciliation ? (
-          <div className={`dashboard-cash-reconciliation${Math.abs(summary.reconciliation.variance) >= 0.01 ? " has-variance" : ""}`}>
-            <span>Business cash reconciliation</span>
-            <p>
-              Opening team cash {formatMoney(summary.reconciliation.openingTeamCash)}
-              {" + "}Collections {formatMoney(summary.collections.cash)}
-              {" − "}Expenses {formatMoney(summary.expenses.cash)}
-              {" + "}Owner Cash Sent {formatMoney(cashSentTotal)}
-              {" − "}Owner Cash Received {formatMoney(cashReceivedTotal)}
-              {" = "}Closing team cash {formatMoney(summary.reconciliation.closingTeamCash)}
-            </p>
-            {Math.abs(summary.reconciliation.variance) >= 0.01 ? (
-              <strong>Variance {formatMoney(summary.reconciliation.variance)}</strong>
-            ) : <strong>Reconciled</strong>}
-          </div>
-        ) : null}
       </section>
 
       <section className="dashboard-metric-group dashboard-summary-section tone-business-activity">
@@ -4471,27 +4439,24 @@ function RoleDashboardView({
 
       <section className="dashboard-metric-group dashboard-summary-section tone-user-activity">
         <header>
-          <div>
-            <p className="eyebrow">{primaryOwner ? "Owner cash transfers" : "Your cash transfers"}</p>
-            <h2>Physical cash movement</h2>
-          </div>
+          <div><p className="eyebrow">Your activity</p><h2>Your money movement</h2></div>
           <span>{dateLabel} · {dateBasisLabel}</span>
         </header>
         {pairedSummary(
           summaryMetric(
-            t("cashReceived"),
-            cashReceivedTotal,
-            "Received from another user · Physical cash only",
+            "IN",
+            summary.personalIn.total,
+            `${t("cash")} ${formatMoney(summary.personalIn.cash)} · ${t("online")} ${formatMoney(summary.personalIn.online)}`,
             "primary",
-            () => openTransactions("personal", "cash_received"),
+            () => openTransactions("personal", "cash_in"),
             "+",
           ),
           summaryMetric(
-            t("cashSent"),
-            cashSentTotal,
-            "Handed to another user · Physical cash only",
+            "OUT",
+            summary.personalOut.total,
+            `${t("cash")} ${formatMoney(summary.personalOut.cash)} · ${t("online")} ${formatMoney(summary.personalOut.online)}`,
             "negative",
-            () => openTransactions("personal", "cash_sent"),
+            () => openTransactions("personal", "cash_out"),
             "-",
           ),
         )}
@@ -4502,7 +4467,7 @@ function RoleDashboardView({
           <div><h3>{t("businessStatus")}</h3><p>Approved Collections and Expenses by business unit.</p></div>
         </div>
         <div className="business-status-grid role-business-status-grid">
-          {(summary.businessUnits ?? []).map((unit) => (
+          {summary.businessUnits.map((unit) => (
             <article className={`business-unit-activity-card tone-${unit.businessType}`} key={unit.businessType}>
               <header className="business-unit-activity-heading">
                 <div>
@@ -4612,15 +4577,6 @@ function HomeView({
 
     return (
       <div className="view-stack agent-home-view">
-        {data.dashboardSummary ? (
-          <RoleDashboardView
-            summary={data.dashboardSummary}
-            dateLabel={dateLabel}
-            dateFilterKey={dateFilterKey}
-            asOfDate={dateRange.to}
-            openTransactions={openTransactions}
-          />
-        ) : null}
         <AgentCodePanel profile={data.profile} referrals={agentReferralCodes} setNotice={setNotice} />
         <AgentIncentivePanel summary={agentIncentiveSummary} />
         <section className="agent-activity-panel">
@@ -5311,11 +5267,13 @@ function TransactionsView({
   dateRange,
   dateRangePreset,
   dateFilterKey,
+  transactionLens,
   transactionFilter,
   transactionProfileId,
   recordTypeFilter,
   modeFilter,
   businessTypeFilter,
+  onSelectLens,
   onSelectActivity,
   payments,
   expenses,
@@ -5342,11 +5300,13 @@ function TransactionsView({
   dateRange: NormalizedDateRange;
   dateRangePreset: DateRangePreset;
   dateFilterKey: DateFilterKey;
+  transactionLens: TransactionLens;
   transactionFilter: TransactionFilter;
   transactionProfileId: string;
   recordTypeFilter: TransactionRecordType;
   modeFilter: TransactionModeFilter;
   businessTypeFilter: BusinessTypeFilter;
+  onSelectLens: (lens: TransactionLens) => void;
   onSelectActivity: (activity: TransactionFilter) => void;
   payments: Payment[];
   expenses: Expense[];
@@ -5432,10 +5392,14 @@ function TransactionsView({
       transactionDate?: string;
       approvalDate?: string;
     };
-    const selectedUserId = canUseProfileFilter ? transactionProfileId : profile.id;
+    const selectedUserId = transactionLens === "personal"
+      ? profile.id
+      : canUseProfileFilter
+        ? transactionProfileId
+        : profile.id;
     const userMatches = (userId: string | null | undefined) => selectedUserId === "all" || userId === selectedUserId;
     const eventMatchesSelectedUser = (event: DailyPostingEvent) =>
-      selectedUserId === "all" || event.profile_id === selectedUserId;
+      transactionLens === "business" || selectedUserId === "all" || event.profile_id === selectedUserId;
     const visibleSourceEvents = (sourceType: DailyPostingEvent["source_type"], sourceId: string) =>
       postingEvents.filter((event) =>
         event.source_type === sourceType &&
@@ -5597,7 +5561,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${payment.id}-${displayDate}`,
             kind: "collection",
-            filter: "collections",
+            filter: transactionLens === "business" ? "collections" : "cash_in",
             date: displayDate,
             sortAt: approvedAt,
             amount,
@@ -5615,12 +5579,35 @@ function TransactionsView({
           });
         });
 
+        if (transactionLens === "personal" && incomingTransferId && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
+          rows.push({
+            ...baseRecord,
+            id: `${payment.id}-transfer-pending`,
+            kind: "collection",
+            filter: "cash_in",
+            date: payment.payment_date,
+            sortAt: pendingTransfer?.created_at ?? payment.created_at,
+            amount: numberValue(payment.amount),
+            cashAmount: cashImpact,
+            onlineAmount: onlineImpact,
+            amountTone: "neutral",
+            status: `Transfer request pending with ${profileName(profiles, pendingTransfer?.to_profile_id, t)}`,
+            statusTone: "pending",
+            meta: `${profileName(profiles, reviewProfileId, t)} · ${labelForBusiness(payment.business_type, t)}`,
+            pendingApproval: true,
+            canApprove: false,
+            approvalBlockedByTransfer: false,
+            transactionDate: payment.payment_date,
+            approvalDate: undefined,
+          });
+        }
+
         if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingRecordInScope(payment.payment_date, dateRange, dateRangePreset)) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-pending`,
             kind: "collection",
-            filter: "collections",
+            filter: transactionLens === "business" ? "collections" : "cash_in",
             date: payment.payment_date,
             sortAt: payment.created_at,
             amount: pendingAmount,
@@ -5675,7 +5662,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${expense.id}-${displayDate}`,
             kind: "expense",
-            filter: "expenses",
+            filter: transactionLens === "business" ? "expenses" : "cash_out",
             date: displayDate,
             sortAt: event.approved_at ?? expense.created_at,
             amount: -event.amount,
@@ -5693,7 +5680,7 @@ function TransactionsView({
             ...baseRecord,
             id: `${expense.id}-pending`,
             kind: "expense",
-            filter: "expenses",
+            filter: transactionLens === "business" ? "expenses" : "cash_out",
             date: expense.expense_date,
             sortAt: expense.created_at,
             amount: -numberValue(expense.amount),
@@ -5708,14 +5695,62 @@ function TransactionsView({
 
         return rows;
       });
-    const settlementRows = movements.flatMap((movement): HistoryRecord[] => {
+    const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
+      if (transactionLens === "business") return [];
       if (movement.payment_id && movement.status === "pending") return [];
-      if (movement.status !== "accepted") return [];
+      if (movement.status !== "accepted" && movement.status !== "pending") return [];
       const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
       const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
       const fromOwnerish = isOwnerish(fromProfile?.role ?? "");
       const toOwnerish = isOwnerish(toProfile?.role ?? "");
+      const movementAmount = numberValue(movement.amount);
+      const pendingMovement = movement.status === "pending";
       const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
+      if (pendingMovement) {
+        const pendingProfileId = selectedUserId === "all"
+          ? movement.from_profile_id
+          : selectedUserId;
+        const direction = movement.from_profile_id === pendingProfileId
+          ? "out"
+          : movement.to_profile_id === pendingProfileId
+            ? "in"
+            : null;
+        const transactionDate = indiaDateIso(movement.created_at);
+        if (!direction || !pendingRecordInScope(transactionDate, dateRange, dateRangePreset)) return [];
+        const counterpartyId = direction === "in" ? movement.from_profile_id : movement.to_profile_id;
+        return [{
+          id: `movement-${movement.id}-pending`,
+          sourceId: movement.id,
+          kind: direction === "in" ? "collection" : "settlement",
+          recordCategory: "transfer",
+          businessType: movement.business_type,
+          filter: direction === "in" ? "cash_in" : "cash_out",
+          date: transactionDate,
+          sortAt: movement.created_at,
+          amount: direction === "in" ? movementAmount : -movementAmount,
+          cashAmount: movementAmount,
+          onlineAmount: 0,
+          amountTone: "neutral",
+          title: direction === "in" ? t("cashReceived") : t("cashSent"),
+          meta: `${direction === "in" ? t("from") : t("to")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
+          status: labelForStatus(movement.status, t),
+          statusTone: movement.status,
+          modeLabel: labelForMode(movement.mode, t),
+          recordStatus: "active",
+          ownerId: pendingProfileId,
+          description: "",
+          remark: movement.note ?? "",
+          reason: null,
+          businessLabel: t("cashTransfer"),
+          transferLines: [movementChain],
+          journey: cashTransferJourneySteps(movement, profiles, t, direction === "in" ? "cash_in" : "cash_out"),
+          pendingApproval: true,
+          transactionDate,
+          approvalDate: undefined,
+          icon: direction === "in" ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
+        }];
+      }
+
       return visibleSourceEvents(movement.type, movement.id).map((event) => {
         const incoming = event.direction === "in";
         const incomingOwnerCash = incoming && fromOwnerish && !toOwnerish;
@@ -5731,7 +5766,7 @@ function TransactionsView({
           kind: incoming ? "collection" as const : "settlement" as const,
           recordCategory: "transfer" as const,
           businessType: event.business_type,
-          filter: incoming ? "cash_received" as const : "cash_sent" as const,
+          filter: incoming ? "cash_in" as const : "cash_out" as const,
           date: postingEventDate(event, dateFilterKey),
           sortAt: movement.responded_at ?? movement.created_at,
           amount: incoming ? event.amount : -event.amount,
@@ -5757,9 +5792,47 @@ function TransactionsView({
         };
       });
     });
-    const agentRows = agentSettlements.flatMap((settlement): HistoryRecord[] => {
-      if (settlement.status !== "accepted") return [];
+    const agentRows = transactionLens === "business" ? [] : agentSettlements.flatMap((settlement): HistoryRecord[] => {
+      if (settlement.status === "rejected") return [];
       const amount = numberValue(settlement.amount);
+      const transactionDate = indiaDateIso(settlement.created_at);
+      if (settlement.status === "pending") {
+        const pendingProfileId = selectedUserId === "all" ? settlement.paid_by : selectedUserId;
+        const incoming = pendingProfileId === settlement.agent_id;
+        const outgoing = pendingProfileId === settlement.paid_by;
+        if ((!incoming && !outgoing) || !pendingRecordInScope(transactionDate, dateRange, dateRangePreset)) return [];
+        return [{
+          id: `agent-${settlement.id}-pending`,
+          sourceId: settlement.id,
+          kind: "agent_payout",
+          recordCategory: "agent_payout",
+          businessType: null,
+          filter: incoming ? "cash_in" : "cash_out",
+          date: transactionDate,
+          sortAt: settlement.created_at,
+          amount: incoming ? amount : -amount,
+          cashAmount: amount,
+          onlineAmount: 0,
+          amountTone: "neutral",
+          title: t("pendingIncentive"),
+          meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, incoming ? settlement.paid_by : settlement.agent_id, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
+          status: labelForStatus(settlement.status, t),
+          statusTone: settlement.status,
+          modeLabel: incoming ? t("cashIn") : t("agentPayoutLower"),
+          recordStatus: "active",
+          ownerId: pendingProfileId,
+          description: "",
+          remark: settlement.note ?? "",
+          reason: null,
+          businessLabel: t("cashTransfer"),
+          journey: agentPayoutJourneySteps(settlement, profiles, t, incoming ? "cash_in" : "cash_out"),
+          pendingApproval: true,
+          transactionDate,
+          approvalDate: undefined,
+          icon: <WalletCards size={24} />,
+        }];
+      }
+
       return visibleSourceEvents("agent_settlement", settlement.id).map((event) => {
         const incoming = event.direction === "in";
         return {
@@ -5768,7 +5841,7 @@ function TransactionsView({
           kind: "agent_payout" as const,
           recordCategory: "agent_payout" as const,
           businessType: null,
-          filter: incoming ? "cash_received" as const : "cash_sent" as const,
+          filter: incoming ? "cash_in" as const : "cash_out" as const,
           date: postingEventDate(event, dateFilterKey),
           sortAt: settlement.responded_at ?? settlement.created_at,
           amount: incoming ? amount : -amount,
@@ -5779,7 +5852,7 @@ function TransactionsView({
           meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, event.counterparty_profile_id, t)}${settlement.note ? ` · ${settlement.note}` : ""}`,
           status: labelForStatus(settlement.status, t),
           statusTone: settlement.status,
-          modeLabel: incoming ? t("cashReceived") : t("agentPayoutLower"),
+          modeLabel: incoming ? t("cashIn") : t("agentPayoutLower"),
           recordStatus: "active" as const,
           ownerId: event.profile_id,
           description: "",
@@ -5804,12 +5877,12 @@ function TransactionsView({
     const unloadedActivityGroups = new Map<string, FinancialActivity[]>();
     financialActivity
       .filter((activity) => {
+        if (activity.lens !== transactionLens) return false;
         if (
-          activity.lens === "personal"
-          && (activity.source_type === "payment" || activity.source_type === "expense")
+          transactionLens === "business"
+          && selectedUserId !== "all"
+          && activity.actor_profile_id !== selectedUserId
         ) return false;
-        const activityProfileId = activity.flow_profile_id ?? activity.actor_profile_id;
-        if (selectedUserId !== "all" && activityProfileId !== selectedUserId) return false;
         if (activity.source_type === "payment") return !loadedPaymentIds.has(activity.source_id);
         if (activity.source_type === "expense") return !loadedExpenseIds.has(activity.source_id);
         return !loadedMovementIds.has(activity.source_id);
@@ -5826,8 +5899,7 @@ function TransactionsView({
       const cashAmount = activities.reduce((sum, item) => sum + numberValue(item.cash_amount), 0);
       const onlineAmount = activities.reduce((sum, item) => sum + numberValue(item.online_amount), 0);
       const incoming = activity.category === "collection"
-        || activity.category === "cash_received"
-        || String(activity.category) === "in"
+        || activity.category === "in"
         || (pendingApproval && activity.source_type === "payment");
       const actorId = activity.flow_profile_id ?? activity.actor_profile_id;
       const kind = activity.source_type === "expense"
@@ -5840,13 +5912,9 @@ function TransactionsView({
         : activity.source_type === "expense"
           ? "expense" as const
           : "transfer" as const;
-      const filter = activity.source_type === "payment"
-        ? "collections" as const
-        : activity.source_type === "expense"
-          ? "expenses" as const
-          : incoming
-            ? "cash_received" as const
-            : "cash_sent" as const;
+      const filter = transactionLens === "business"
+        ? activity.source_type === "expense" ? "expenses" as const : "collections" as const
+        : incoming ? "cash_in" as const : "cash_out" as const;
       const title = activity.source_type === "payment"
         ? "Collection"
         : activity.source_type === "expense"
@@ -5906,7 +5974,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows, ...feedFallbackRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, financialActivity, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, dateRangePreset, expenses, financialActivity, ledger, movements, owner, payments, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -5964,14 +6032,20 @@ function TransactionsView({
   const totalTransactionRecords = allTransactionRecords.filter((record) =>
     !record.pendingApproval && matchesSecondaryFilters(record),
   );
-  const collectionRecords = totalTransactionRecords.filter((record) => record.filter === "collections");
-  const expenseRecords = totalTransactionRecords.filter((record) => record.filter === "expenses");
-  const cashReceivedRecords = totalTransactionRecords.filter((record) => record.filter === "cash_received");
-  const cashSentRecords = totalTransactionRecords.filter((record) => record.filter === "cash_sent");
-  const collectionTotal = collectionRecords.reduce((sum, record) => sum + Math.abs(numberValue(record.amount)), 0);
-  const expenseTotal = expenseRecords.reduce((sum, record) => sum + Math.abs(numberValue(record.amount)), 0);
-  const cashReceivedTotal = cashReceivedRecords.reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const cashSentTotal = cashSentRecords.reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const inCashTotal = totalTransactionRecords
+    .filter((record) => numberValue(record.amount) > 0)
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const inOnlineTotal = totalTransactionRecords
+    .filter((record) => numberValue(record.amount) > 0)
+    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
+  const positiveTotal = inCashTotal + inOnlineTotal;
+  const outCashTotal = totalTransactionRecords
+    .filter((record) => numberValue(record.amount) < 0)
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const outOnlineTotal = totalTransactionRecords
+    .filter((record) => numberValue(record.amount) < 0)
+    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
+  const negativeTotal = outCashTotal + outOnlineTotal;
   const groupedRecords = transactionRecords.reduce<{ date: string; records: typeof transactionRecords }[]>((groups, record) => {
     const lastGroup = groups.at(-1);
     if (lastGroup?.date === record.date) {
@@ -5981,23 +6055,24 @@ function TransactionsView({
     groups.push({ date: record.date, records: [record] });
     return groups;
   }, []);
-  const activityOptions: { value: TransactionFilter; label: string }[] = currentUserIsSalesAgent
+  const activityOptions: { value: TransactionFilter; label: string }[] = transactionLens === "business"
     ? [
-        { value: "all", label: t("all") },
-        { value: "cash_received", label: t("cashReceived") },
-        { value: "cash_sent", label: t("cashSent") },
-      ]
-    : [
         { value: "all", label: t("all") },
         { value: "collections", label: t("collections") },
         { value: "expenses", label: t("expenses") },
-        { value: "cash_received", label: t("cashReceived") },
-        { value: "cash_sent", label: t("cashSent") },
+        { value: "pending", label: t("pending") },
+      ]
+    : [
+        { value: "all", label: t("all") },
+        { value: "cash_in", label: "IN" },
+        { value: "cash_out", label: "OUT" },
         { value: "pending", label: t("pending") },
       ];
+  const positiveLabel = transactionLens === "business" ? t("collections") : "IN";
+  const negativeLabel = transactionLens === "business" ? t("expenses") : "OUT";
 
   return (
-    <div className={`view-stack mobile-clean transaction-history-view lens-unified activity-${transactionFilter}`}>
+    <div className={`view-stack mobile-clean transaction-history-view lens-${transactionLens} activity-${transactionFilter}`}>
       {currentUserIsSalesAgent ? (
         <>
           <AgentCodePanel profile={profile} referrals={agentReferralCodes} setNotice={setNotice} />
@@ -6005,21 +6080,43 @@ function TransactionsView({
         </>
       ) : null}
 
-      <nav className="transaction-primary-filters" aria-label="Transaction classification">
-        <div className="transaction-activity-chips" aria-label="Transaction type filters">
-          {activityOptions.map((option) => (
+      {!currentUserIsSalesAgent ? (
+        <nav className="transaction-primary-filters" aria-label="Transaction classification">
+          <div className="transaction-lens-tabs" role="tablist" aria-label="Transaction lens">
             <button
-              aria-pressed={transactionFilter === option.value}
-              className={transactionFilter === option.value ? "active" : ""}
-              key={option.value}
-              onClick={() => onSelectActivity(option.value)}
+              aria-selected={transactionLens === "business"}
+              className={transactionLens === "business" ? "active" : ""}
+              onClick={() => onSelectLens("business")}
+              role="tab"
               type="button"
             >
-              {option.label}
+              Business
             </button>
-          ))}
-        </div>
-      </nav>
+            <button
+              aria-selected={transactionLens === "personal"}
+              className={transactionLens === "personal" ? "active" : ""}
+              onClick={() => onSelectLens("personal")}
+              role="tab"
+              type="button"
+            >
+              My activity
+            </button>
+          </div>
+          <div className="transaction-activity-chips" aria-label={transactionLens === "business" ? "Business activity filters" : "My activity filters"}>
+            {activityOptions.map((option) => (
+              <button
+                aria-pressed={transactionFilter === option.value}
+                className={transactionFilter === option.value ? "active" : ""}
+                key={option.value}
+                onClick={() => onSelectActivity(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
 
       <section className="history-summary-panel">
         <div className="history-summary-context">
@@ -6027,41 +6124,24 @@ function TransactionsView({
           <strong>{transactionRecords.length} {t("transactions")}</strong>
         </div>
         {!currentUserIsSalesAgent ? (
-          <div className="history-unified-totals">
-            <div className="history-total-card">
-              <div>
-                <span>{t("collections")}</span>
-                <strong className="positive">+{formatMoney(collectionTotal)}</strong>
-              </div>
-              <div className="history-total-divider" />
-              <div>
-                <span>{t("expenses")}</span>
-                <strong className="negative">-{formatMoney(expenseTotal)}</strong>
-              </div>
-            </div>
-            <div className="history-total-card cash-transfer-totals">
-              <div>
-                <span>{t("cashReceived")}</span>
-                <strong className="positive">+{formatMoney(cashReceivedTotal)}</strong>
-              </div>
-              <div className="history-total-divider" />
-              <div>
-                <span>{t("cashSent")}</span>
-                <strong className="negative">-{formatMoney(cashSentTotal)}</strong>
-              </div>
-            </div>
-          </div>
-        ) : (
           <div className="history-total-card">
             <div>
-              <span>{t("cashReceived")}</span>
-              <strong className="positive">+{formatMoney(cashReceivedTotal)}</strong>
+              <span>{positiveLabel}</span>
+              <strong className="positive">+{formatMoney(positiveTotal)}</strong>
+              <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
             </div>
             <div className="history-total-divider" />
             <div>
-              <span>{t("cashSent")}</span>
-              <strong className="negative">-{formatMoney(cashSentTotal)}</strong>
+              <span>{negativeLabel}</span>
+              <strong className="negative">-{formatMoney(negativeTotal)}</strong>
+              <small className="history-total-breakdown">{t("cash")} {formatMoney(outCashTotal)} · {t("online")} {formatMoney(outOnlineTotal)}</small>
             </div>
+          </div>
+        ) : (
+          <div className="agent-history-total">
+            <span>{t("cashIn")}</span>
+            <strong>{formatMoney(positiveTotal)}</strong>
+            <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
           </div>
         )}
         {allTransactionRecords.some((record) => record.pendingApproval) ? (
@@ -8317,15 +8397,7 @@ function ActionSheet({
       ? [{ type: "agent_settlement" as const, labelKey: "agentPayout", icon: <WalletCards size={18} /> }]
       : []),
   ];
-  const title = actionModal === "positive"
-    ? selectedPositive === "receive_money" ? t("cashReceived") : t("collectPayment")
-    : selectedNegative === "send_money"
-      ? t("cashSent")
-      : selectedNegative === "expense"
-        ? t("expense")
-        : selectedNegative === "agent_settlement"
-          ? t("agentPayout")
-          : t("negativeEntry");
+  const title = actionModal === "positive" ? t("collectPayment") : t("negativeEntry");
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label={title}>
@@ -8333,11 +8405,7 @@ function ActionSheet({
       <section className="action-sheet">
         <header className="sheet-header">
           <div>
-            <p className="eyebrow">
-              {actionModal === "positive"
-                ? `${t("collections")} / ${t("cashReceived")}`
-                : `${t("expenses")} / ${t("cashSent")}`}
-            </p>
+            <p className="eyebrow">{actionModal === "positive" ? t("moneyIn") : t("moneyOut")}</p>
             <h2>{title}</h2>
           </div>
           <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={closeAction}>
@@ -10335,12 +10403,10 @@ function ClosingView({
   const visibleSummaries = summaries
     .filter((summary) => {
       if (!summary.profile.active) return false;
-      if (summary.profile.membership_role === "primary_owner") return false;
       if (profile.membership_role === "primary_owner") return true;
       if (profile.membership_role === "co_owner") {
-        return summary.profile.id === profile.id
-          || summary.profile.membership_role === "staff"
-          || summary.profile.membership_role === "sales_agent";
+        if (summary.profile.membership_role === "co_owner") return true;
+        return summary.profile.membership_role === "staff" || summary.profile.membership_role === "sales_agent";
       }
       return summary.profile.id === profile.id;
     })
@@ -10387,21 +10453,30 @@ function ClosingView({
         belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
         isPendingReviewStatus(expense.approval_status),
     );
+    const pendingSettlementMovements = movements.filter(
+      (movement) =>
+        movement.status === "pending" &&
+        movement.type === "settlement" &&
+        recordInClosingScope(summary.profile.id, movement.business_type) &&
+        indiaDateIso(movement.created_at) <= date &&
+        (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
+    );
     const cashPaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.cash, 0);
     const onlinePaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.online, 0);
     const expenseAmount = pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+    const settlementAmount = pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
     const cashPaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.cash > 0).length;
     const onlinePaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.online > 0).length;
     const cashExpenseCount = pendingExpenses.filter((expense) => expense.mode !== "online").length;
 
     return {
-      totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount,
-      totalRecordCount: paymentBreakdowns.length + pendingExpenses.length,
-      cashReviewAmount: cashPaymentAmount + expenseAmount,
-      cashReviewCount: cashPaymentCount + pendingExpenses.length,
+      totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount + settlementAmount,
+      totalRecordCount: paymentBreakdowns.length + pendingExpenses.length + pendingSettlementMovements.length,
+      cashReviewAmount: cashPaymentAmount + expenseAmount + settlementAmount,
+      cashReviewCount: cashPaymentCount + pendingExpenses.length + pendingSettlementMovements.length,
       ownerOnlineAmount: onlinePaymentAmount,
       ownerOnlineCount: onlinePaymentCount,
-      cashBlockingCount: cashPaymentCount + cashExpenseCount,
+      cashBlockingCount: cashPaymentCount + cashExpenseCount + pendingSettlementMovements.length,
     };
   };
   const closingCards: ClosingCardViewModel[] = visibleSummaries.map((summary) => ({
@@ -10450,6 +10525,8 @@ function ClosingView({
         <div className="closing-user-grid">
           {closingCards.map(({ summary, pending: pendingSummary }) => {
             const cashToReceive = Math.max(summary.closing, 0);
+            const custodyCashIn = summary.collected + summary.received;
+            const custodyCashOut = summary.expenses + summary.sent;
             const settlementProfileKey = `${date}:${summary.profile.id}`;
             const canReceiveFromUser = summary.profile.id !== profile.id && (
               (
@@ -10465,7 +10542,8 @@ function ClosingView({
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
               ?? (cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
-            const canReceiveCash = settlementEntryNumber > 0;
+            const receiveInputDisabled = pendingSummary.cashBlockingCount > 0 || cashToReceive <= 0;
+            const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
             return (
               <article
                 className="closing-user-card"
@@ -10494,30 +10572,21 @@ function ClosingView({
                     <span>
                       <small>{t("closingCashInHand")}</small>
                       <em>{date}</em>
-                      {summary.closing < 0 ? <b>{t("needsReconciliation")}</b> : null}
                     </span>
                     <strong>{formatMoney(summary.closing)}</strong>
                   </div>
-                  <div className="closing-cash-equation closing-cash-equation-detailed" aria-label={`${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashCollections")} ${formatMoney(summary.collected)}, ${t("cashReceived")} ${formatMoney(summary.received)}, ${t("cashExpenses")} ${formatMoney(summary.expenses)}, ${t("cashSent")} ${formatMoney(summary.sent)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}>
+                  <div className="closing-cash-equation" aria-label={`${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}>
                     <span className="closing-equation-part">
                       <small>{t("openingCash")}</small>
                       <strong>{formatMoney(summary.opening)}</strong>
                     </span>
                     <span className="closing-equation-part positive">
-                      <small>+ {t("cashCollections")}</small>
-                      <strong>{formatMoney(summary.collected)}</strong>
-                    </span>
-                    <span className="closing-equation-part positive">
-                      <small>+ {t("cashReceived")}</small>
-                      <strong>{formatMoney(summary.received)}</strong>
+                      <small>+ {t("cashIn")}</small>
+                      <strong>{formatMoney(custodyCashIn)}</strong>
                     </span>
                     <span className="closing-equation-part negative">
-                      <small>− {t("cashExpenses")}</small>
-                      <strong>{formatMoney(summary.expenses)}</strong>
-                    </span>
-                    <span className="closing-equation-part negative">
-                      <small>− {t("cashSent")}</small>
-                      <strong>{formatMoney(summary.sent)}</strong>
+                      <small>− {t("cashOut")}</small>
+                      <strong>{formatMoney(custodyCashOut)}</strong>
                     </span>
                     {summary.adjustments !== 0 ? (
                       <span className={`closing-equation-part${summary.adjustments < 0 ? " negative" : " positive"}`}>
@@ -10531,21 +10600,17 @@ function ClosingView({
                 <section
                   className="closing-online-activity"
                   title={t("onlineOwnerBankNote")}
-                  aria-label={`${t("onlineCollection")} ${formatMoney(summary.inOnline)} · ${t("verifiedByOwner")} · ${t("onlineExpenses")} ${formatMoney(summary.outOnline)} · ${t("approved")}`}
+                  aria-label={`${t("onlineIn")} ${formatMoney(summary.inOnline)} · ${t("reviewed")} · ${t("verifiedByOwner")}`}
                 >
-                  <div className="closing-online-heading">
-                    <span><Landmark aria-hidden="true" size={14} /> {t("online")}</span>
-                    <small><ShieldCheck aria-hidden="true" size={12} /> {t("reviewed")}</small>
-                  </div>
                   <div className="closing-online-summary">
                     <span className="closing-online-metric">
-                      <small><Landmark aria-hidden="true" size={15} /> {t("onlineCollection")}</small>
+                      <small><Landmark aria-hidden="true" size={15} /> {t("onlineIn")}</small>
                       <strong>+{formatMoney(summary.inOnline)}</strong>
                     </span>
                     <span aria-hidden="true" className="closing-online-divider" />
-                    <span className="closing-online-metric reviewed negative">
-                      <small><Landmark aria-hidden="true" size={15} /> {t("onlineExpenses")}</small>
-                      <strong>−{formatMoney(summary.outOnline)}</strong>
+                    <span className="closing-online-metric reviewed">
+                      <small><ShieldCheck aria-hidden="true" size={15} /> {t("reviewed")}</small>
+                      <em>{t("verifiedByOwner")}</em>
                     </span>
                   </div>
                 </section>
@@ -10592,6 +10657,7 @@ function ClosingView({
                               setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: event.target.value }))
                             }
                             placeholder={cashToReceive ? String(cashToReceive) : "0"}
+                            disabled={receiveInputDisabled}
                             required
                           />
                         </label>
@@ -10924,6 +10990,11 @@ function ClosingReviewDetail({
   const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
   const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
+  const reviewInCash = summary.inCash;
+  const reviewInOnline = summary.inOnline;
+  const reviewOutCash = summary.outCash;
+  const reviewOutOnline = summary.outOnline;
+
   return (
     <div className="closing-review-detail">
       <header className="closing-review-header">
@@ -10943,30 +11014,14 @@ function ClosingReviewDetail({
           <strong>{formatMoney(summary.closing)}</strong>
         </article>
         <article className="positive">
-          <span>{t("cashCollections")}</span>
-          <strong>{formatMoney(summary.collected)}</strong>
-        </article>
-        <article className="positive">
-          <span>{t("cashReceived")}</span>
-          <strong>{formatMoney(summary.received)}</strong>
+          <span>{t("cashIn")}</span>
+          <strong>{formatMoney(reviewInCash + reviewInOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewInCash)} · {t("online")} {formatMoney(reviewInOnline)}</p>
         </article>
         <article className="negative">
-          <span>{t("cashExpenses")}</span>
-          <strong>{formatMoney(summary.expenses)}</strong>
-        </article>
-        <article className="negative">
-          <span>{t("cashSent")}</span>
-          <strong>{formatMoney(summary.sent)}</strong>
-        </article>
-        <article className="online">
-          <span>{t("onlineCollection")}</span>
-          <strong>{formatMoney(summary.inOnline)}</strong>
-          <p className="money-split-line">{t("verifiedByOwner")}</p>
-        </article>
-        <article className="online negative">
-          <span>{t("onlineExpenses")}</span>
-          <strong>{formatMoney(summary.outOnline)}</strong>
-          <p className="money-split-line">{t("approved")}</p>
+          <span>{t("cashOut")}</span>
+          <strong>{formatMoney(reviewOutCash + reviewOutOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)} · {t("online")} {formatMoney(reviewOutOnline)}</p>
         </article>
         <article className="pending">
           <span>{t("pending")}{pendingReviewCount > 0 ? ` · ${pendingReviewCount}` : ""}</span>

@@ -5,7 +5,7 @@ export type AppTab = "home" | "payments" | "library_students" | "closing" | "set
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
 export type DateFilterKey = "approval" | "transaction";
 export type TransactionLens = "business" | "personal";
-export type TransactionFilter = "all" | "collections" | "expenses" | "cash_received" | "cash_sent" | "pending";
+export type TransactionFilter = "all" | "collections" | "expenses" | "cash_in" | "cash_out" | "pending";
 export type TransactionRecordType = "all" | "payment" | "expense" | "transfer" | "agent_payout";
 export type TransactionModeFilter = "all" | PaymentMode;
 export type BusinessTypeFilter = "all" | BusinessType;
@@ -58,7 +58,7 @@ const appTabs = ["home", "payments", "library_students", "closing", "settings", 
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
 const dateFilterKeys = ["approval", "transaction"] as const;
 const transactionLenses = ["business", "personal"] as const;
-const transactionFilters = ["all", "collections", "expenses", "cash_received", "cash_sent", "pending"] as const;
+const transactionFilters = ["all", "collections", "expenses", "cash_in", "cash_out", "pending"] as const;
 const transactionRecordTypes = ["all", "payment", "expense", "transfer", "agent_payout"] as const;
 const transactionModes = ["all", "cash", "online", "mixed"] as const;
 const businessTypes = ["all", "guest_house", "library", "course", "general"] as const;
@@ -160,8 +160,6 @@ function parseLegacyRange(params: RawSearchParams) {
 function normalizeTransactionActivity(value: string | undefined) {
   if (value === "transactions") return "all";
   if (value === "settlements" || value === "transferred" || value === "transfered") return "all";
-  if (value === "cash_in") return "cash_received";
-  if (value === "cash_out") return "cash_sent";
   return value;
 }
 
@@ -179,15 +177,11 @@ export function parseAppViewState(
   const closingLegacyDate = tab === "closing" ? legacyRange.to : null;
   const studentSource = singleParam(params, "studentSource");
   const rawTransactionFilter = singleParam(params, "txFilter");
-  const transactionActivity = oneOf(normalizeTransactionActivity(rawTransactionFilter), transactionFilters, "all");
   const defaultTransactionLens: TransactionLens = role === "primary_owner" || role === "co_owner" ? "business" : "personal";
   const inferredTransactionLens: TransactionLens =
     rawTransactionFilter === "collections" || rawTransactionFilter === "expenses" || rawTransactionFilter === "transactions"
       ? "business"
-      : rawTransactionFilter === "cash_in"
-          || rawTransactionFilter === "cash_out"
-          || rawTransactionFilter === "cash_received"
-          || rawTransactionFilter === "cash_sent"
+      : rawTransactionFilter === "cash_in" || rawTransactionFilter === "cash_out"
         ? "personal"
         : defaultTransactionLens;
 
@@ -203,12 +197,10 @@ export function parseAppViewState(
       dateFilterKey: oneOf(singleParam(params, "txDateKey") ?? (tab === "payments" ? legacyDateKey : undefined), dateFilterKeys, "approval"),
       lens: oneOf(singleParam(params, "txLens"), transactionLenses, inferredTransactionLens),
       profileId: singleParam(params, "txUser") || defaultProfileId,
-      activity: transactionActivity,
+      activity: oneOf(normalizeTransactionActivity(rawTransactionFilter), transactionFilters, "all"),
       recordType: oneOf(singleParam(params, "txRecordType"), transactionRecordTypes, "all"),
       mode: oneOf(singleParam(params, "txMode"), transactionModes, "all"),
-      businessType: transactionActivity === "cash_received" || transactionActivity === "cash_sent"
-        ? "all"
-        : oneOf(singleParam(params, "txBusiness"), businessTypes, "all"),
+      businessType: oneOf(singleParam(params, "txBusiness"), businessTypes, "all"),
     },
     closingFilters: {
       date: validIsoDate(singleParam(params, "closingDate")) ?? closingLegacyDate ?? todayIso(),

@@ -17,19 +17,16 @@ function numberValue(value: number | string | null | undefined) {
 
 export function financialActivityPostingEvents(
   activity: FinancialActivity[],
-  lens?: FinancialActivity["lens"],
+  lens: FinancialActivity["lens"],
 ): DailyPostingEvent[] {
   return activity
     .filter((item) =>
-      (!lens || item.lens === lens)
+      item.lens === lens
       && item.category !== "pending"
       && item.approval_date,
     )
     .map((item) => {
-      const category = String(item.category);
-      const direction = category === "collection" || category === "cash_received" || category === "in"
-        ? "in" as const
-        : "out" as const;
+      const direction = item.category === "collection" || item.category === "in" ? "in" as const : "out" as const;
       const component = numberValue(item.cash_amount) > 0 && numberValue(item.online_amount) === 0
         ? "cash" as const
         : numberValue(item.online_amount) > 0 && numberValue(item.cash_amount) === 0

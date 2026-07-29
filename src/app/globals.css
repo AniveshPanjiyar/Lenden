@@ -4971,19 +4971,6 @@ summary::-webkit-details-marker {
   font-weight: 700;
 }
 
-.closing-cash-result b {
-  width: fit-content;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .18);
-  color: #fff;
-  padding: 3px 7px;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: .035em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
 .closing-cash-result > strong {
   min-width: max-content;
   max-width: 55%;
@@ -5005,10 +4992,6 @@ summary::-webkit-details-marker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 5px;
-}
-
-.closing-cash-equation-detailed {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .closing-equation-part {
@@ -5054,41 +5037,6 @@ summary::-webkit-details-marker {
   padding: 8px;
 }
 
-.closing-online-heading {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 2px 6px;
-}
-
-.closing-online-heading > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #356f9f;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: .045em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.closing-online-heading > small {
-  min-width: 0;
-  color: var(--closing-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 8px;
-  font-weight: 700;
-  line-height: 1.25;
-  text-align: right;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .closing-online-summary {
   min-width: 0;
   display: grid;
@@ -5130,10 +5078,6 @@ summary::-webkit-details-marker {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   white-space: nowrap;
-}
-
-.closing-online-metric.negative strong {
-  color: var(--closing-error);
 }
 
 .closing-online-metric em {
@@ -7758,10 +7702,6 @@ summary::-webkit-details-marker {
     gap: 5px;
   }
 
-  .closing-cash-equation-detailed {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-
   .closing-equation-part {
     padding: 6px;
   }
@@ -8195,60 +8135,6 @@ option {
 .dashboard-summary-section .dashboard-paired-summary {
   border-color: color-mix(in srgb, var(--dashboard-section-accent) 20%, var(--color-outline-variant));
   background: color-mix(in srgb, var(--dashboard-section-tint) 42%, var(--color-surface));
-}
-
-.dashboard-reconciliation-alert {
-  min-width: 0;
-}
-
-.dashboard-cash-reconciliation {
-  display: grid;
-  gap: 6px;
-  border: 1px solid color-mix(in srgb, #2f6f5e 24%, var(--color-outline-variant));
-  border-radius: 14px;
-  background: color-mix(in srgb, #f5fbf7 70%, var(--color-surface));
-  color: var(--color-on-surface-variant);
-  padding: 12px 14px;
-}
-
-.dashboard-cash-reconciliation > span {
-  color: #2f6f5e;
-  font-size: .72rem;
-  font-weight: 900;
-  letter-spacing: .055em;
-  text-transform: uppercase;
-}
-
-.dashboard-cash-reconciliation p {
-  margin: 0;
-  font-size: .76rem;
-  font-weight: 700;
-  line-height: 1.55;
-}
-
-.dashboard-cash-reconciliation strong {
-  color: var(--good);
-  font-size: .78rem;
-}
-
-.dashboard-cash-reconciliation.has-variance {
-  border-color: color-mix(in srgb, var(--bad) 32%, var(--color-outline-variant));
-  background: color-mix(in srgb, var(--soft-error) 46%, var(--color-surface));
-}
-
-.dashboard-cash-reconciliation.has-variance strong {
-  color: var(--bad);
-}
-
-.history-unified-totals {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.history-total-card.cash-transfer-totals {
-  border-color: color-mix(in srgb, #315f9e 24%, var(--history-line));
-  background: color-mix(in srgb, #e4effc 54%, var(--history-bg));
 }
 
 .dashboard-metric-group > header {
