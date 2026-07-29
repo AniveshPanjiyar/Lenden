@@ -522,21 +522,31 @@ async function loadDashboard(
     pendingAmount: Number(unit.pending_amount ?? 0),
     pendingCount: Number(unit.pending_count ?? 0),
   }));
-  const baseDashboardSummary = dashboardSummaryResult.data
+  const rawDashboardSummary = dashboardSummaryResult.data as Partial<DashboardSummary> | null;
+  const baseDashboardSummary = rawDashboardSummary
     ? {
-        ...(dashboardSummaryResult.data as DashboardSummary),
+        ...rawDashboardSummary,
+        cashReceived: rawDashboardSummary.cashReceived ?? { total: 0 },
+        cashSent: rawDashboardSummary.cashSent ?? { total: 0 },
+        negativeBalanceAmount: Number(rawDashboardSummary.negativeBalanceAmount ?? 0),
+        negativeBalanceCount: Number(rawDashboardSummary.negativeBalanceCount ?? 0),
+        reconciliation: rawDashboardSummary.reconciliation ?? null,
         businessUnits: dashboardBusinessStatus,
-      }
+      } as DashboardSummary
     : null;
   const dashboardCashPosition = dashboardCashPositionResult.data as {
     cashSelf?: number | string | null;
     cashWithStaff?: number | string | null;
+    negativeBalanceAmount?: number | string | null;
+    negativeBalanceCount?: number | string | null;
   } | null;
   const dashboardSummary = baseDashboardSummary && dashboardCashPosition
     ? {
         ...baseDashboardSummary,
         cashSelf: Number(dashboardCashPosition.cashSelf ?? 0),
         cashWithStaff: Number(dashboardCashPosition.cashWithStaff ?? 0),
+        negativeBalanceAmount: Number(dashboardCashPosition.negativeBalanceAmount ?? baseDashboardSummary.negativeBalanceAmount ?? 0),
+        negativeBalanceCount: Number(dashboardCashPosition.negativeBalanceCount ?? baseDashboardSummary.negativeBalanceCount ?? 0),
       }
     : baseDashboardSummary;
   const visiblePayments = visibleData(paymentRows, (payment) =>
@@ -557,7 +567,7 @@ async function loadDashboard(
       .filter((item) => {
         if (bootstrap.businessContext.accessMode === "support" || viewerBusinessRole === "primary_owner") return true;
         if (viewerBusinessRole === "co_owner") {
-          return item.role === "co_owner" || item.role === "staff" || item.role === "sales_agent";
+          return item.profile_id === userId || item.role === "staff" || item.role === "sales_agent";
         }
         return item.profile_id === userId;
       })
@@ -570,30 +580,24 @@ async function loadDashboard(
     studentPayments: [],
     payments: visiblePayments,
     expenses: visibleExpenses,
-    movements: salesAgent
-      ? []
-      : visibleData(movementRows, (movement) =>
-          ownerish || movement.from_profile_id === userId || movement.to_profile_id === userId,
-        ),
-    ledger: salesAgent
-      ? []
-      : visibleData((ledgerRows ?? []) as LedgerEntry[], (entry) =>
-          ownerish || entry.account_profile_id === userId,
-        ),
+    movements: visibleData(movementRows, (movement) =>
+      ownerish || movement.from_profile_id === userId || movement.to_profile_id === userId,
+    ),
+    ledger: visibleData((ledgerRows ?? []) as LedgerEntry[], (entry) =>
+      ownerish || entry.account_profile_id === userId,
+    ),
     closingSummaries: salesAgent
       ? []
       : visibleData((closingSummariesResult.data ?? []) as ClosingSummary[], (summary) =>
           closingVisibleProfileIds.has(summary.profile_id),
         ),
-    cashBalances: salesAgent
-      ? []
-      : ((cashBalancesResult.data ?? []) as CashBalanceSummary[]).map((summary) => ({
-          profile_id: String(summary.profile_id),
-          business_type: summary.business_type ?? null,
-          balance: Number(summary.balance ?? 0),
-        })),
-    dashboardSummary: salesAgent ? null : dashboardSummary,
-    financialActivity: salesAgent ? [] : (financialActivityResult.data ?? []) as FinancialActivity[],
+    cashBalances: ((cashBalancesResult.data ?? []) as CashBalanceSummary[]).map((summary) => ({
+      profile_id: String(summary.profile_id),
+      business_type: summary.business_type ?? null,
+      balance: Number(summary.balance ?? 0),
+    })),
+    dashboardSummary,
+    financialActivity: (financialActivityResult.data ?? []) as FinancialActivity[],
     changeRequests: visibleData((changesResult.data ?? []) as ChangeRequest[], (request) =>
       !salesAgent && (ownerish || request.requested_by === userId),
     ),

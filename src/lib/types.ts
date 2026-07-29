@@ -553,10 +553,18 @@ export type DashboardSummary = {
   role: BusinessRole;
   cashSelf: number;
   cashWithStaff: number;
+  negativeBalanceAmount: number;
+  negativeBalanceCount: number;
   collections: { total: number; cash: number; online: number };
   expenses: { total: number; cash: number; online: number };
-  personalIn: { total: number; cash: number; online: number };
-  personalOut: { total: number; cash: number; online: number };
+  cashReceived: { total: number };
+  cashSent: { total: number };
+  reconciliation: {
+    openingTeamCash: number;
+    closingTeamCash: number;
+    expectedClosingTeamCash: number;
+    variance: number;
+  } | null;
   pending: { amount: number; count: number };
   businessUnits: Array<{
     businessType: BusinessType;
@@ -576,7 +584,7 @@ export type FinancialActivity = {
   source_type: "payment" | "expense" | "transfer" | "settlement";
   source_id: string;
   lens: "business" | "personal";
-  category: "collection" | "expense" | "in" | "out" | "pending";
+  category: "collection" | "expense" | "cash_received" | "cash_sent" | "pending";
   business_type: BusinessType | null;
   actor_profile_id: string;
   flow_profile_id: string | null;

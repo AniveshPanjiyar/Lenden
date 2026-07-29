@@ -117,7 +117,7 @@ insert into public.money_movements (
 ) values (
   '95000000-0000-4000-8000-000000000001',
   '92000000-0000-4000-8000-000000000001',
-  'course', 'transfer', 'cash', 25,
+  null, 'transfer', 'cash', 25,
   '91000000-0000-4000-8000-000000000004',
   '91000000-0000-4000-8000-000000000005',
   'accepted',
@@ -137,13 +137,13 @@ insert into public.ledger_entries (
     '91000000-0000-4000-8000-000000000001'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'course',
+    '92000000-0000-4000-8000-000000000001', null,
     '91000000-0000-4000-8000-000000000005', 20, current_date,
     'payment', '93000000-0000-4000-8000-000000000003',
     '91000000-0000-4000-8000-000000000001'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'course',
+    '92000000-0000-4000-8000-000000000001', null,
     '91000000-0000-4000-8000-000000000004', -25, current_date,
     'transfer', '95000000-0000-4000-8000-000000000001',
     '91000000-0000-4000-8000-000000000004'
@@ -161,13 +161,13 @@ insert into public.ledger_entries (
     '91000000-0000-4000-8000-000000000004'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'library',
+    '92000000-0000-4000-8000-000000000001', null,
     '91000000-0000-4000-8000-000000000002', 30, current_date,
     'settlement', '95000000-0000-4000-8000-000000000002',
     '91000000-0000-4000-8000-000000000004'
   ),
   (
-    '92000000-0000-4000-8000-000000000001', 'course',
+    '92000000-0000-4000-8000-000000000001', null,
     '91000000-0000-4000-8000-000000000003', 40, current_date,
     'settlement', '95000000-0000-4000-8000-000000000003',
     '91000000-0000-4000-8000-000000000004'
@@ -217,13 +217,13 @@ begin
     raise exception 'Manager A Library status pending amount/count is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 30
-    or (cash_position ->> 'cashWithStaff')::numeric <> 100 then
+    or (cash_position ->> 'cashWithStaff')::numeric <> 80 then
     raise exception 'Manager A cash position is wrong: %', cash_position;
   end if;
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 4
+  ) <> 3
     or exists (
       select 1
       from public.lenden_closing_summaries(current_date)
@@ -246,12 +246,12 @@ begin
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000005'
     ) <> 45
-    or (
-      select closing
+    or exists (
+      select 1
       from public.lenden_closing_summaries(current_date)
       where profile_id = '91000000-0000-4000-8000-000000000003'
-    ) <> 0 then
-    raise exception 'Manager A Closing did not show business-wide Staff cash';
+    ) then
+    raise exception 'Manager A Closing did not show self plus lower-role cash';
   end if;
   if (
     select count(*)
@@ -297,13 +297,13 @@ begin
     raise exception 'Manager B Course pending activity is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 40
-    or (cash_position ->> 'cashWithStaff')::numeric <> 145 then
+    or (cash_position ->> 'cashWithStaff')::numeric <> 80 then
     raise exception 'Manager B combined Staff cash position is wrong: %', cash_position;
   end if;
   if (
     select count(*)
     from public.lenden_closing_summaries(current_date)
-  ) <> 4
+  ) <> 3
     or not exists (
       select 1
       from public.lenden_closing_summaries(current_date)
@@ -365,9 +365,9 @@ begin
     or (summary #>> '{expenses,total}')::numeric <> 40 then
     raise exception 'Staff assigned-team business totals are wrong: %', summary;
   end if;
-  if (summary #>> '{personalIn,total}')::numeric <> 300
-    or (summary #>> '{personalOut,total}')::numeric <> 65 then
-    raise exception 'Staff personal IN/OUT totals are wrong: %', summary;
+  if (summary #>> '{cashReceived,total}')::numeric <> 0
+    or (summary #>> '{cashSent,total}')::numeric <> 25 then
+    raise exception 'Staff Cash Received/Sent totals are wrong: %', summary;
   end if;
   if (summary #>> '{pending,amount}')::numeric <> 0 then
     raise exception 'Staff pending included a teammate record: %', summary;
@@ -399,16 +399,16 @@ begin
     from public.lenden_financial_activity(current_date, current_date)
     where source_id = '95000000-0000-4000-8000-000000000001'
       and lens = 'personal'
-      and category = 'out'
+      and category = 'cash_sent'
       and amount = 25
   ) <> 1 then
-    raise exception 'Accepted cash transfer did not create one sender OUT';
+    raise exception 'Accepted cash transfer did not create one Cash Sent row';
   end if;
 end;
 $$;
 
--- Recipient receives personal Collection IN plus transfer IN, while only the
--- unapproved mixed component remains pending.
+-- Recipient receives Cash Received only for the transfer, while the Collection
+-- remains business activity and the unapproved mixed component remains pending.
 select set_config('request.jwt.claim.sub', '91000000-0000-4000-8000-000000000005', true);
 do $$
 declare
@@ -419,8 +419,9 @@ begin
   into summary;
   select public.lenden_dashboard_cash_position(current_date)
   into cash_position;
-  if (summary #>> '{personalIn,total}')::numeric <> 45 then
-    raise exception 'Recipient personal IN is wrong: %', summary;
+  if (summary #>> '{cashReceived,total}')::numeric <> 25
+    or (summary #>> '{cashSent,total}')::numeric <> 0 then
+    raise exception 'Recipient Cash Received/Sent totals are wrong: %', summary;
   end if;
   if (summary #>> '{pending,amount}')::numeric <> 40
     or (summary #>> '{pending,count}')::integer <> 2 then
@@ -435,10 +436,10 @@ begin
     from public.lenden_financial_activity(current_date, current_date)
     where source_id = '95000000-0000-4000-8000-000000000001'
       and lens = 'personal'
-      and category = 'in'
+      and category = 'cash_received'
       and amount = 25
   ) <> 1 then
-    raise exception 'Accepted cash transfer did not create one recipient IN';
+    raise exception 'Accepted cash transfer did not create one Cash Received row';
   end if;
 end;
 $$;
@@ -473,7 +474,7 @@ begin
     raise exception 'Owner Course status pending amount/count is wrong';
   end if;
   if (cash_position ->> 'cashSelf')::numeric <> 0
-    or (cash_position ->> 'cashWithStaff')::numeric <> 215 then
+    or (cash_position ->> 'cashWithStaff')::numeric <> 150 then
     raise exception 'Owner cash position did not combine Managers and Staff: %', cash_position;
   end if;
   if exists (
