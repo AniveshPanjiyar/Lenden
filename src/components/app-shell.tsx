@@ -171,11 +171,6 @@ type UserClosingSummary = {
 type ClosingPendingBreakdown = {
   totalAmount: number;
   totalRecordCount: number;
-  cashReviewAmount: number;
-  cashReviewCount: number;
-  ownerOnlineAmount: number;
-  ownerOnlineCount: number;
-  cashBlockingCount: number;
 };
 
 type ClosingCardViewModel = {
@@ -358,7 +353,7 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayoutLower: "incentive payout",
     amount: "Amount",
     amountLeft: "Amount left",
-    amountReceived: "Amount received",
+    amountReceived: "Cash amount",
     approve: "Approve",
     approvedActivity: "Approved activity",
     approveCollection: "Approve collection",
@@ -380,7 +375,6 @@ const messages: Record<Language, Record<string, string>> = {
     cashCustody: "Cash custody moved",
     cashExpenseReview: "Cash / expense review",
     cashIn: "IN",
-    cashInFromOwner: "IN from owner",
     cashInHand: "Cash in hand",
     cashInCollected: "IN",
     cashOut: "OUT",
@@ -546,6 +540,7 @@ const messages: Record<Language, Record<string, string>> = {
     noReason: "No reason",
     noRecords: "No records found.",
     noRecordsForFilter: "No records found for this range and filter.",
+    needsReconciliation: "Needs reconciliation",
     record: "record",
     records: "records",
     reviewed: "Reviewed",
@@ -606,8 +601,8 @@ const messages: Record<Language, Record<string, string>> = {
     referralTransactions: "Referral transactions",
     received: "Received",
     receivedStatus: "Received",
-    receiveMoney: "Receive money",
-    receivedFormTitle: "RECEIVED",
+    receiveMoney: "Receive Cash",
+    receivedFormTitle: "Receive Cash",
     reject: "Reject",
     rejectedTransfer: "Rejected transfer",
     rejectForReverification: "Reject for reverification",
@@ -629,8 +624,8 @@ const messages: Record<Language, Record<string, string>> = {
     reviewPending: "Pending",
     reviewPendingButton: "Review pending",
     reviewPendingFirst: "Review pending first",
-    reviewSettlementNotice: "Review pending transactions carefully before recording received cash.",
-    settlementAmountHelp: "Enter only the cash actually received for this settlement.",
+    reviewSettlementNotice: "Pending Collections and Expenses are reviewed separately from cash transfers.",
+    settlementAmountHelp: "Enter the physical cash amount transferred between the selected users.",
     role: "Role",
     roll: "Roll",
     rollNumber: "Roll number",
@@ -654,10 +649,10 @@ const messages: Record<Language, Record<string, string>> = {
     selectUser: "Select user",
     searchUser: "Search user",
     sendPayout: "Pay incentive",
-    sendMoney: "Send money",
-    sendFormTitle: "SEND",
+    sendMoney: "Send Cash",
+    sendFormTitle: "Send Cash",
     shareReferralCode: "Share code",
-    sendMoneyLower: "send money",
+    sendMoneyLower: "send cash",
     sent: "Sent",
     sentToStaff: "Sent to staff",
     sentToUser: "Sent to user",
@@ -735,7 +730,6 @@ const messages: Record<Language, Record<string, string>> = {
     receiptPending: "Receipt pending",
     cashReceived: "Cash Received",
     cashSent: "Cash Sent",
-    cashSettled: "Cash Settled",
     recordReceived: "Record received",
     recordSent: "Record sent",
     self: "Self",
@@ -775,7 +769,7 @@ const messages: Record<Language, Record<string, string>> = {
     agentPayoutLower: "कमिशन भुगतान",
     amount: "रकम",
     amountLeft: "बाकी रकम",
-    amountReceived: "मिली रकम",
+    amountReceived: "नकद राशि",
     approve: "ठीक है",
     approvedActivity: "मंजूर गतिविधि",
     approveCollection: "कलेक्शन मंजूर करें",
@@ -797,7 +791,6 @@ const messages: Record<Language, Record<string, string>> = {
     cashCustody: "नकद जिम्मेदारी बदली",
     cashExpenseReview: "नकद / खर्च जांच",
     cashIn: "IN",
-    cashInFromOwner: "मालिक से IN",
     cashInHand: "हाथ में नकद",
     cashInCollected: "IN",
     cashOut: "OUT",
@@ -963,6 +956,7 @@ const messages: Record<Language, Record<string, string>> = {
     noReason: "कारण नहीं",
     noRecords: "कोई एंट्री नहीं मिली।",
     noRecordsForFilter: "इस रेंज और छांट में कोई एंट्री नहीं मिली।",
+    needsReconciliation: "मिलान आवश्यक",
     record: "रिकॉर्ड",
     records: "रिकॉर्ड",
     reviewed: "जांचा गया",
@@ -1023,8 +1017,8 @@ const messages: Record<Language, Record<string, string>> = {
     referralTransactions: "रेफरल लेनदेन",
     received: "मिला",
     receivedStatus: "मिला",
-    receiveMoney: "पैसा प्राप्त करें",
-    receivedFormTitle: "मिला",
+    receiveMoney: "नकद प्राप्त करें",
+    receivedFormTitle: "नकद प्राप्त करें",
     reject: "नहीं मानें",
     rejectedTransfer: "रिजेक्टेड ट्रांसफर",
     rejectForReverification: "फिर जांच के लिए लौटाएं",
@@ -1046,8 +1040,8 @@ const messages: Record<Language, Record<string, string>> = {
     reviewPending: "बाकी",
     reviewPendingButton: "बाकी जांचें",
     reviewPendingFirst: "पहले बाकी जांचें",
-    reviewSettlementNotice: "नकद मिला दर्ज करने से पहले बाकी एंट्री ध्यान से जांचें।",
-    settlementAmountHelp: "इस सेटलमेंट में जितनी नकद सच में मिली है, सिर्फ वही रकम डालें।",
+    reviewSettlementNotice: "बाकी कलेक्शन और खर्च की जांच नकद ट्रांसफर से अलग होती है।",
+    settlementAmountHelp: "चुने गए यूजरों के बीच ट्रांसफर हुई नकद राशि दर्ज करें।",
     role: "काम",
     roll: "रोल",
     rollNumber: "रोल नंबर",
@@ -1071,10 +1065,10 @@ const messages: Record<Language, Record<string, string>> = {
     selectUser: "यूजर चुनें",
     searchUser: "यूजर खोजें",
     sendPayout: "कमिशन दें",
-    sendMoney: "पैसा भेजें",
-    sendFormTitle: "भेजें",
+    sendMoney: "नकद भेजें",
+    sendFormTitle: "नकद भेजें",
     shareReferralCode: "कोड शेयर करें",
-    sendMoneyLower: "पैसा भेजें",
+    sendMoneyLower: "नकद भेजें",
     sent: "भेजा",
     sentToStaff: "स्टाफ को भेजा",
     sentToUser: "यूजर को भेजा",
@@ -1152,7 +1146,6 @@ const messages: Record<Language, Record<string, string>> = {
     receiptPending: "प्राप्ति बाकी",
     cashReceived: "नकद मिला",
     cashSent: "नकद भेजा",
-    cashSettled: "नकद जमा किया",
     recordReceived: "मिला हुआ जोड़ें",
     recordSent: "भेजा हुआ जोड़ें",
     self: "खुद",
@@ -1914,47 +1907,6 @@ function isEffectivelyPendingPayment(payment: Payment, ownerIds: Set<string>) {
 
 function isEffectivelyPendingExpense(expense: Expense, ownerIds: Set<string>) {
   return !ownerIds.has(expense.spent_by) && isPendingReviewStatus(expense.approval_status);
-}
-
-function movementDate(movement: MoneyMovement) {
-  return indiaDateIso(movement.responded_at ?? movement.created_at);
-}
-
-function ownerCashTransferInAmount(
-  movements: MoneyMovement[],
-  profiles: Profile[],
-  profileId: string,
-  range: NormalizedDateRange,
-) {
-  const ownerIds = ownerProfileIdSet(profiles);
-  return movements
-    .filter(
-      (movement) =>
-        movement.status === "accepted" &&
-        movement.type === "transfer" &&
-        !movement.payment_id &&
-        movement.to_profile_id === profileId &&
-        ownerIds.has(movement.from_profile_id) &&
-        dateInRange(movementDate(movement), range),
-    )
-    .reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-}
-
-function summaryWithOwnerCashInAsCollection(
-  summary: UserClosingSummary,
-  movements: MoneyMovement[],
-  profiles: Profile[],
-  date: string,
-) {
-  if (summary.profile.role !== "staff") return summary;
-  const ownerCashIn = ownerCashTransferInAmount(movements, profiles, summary.profile.id, { from: date, to: date });
-  if (ownerCashIn <= 0) return summary;
-
-  return {
-    ...summary,
-    collected: summary.collected + ownerCashIn,
-    received: Math.max(summary.received - ownerCashIn, 0),
-  };
 }
 
 function isPendingReviewStatus(status: string) {
@@ -3008,7 +2960,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               (entry) => entry.account_profile_id === summary.profile_id && entry.entry_date === closingDate,
             );
 
-            return withPostingFlow(summaryWithOwnerCashInAsCollection({
+            return withPostingFlow({
               profile,
               opening: numberValue(summary.opening),
               collected: numberValue(summary.collected),
@@ -3022,21 +2974,16 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
               inOnline: 0,
               outCash: 0,
               outOnline: 0,
-            }, appData.movements, appData.profiles, closingDate));
+            });
           })
           .filter((summary): summary is UserClosingSummary => Boolean(summary));
       }
 
       return closingProfiles.map((profile) =>
-        withPostingFlow(summaryWithOwnerCashInAsCollection(
-          buildClosingSummary(profile, appData.ledger, closingDate),
-          appData.movements,
-          appData.profiles,
-          closingDate,
-        )),
+        withPostingFlow(buildClosingSummary(profile, appData.ledger, closingDate)),
       );
     },
-    [appData.closingSummaries, appData.ledger, appData.movements, appData.profiles, closingDate, closingFilters.dateFilterKey, closingProfiles, postingEvents],
+    [appData.closingSummaries, appData.ledger, appData.profiles, closingDate, closingFilters.dateFilterKey, closingProfiles, postingEvents],
   );
   const agentIncentiveSummary = useMemo<AgentIncentiveSummary>(() => {
     const agentPayments = appData.payments.filter(
@@ -4639,13 +4586,6 @@ function HomeView({
         pendingInScope(expense.expense_date) &&
         expense.spent_by === profileId,
     );
-    const myPendingSettlementMovements = businessTypeFilter === "all" ? data.movements.filter(
-      (movement) =>
-        movement.status === "pending" &&
-        movement.type === "settlement" &&
-        pendingInScope(indiaDateIso(movement.created_at)) &&
-        (movement.from_profile_id === profileId || movement.to_profile_id === profileId),
-    ) : [];
     const myPendingCash = myPendingPayments.reduce((sum, payment) => sum + paymentPendingCashAmount(payment), 0);
     const myBalance = myLedgerBalance + myPendingCash;
     const myPostingEvents = rangedPostingEvents.filter((event) => event.profile_id === profileId);
@@ -4669,9 +4609,8 @@ function HomeView({
     const myOutOnline = myFlow.outOnline;
     const myPendingAmount =
       myPendingPayments.reduce((sum, payment) => sum + paymentPendingApprovalAmount(payment), 0) +
-      myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0) +
-      myPendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-    const myPendingCount = myPendingPayments.length + myPendingExpenses.length + myPendingSettlementMovements.length;
+      myPendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
+    const myPendingCount = myPendingPayments.length + myPendingExpenses.length;
     const myBusinessStatus = dashboardBusinessTypes.map((business): BusinessDashboardStatus => {
       const businessPaymentEvents = myPostingEvents.filter(
         (event) => event.source_type === "payment" && data.payments.find((payment) => payment.id === event.source_id)?.business_type === business,
@@ -4867,9 +4806,6 @@ function HomeView({
   const ownerInAmount = ownerInCash + ownerInOnline;
   const ownerOutCash = ownerFlow.outCash;
   const ownerOutOnline = ownerFlow.outOnline;
-  const pendingSettlementMovements = businessTypeFilter === "all" ? data.movements.filter(
-    (movement) => movement.status === "pending" && movement.type === "settlement" && pendingInScope(indiaDateIso(movement.created_at)),
-  ) : [];
   const pendingAgentSettlements = businessTypeFilter === "all" ? data.agentSettlements.filter(
     (settlement) => settlement.status === "pending" && pendingInScope(indiaDateIso(settlement.created_at)),
   ) : [];
@@ -4911,22 +4847,6 @@ function HomeView({
     })),
   ];
   const pendingContextRecords: PendingContextRecord[] = [
-    ...pendingSettlementMovements.map((movement): PendingContextRecord => {
-      const toOwner = ownerProfileIds.has(movement.to_profile_id ?? "");
-      const staffId = toOwner ? movement.from_profile_id : movement.to_profile_id;
-      return {
-        id: `movement-${movement.id}`,
-        transactionType: t("settlements"),
-        staffName: profileName(data.profiles, staffId, t),
-        serviceType: t("settlementActivity"),
-        amount: toOwner ? numberValue(movement.amount) : -numberValue(movement.amount),
-        date: indiaDateIso(movement.created_at),
-        note: movement.note ?? t("noReason"),
-        statusLabel: labelForStatus(movement.status, t),
-        tone: toOwner ? "positive" : "negative",
-        icon: <ShieldCheck size={22} />,
-      };
-    }),
     ...pendingAgentSettlements.map((settlement): PendingContextRecord => ({
       id: `agent-${settlement.id}`,
       transactionType: t("pendingIncentive"),
@@ -5697,64 +5617,10 @@ function TransactionsView({
       });
     const settlementRows = currentUserIsSalesAgent ? [] : movements.flatMap((movement): HistoryRecord[] => {
       if (transactionLens === "business") return [];
-      if (movement.payment_id && movement.status === "pending") return [];
-      if (movement.status !== "accepted" && movement.status !== "pending") return [];
-      const fromProfile = profiles.find((item) => item.id === movement.from_profile_id);
-      const toProfile = profiles.find((item) => item.id === movement.to_profile_id);
-      const fromOwnerish = isOwnerish(fromProfile?.role ?? "");
-      const toOwnerish = isOwnerish(toProfile?.role ?? "");
-      const movementAmount = numberValue(movement.amount);
-      const pendingMovement = movement.status === "pending";
+      if (movement.status !== "accepted") return [];
       const movementChain = `${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`;
-      if (pendingMovement) {
-        const pendingProfileId = selectedUserId === "all"
-          ? movement.from_profile_id
-          : selectedUserId;
-        const direction = movement.from_profile_id === pendingProfileId
-          ? "out"
-          : movement.to_profile_id === pendingProfileId
-            ? "in"
-            : null;
-        const transactionDate = indiaDateIso(movement.created_at);
-        if (!direction || !pendingRecordInScope(transactionDate, dateRange, dateRangePreset)) return [];
-        const counterpartyId = direction === "in" ? movement.from_profile_id : movement.to_profile_id;
-        return [{
-          id: `movement-${movement.id}-pending`,
-          sourceId: movement.id,
-          kind: direction === "in" ? "collection" : "settlement",
-          recordCategory: "transfer",
-          businessType: movement.business_type,
-          filter: direction === "in" ? "cash_in" : "cash_out",
-          date: transactionDate,
-          sortAt: movement.created_at,
-          amount: direction === "in" ? movementAmount : -movementAmount,
-          cashAmount: movementAmount,
-          onlineAmount: 0,
-          amountTone: "neutral",
-          title: direction === "in" ? t("cashReceived") : t("cashSent"),
-          meta: `${direction === "in" ? t("from") : t("to")}: ${profileName(profiles, counterpartyId, t)}${movement.note ? ` · ${movement.note}` : ""}`,
-          status: labelForStatus(movement.status, t),
-          statusTone: movement.status,
-          modeLabel: labelForMode(movement.mode, t),
-          recordStatus: "active",
-          ownerId: pendingProfileId,
-          description: "",
-          remark: movement.note ?? "",
-          reason: null,
-          businessLabel: t("cashTransfer"),
-          transferLines: [movementChain],
-          journey: cashTransferJourneySteps(movement, profiles, t, direction === "in" ? "cash_in" : "cash_out"),
-          pendingApproval: true,
-          transactionDate,
-          approvalDate: undefined,
-          icon: direction === "in" ? <ArrowDown size={24} /> : <ArrowUp size={24} />,
-        }];
-      }
-
       return visibleSourceEvents(movement.type, movement.id).map((event) => {
         const incoming = event.direction === "in";
-        const incomingOwnerCash = incoming && fromOwnerish && !toOwnerish;
-        const outgoingOwnerSettlement = !incoming && toOwnerish;
         const entry = ledger.find((item) =>
           item.source_id === movement.id &&
           item.source_type === movement.type &&
@@ -5772,7 +5638,7 @@ function TransactionsView({
           amount: incoming ? event.amount : -event.amount,
           cashAmount: event.cash_amount,
           onlineAmount: event.online_amount,
-          title: incoming ? (incomingOwnerCash ? t("cashInFromOwner") : t("cashReceived")) : outgoingOwnerSettlement ? t("cashSettled") : t("cashSent"),
+          title: incoming ? t("cashReceived") : t("cashSent"),
           meta: `${incoming ? t("from") : t("to")}: ${profileName(profiles, event.counterparty_profile_id, t)}${movement.note ? ` · ${movement.note}` : ""}`,
           status: t("verified"),
           statusTone: movement.status,
@@ -6600,7 +6466,7 @@ function BottomActions({
       <button
         className="quick-action-button quick-action-positive flex items-center gap-2 bg-primary text-on-primary px-5 py-3 rounded-full shadow-soft hover:scale-105 transition-all active:scale-95 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         type="button"
-        aria-label={t("collectPayment")}
+        aria-label={t("moneyIn")}
         disabled={!canAddPositive}
         onClick={onPositive}
       >
@@ -6609,7 +6475,7 @@ function BottomActions({
       <button
         className="quick-action-button quick-action-negative flex items-center gap-2 bg-error text-on-error px-5 py-3 rounded-full shadow-soft hover:scale-105 transition-all active:scale-95 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         type="button"
-        aria-label={t("addExpense")}
+        aria-label={t("moneyOut")}
         disabled={!canAddNegative}
         onClick={onNegative}
       >
@@ -10453,30 +10319,13 @@ function ClosingView({
         belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
         isPendingReviewStatus(expense.approval_status),
     );
-    const pendingSettlementMovements = movements.filter(
-      (movement) =>
-        movement.status === "pending" &&
-        movement.type === "settlement" &&
-        recordInClosingScope(summary.profile.id, movement.business_type) &&
-        indiaDateIso(movement.created_at) <= date &&
-        (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
-    );
     const cashPaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.cash, 0);
     const onlinePaymentAmount = paymentBreakdowns.reduce((sum, breakdown) => sum + breakdown.online, 0);
     const expenseAmount = pendingExpenses.reduce((sum, expense) => sum + numberValue(expense.amount), 0);
-    const settlementAmount = pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-    const cashPaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.cash > 0).length;
-    const onlinePaymentCount = paymentBreakdowns.filter((breakdown) => breakdown.online > 0).length;
-    const cashExpenseCount = pendingExpenses.filter((expense) => expense.mode !== "online").length;
 
     return {
-      totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount + settlementAmount,
-      totalRecordCount: paymentBreakdowns.length + pendingExpenses.length + pendingSettlementMovements.length,
-      cashReviewAmount: cashPaymentAmount + expenseAmount + settlementAmount,
-      cashReviewCount: cashPaymentCount + pendingExpenses.length + pendingSettlementMovements.length,
-      ownerOnlineAmount: onlinePaymentAmount,
-      ownerOnlineCount: onlinePaymentCount,
-      cashBlockingCount: cashPaymentCount + cashExpenseCount + pendingSettlementMovements.length,
+      totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount,
+      totalRecordCount: paymentBreakdowns.length + pendingExpenses.length,
     };
   };
   const closingCards: ClosingCardViewModel[] = visibleSummaries.map((summary) => ({
@@ -10542,8 +10391,7 @@ function ClosingView({
             const settlementEntryAmount = settlementEntryAmounts[settlementEntryKey]
               ?? (cashToReceive > 0 ? String(cashToReceive) : "");
             const settlementEntryNumber = numberValue(settlementEntryAmount);
-            const receiveInputDisabled = pendingSummary.cashBlockingCount > 0 || cashToReceive <= 0;
-            const canReceiveCash = !receiveInputDisabled && settlementEntryNumber > 0 && settlementEntryNumber <= cashToReceive;
+            const canReceiveCash = settlementEntryNumber > 0;
             return (
               <article
                 className="closing-user-card"
@@ -10572,6 +10420,9 @@ function ClosingView({
                     <span>
                       <small>{t("closingCashInHand")}</small>
                       <em>{date}</em>
+                      {summary.closing < 0 ? (
+                        <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
+                      ) : null}
                     </span>
                     <strong>{formatMoney(summary.closing)}</strong>
                   </div>
@@ -10645,25 +10496,23 @@ function ClosingView({
                         <input type="hidden" name="profile_id" value={summary.profile.id} />
                         <input type="hidden" name="settlement_date" value={date} />
                         <label className="closing-receive-field">
-                          <span>{t("amountReceived")}</span>
+                          <span>{t("amount")}</span>
                           <input
                             name="amount"
                             type="number"
                             min="1"
-                            max={cashToReceive || undefined}
                             step="0.01"
                             value={settlementEntryAmount}
                             onChange={(event) =>
                               setSettlementEntryAmounts((current) => ({ ...current, [settlementEntryKey]: event.target.value }))
                             }
                             placeholder={cashToReceive ? String(cashToReceive) : "0"}
-                            disabled={receiveInputDisabled}
                             required
                           />
                         </label>
                         <button type="submit" disabled={!canReceiveCash}>
                           <ShieldCheck size={18} />
-                          {t("received")}
+                          {t("receivedFormTitle")}
                         </button>
                       </form>
                     ) : null}
@@ -10976,18 +10825,8 @@ function ClosingReviewDetail({
   ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
   const todayRecords = reviewRecords.filter((record) => !record.canReview && record.recordDate === date);
   const pendingRecords = reviewRecords.filter((record) => record.canReview);
-  const pendingSettlementMovements = movements.filter(
-    (movement) =>
-      movement.status === "pending" &&
-      movement.type === "settlement" &&
-      recordInScope(movement.business_type) &&
-      indiaDateIso(movement.created_at) <= date &&
-      (movement.from_profile_id === summary.profile.id || movement.to_profile_id === summary.profile.id),
-  );
-  const pendingReviewAmount =
-    pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
-    pendingSettlementMovements.reduce((sum, movement) => sum + numberValue(movement.amount), 0);
-  const pendingReviewCount = pendingRecords.length + pendingSettlementMovements.length;
+  const pendingReviewAmount = pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
+  const pendingReviewCount = pendingRecords.length;
   const visibleReviewRecords = reviewTab === "today" ? todayRecords : pendingRecords;
   const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
   const reviewInCash = summary.inCash;
@@ -11178,44 +11017,6 @@ function ClosingReviewDetail({
           }) : (
             <p className="muted">{t("noRecordsForFilter")}</p>
           )}
-          {reviewTab === "pending" && pendingSettlementMovements.length > 0 ? (
-            <div className="pending-context-group">
-              <h3>{t("settlementLikePending")}</h3>
-              {pendingSettlementMovements.map((movement) => {
-                const perspective = movement.to_profile_id === summary.profile.id ? "cash_in" as const : "cash_out" as const;
-                const movementAmount = numberValue(movement.amount);
-                const signedAmount = perspective === "cash_in" ? movementAmount : -movementAmount;
-                const otherProfileId = perspective === "cash_in" ? movement.from_profile_id : movement.to_profile_id;
-                return (
-                  <article className={`history-card closing-history-card ${perspective === "cash_in" ? "positive" : "negative"}`} key={movement.id}>
-                    <div className="history-card-icon">{perspective === "cash_in" ? <ArrowDown size={22} /> : <ArrowUp size={22} />}</div>
-                    <div className="history-card-main">
-                      <strong>{perspective === "cash_in" ? t("cashReceived") : t("cashSent")}</strong>
-                      <span className="history-business-badge">{t("cashTransfer")}</span>
-                    </div>
-                    <div className="history-card-side">
-                      <TransactionCardAmount amount={signedAmount} cashAmount={movementAmount} onlineAmount={0} tone={perspective === "cash_in" ? "positive" : "negative"} />
-                    </div>
-                    <details className="history-actions-menu closing-history-actions">
-                      <summary aria-label={t("moreOptions")}>
-                        <MoreHorizontal size={18} />
-                      </summary>
-                      <div className="details-menu transaction-options-menu closing-history-menu">
-                        <div className="closing-history-menu-copy">
-                          <strong>{indiaDateIso(movement.created_at)} · {formatIndiaTime(movement.created_at)}</strong>
-                          <span>{profileName(profiles, otherProfileId, t)} · {labelForStatus(movement.status, t)}</span>
-                          <span>{movement.note ?? t("noReason")}</span>
-                        </div>
-                      </div>
-                    </details>
-                    <div className="history-card-flow">
-                      <TransactionJourney steps={cashTransferJourneySteps(movement, profiles, t, perspective)} amount={signedAmount} />
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          ) : null}
         </div>
       </section>
     </div>

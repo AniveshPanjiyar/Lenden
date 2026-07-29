@@ -4971,6 +4971,18 @@ summary::-webkit-details-marker {
   font-weight: 700;
 }
 
+.closing-reconciliation-status {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
 .closing-cash-result > strong {
   min-width: max-content;
   max-width: 55%;

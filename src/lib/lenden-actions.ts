@@ -930,26 +930,6 @@ async function hasRecordLedgerEntry(admin: SupabaseAdminClient, recordType: "pay
   return Boolean(response.data);
 }
 
-async function profileCashBalanceAt(
-  admin: SupabaseAdminClient,
-  businessId: string,
-  profileId: string,
-  businessType: BusinessType | null,
-  entryDate: string,
-) {
-  let ledgerQuery = admin
-    .from("ledger_entries")
-    .select("amount")
-    .eq("business_id", businessId)
-    .eq("account_profile_id", profileId)
-    .lte("entry_date", entryDate);
-  if (businessType) ledgerQuery = ledgerQuery.eq("business_type", businessType);
-  const ledgerResponse = await ledgerQuery;
-  if (ledgerResponse.error) throw new Error(ledgerResponse.error.message);
-  return typedDataArray<{ amount: number | string | null }>(ledgerResponse)
-    .reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
-}
-
 async function ownerRecipientIds(
   admin: SupabaseAdminClient,
   businessId: string,
@@ -3650,8 +3630,6 @@ const handlers = {
 
     const fromProfileId = direction === "received_from_user" ? counterpartyProfileId : profile.id;
     const toProfileId = direction === "received_from_user" ? profile.id : counterpartyProfileId;
-    const senderRole = direction === "received_from_user" ? selectedProfile.role : profile.businessRole;
-
     const existingMovement = await existingByClientRequest<{
       id: string;
       type: "transfer" | "settlement";
@@ -3659,22 +3637,42 @@ const handlers = {
       from_profile_id: string;
       to_profile_id: string | null;
       business_type: BusinessType | null;
+      payment_id: string | null;
     }>(
       authAdmin,
       "money_movements",
       "requested_by",
       profile.id,
       requestKey,
-      "id,type,amount,from_profile_id,to_profile_id,business_type",
+      "id,type,amount,from_profile_id,to_profile_id,business_type,payment_id",
       profile.businessId,
     );
     let movementId = existingMovement?.id ?? null;
     if (existingMovement) {
       const postedAmount = Number(existingMovement.amount);
+      if (
+        existingMovement.payment_id
+        || existingMovement.from_profile_id !== fromProfileId
+        || existingMovement.to_profile_id !== toProfileId
+        || moneyToCents(postedAmount) !== moneyToCents(amount)
+      ) {
+        return fail("This cash transfer request was already used. Please submit again.");
+      }
+      const normalizeMovement = await authAdmin
+        .from("money_movements")
+        .update({
+          business_type: null,
+          status: "accepted",
+          responded_by: profile.id,
+          responded_at: new Date().toISOString(),
+        })
+        .eq("id", existingMovement.id)
+        .is("payment_id", null);
+      if (normalizeMovement.error) throw new Error(normalizeMovement.error.message);
       await ensureLedgerEntry(authAdmin, {
         businessId: profile.businessId,
         accountProfileId: existingMovement.from_profile_id,
-        businessType: existingMovement.business_type,
+        businessType: null,
         amount: -postedAmount,
         entryDate: settlementDate,
         sourceType: existingMovement.type,
@@ -3685,7 +3683,7 @@ const handlers = {
       await ensureLedgerEntry(authAdmin, {
         businessId: profile.businessId,
         accountProfileId: existingMovement.to_profile_id,
-        businessType: existingMovement.business_type,
+        businessType: null,
         amount: postedAmount,
         entryDate: settlementDate,
         sourceType: existingMovement.type,
@@ -3694,30 +3692,6 @@ const handlers = {
         createdBy: profile.id,
       });
     } else {
-      if (senderRole !== "primary_owner") {
-        const senderBalance = await profileCashBalanceAt(
-          authAdmin,
-          profile.businessId,
-          fromProfileId,
-          null,
-          settlementDate,
-        );
-        if (senderBalance <= 0) {
-          return fail(
-            direction === "received_from_user"
-              ? "No cash is available to receive from this user."
-              : "No cash is available to send.",
-          );
-        }
-        if (moneyToCents(amount) > moneyToCents(senderBalance)) {
-          return fail(
-            direction === "received_from_user"
-              ? "Amount is higher than this user's available cash balance."
-              : "Amount is higher than your available cash balance.",
-          );
-        }
-      }
-
       const movementResult = await authAdmin
         .from("money_movements")
         .insert({
@@ -3765,21 +3739,32 @@ const handlers = {
       });
     }
 
-    await createNotifications(admin, {
-      recipientIds: [counterpartyProfileId],
-      actorId: profile.id,
-      title: direction === "received_from_user" ? "Cash marked received" : "Cash marked sent",
-      body:
-        direction === "received_from_user"
-          ? `${profile.full_name} marked ${amount} as received from you for ${settlementDate}.`
-          : `${profile.full_name} marked ${amount} as sent to you for ${settlementDate}.`,
-      category: "transfer",
-      tone: "success",
-      eventKey: `cash-transfer:${movementId}`,
-      metadata: { movement_id: movementId, amount, settlement_date: settlementDate, direction },
-    });
+    let notificationWarning: { warning: string; errorId?: string } | null = null;
+    try {
+      await createNotifications(admin, {
+        recipientIds: [counterpartyProfileId],
+        actorId: profile.id,
+        title: direction === "received_from_user" ? "Cash received" : "Cash sent",
+        body:
+          direction === "received_from_user"
+            ? `${profile.full_name} recorded ${amount} as cash received from you for ${settlementDate}.`
+            : `${profile.full_name} recorded ${amount} as cash sent to you for ${settlementDate}.`,
+        category: "transfer",
+        tone: "success",
+        eventKey: `cash-transfer:${movementId}`,
+        metadata: { movement_id: movementId, amount, settlement_date: settlementDate, direction },
+      });
+    } catch (error) {
+      notificationWarning = actionWarning(error, {
+        action: "settleCash:notifications",
+        fallback: "Could not send the cash transfer notification.",
+        businessId: profile.businessId,
+        userId: profile.id,
+      }, "Cash was recorded, but the other user could not be notified.");
+    }
 
-    return ok(direction === "received_from_user" ? "Cash received." : "Cash sent.");
+    const result = ok(direction === "received_from_user" ? "Cash received." : "Cash sent.");
+    return notificationWarning ? { ...result, ...notificationWarning } : result;
   }),
 
   createAgentSettlement: withErrors("Could not record incentive payout.", async (formData, { admin, profile, idempotencyKey }) => {
