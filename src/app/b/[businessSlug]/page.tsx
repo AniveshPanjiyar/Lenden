@@ -39,11 +39,7 @@ export default async function BusinessHome({
   try {
     const { identity, context } = await resolveBusinessContext({ slug: businessSlug });
     data = mergeAppData(await getBootstrapData(context, identity), emptyDashboardData());
-    initialViewState = parseAppViewState(
-      resolvedSearchParams,
-      identity.id,
-      context.membership?.role,
-    );
+    initialViewState = parseAppViewState(resolvedSearchParams, identity.id);
   } catch (error) {
     if (error instanceof BusinessAccessError && error.details) {
       redirect(`/access-pending?reason=${error.details.reason}&business=${encodeURIComponent(error.details.business.name)}`);

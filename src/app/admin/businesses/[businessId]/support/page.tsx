@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
+import { INDIA_TIME_ZONE } from "@/lib/constants";
 import { loadAdminBusiness, loadAdminSupportSessions } from "../../admin-data";
 import SupportSessionForm from "./support-session-form";
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 export default async function BusinessSupportPage({ params }: { params: Promise<{ businessId: string }> }) {

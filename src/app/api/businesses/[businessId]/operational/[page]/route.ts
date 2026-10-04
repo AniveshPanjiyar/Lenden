@@ -29,7 +29,7 @@ export async function GET(
     const { identity, context } = await resolveBusinessReadContext(businessId);
     const accessDuration = performance.now() - accessStartedAt;
     const url = new URL(request.url);
-    const parsed = parseAppViewState(searchParamsToRecord(url.searchParams), identity.id, context.membership?.role);
+    const parsed = parseAppViewState(searchParamsToRecord(url.searchParams), identity.id);
     const viewState = { ...parsed, tab };
 
     const readStartedAt = performance.now();

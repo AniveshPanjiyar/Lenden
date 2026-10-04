@@ -1,5 +1,5 @@
 import { todayIso } from "@/lib/constants";
-import type { BusinessRole, BusinessType, PaymentMode } from "@/lib/types";
+import type { BusinessType, PaymentMode } from "@/lib/types";
 
 export type AppTab = "home" | "payments" | "library_students" | "closing" | "settings" | "notifications";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
@@ -108,11 +108,11 @@ export function defaultDashboardFilters(): DashboardFilterState {
   return { dateRange: rangeForPreset("today"), dateFilterKey: "approval", businessType: "all" };
 }
 
-export function defaultTransactionFilters(defaultProfileId: string, role?: BusinessRole | null): TransactionFilterState {
+export function defaultTransactionFilters(defaultProfileId: string): TransactionFilterState {
   return {
     dateRange: rangeForPreset("today"),
     dateFilterKey: "approval",
-    lens: role === "primary_owner" || role === "co_owner" ? "business" : "personal",
+    lens: "personal",
     profileId: defaultProfileId,
     activity: "all",
     recordType: "all",
@@ -166,7 +166,6 @@ function normalizeTransactionActivity(value: string | undefined) {
 export function parseAppViewState(
   params: RawSearchParams,
   defaultProfileId: string,
-  role?: BusinessRole | null,
 ): AppViewState {
   const rawTab = singleParam(params, "tab");
   const tab = rawTab === "transfers" ? "payments" : oneOf(rawTab, appTabs, "home");
@@ -177,13 +176,10 @@ export function parseAppViewState(
   const closingLegacyDate = tab === "closing" ? legacyRange.to : null;
   const studentSource = singleParam(params, "studentSource");
   const rawTransactionFilter = singleParam(params, "txFilter");
-  const defaultTransactionLens: TransactionLens = role === "primary_owner" || role === "co_owner" ? "business" : "personal";
   const inferredTransactionLens: TransactionLens =
     rawTransactionFilter === "collections" || rawTransactionFilter === "expenses" || rawTransactionFilter === "transactions"
       ? "business"
-      : rawTransactionFilter === "cash_in" || rawTransactionFilter === "cash_out"
-        ? "personal"
-        : defaultTransactionLens;
+      : "personal";
 
   return {
     tab,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { businessLabels, businessPermissions, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
+import { businessLabels, businessPermissions, INDIA_TIME_ZONE, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
 import type { BusinessRole, BusinessType, MembershipStatus } from "@/lib/types";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import {
@@ -82,12 +82,13 @@ function roleDescription(role: EditableRole) {
 
 function formatDate(value: string | null) {
   if (!value) return "Not available";
-  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-IN", { timeZone: INDIA_TIME_ZONE, day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 }
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not sent";
   return new Intl.DateTimeFormat("en-IN", {
+    timeZone: INDIA_TIME_ZONE,
     day: "numeric",
     month: "short",
     hour: "numeric",

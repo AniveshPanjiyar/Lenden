@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Landmark } from "lucide-react";
+import { INDIA_TIME_ZONE } from "@/lib/constants";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { invitationState, invitationTokenHash } from "@/lib/invitations";
 import { InvitationAcceptForm } from "./invitation-accept-form";
@@ -22,7 +23,7 @@ export default async function InvitationPage({ params }: { params: Promise<{ tok
   return <main className="auth-page"><section className="auth-panel invitation-panel">
     <div className="brand-lockup"><span className="brand-mark"><Landmark size={22} /></span><div><p className="eyebrow">Business invitation</p><h1>{active ? `Join ${business?.name ?? "a business"}` : "Invitation unavailable"}</h1></div></div>
     {!active ? <><p className="form-error">This invitation is expired, revoked, or has already been used.</p><Link className="secondary-button" href="/settings?section=businesses">Open Settings</Link></> : <>
-      <div className="invitation-summary"><span>Invited email</span><strong>{invitation.email}</strong><span>Business role</span><strong>{roleLabel(invitation.intended_role)}</strong><span>Expires</span><strong>{new Date(invitation.expires_at).toLocaleDateString()}</strong></div>
+      <div className="invitation-summary"><span>Invited email</span><strong>{invitation.email}</strong><span>Business role</span><strong>{roleLabel(invitation.intended_role)}</strong><span>Expires</span><strong>{new Date(invitation.expires_at).toLocaleDateString("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium" })}</strong></div>
       {!user ? <><p className="muted">Sign in or create your own account using the invited email. You will return here to accept.</p><Link className="primary-button" href={`/login?next=${encodeURIComponent(nextPath)}`}>Sign in</Link><Link className="secondary-button" href={`/signup?next=${encodeURIComponent(nextPath)}`}>Create account</Link></> : user.email?.toLowerCase() !== invitation.email.toLowerCase() ? <><p className="form-error">You are signed in as {user.email}. This invitation belongs to {invitation.email}.</p><Link className="secondary-button" href="/settings?section=businesses">Open Settings</Link></> : <InvitationAcceptForm token={token} />}
     </>}
   </section></main>;

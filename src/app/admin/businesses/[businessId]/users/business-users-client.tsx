@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { permissionOptions, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
+import { INDIA_TIME_ZONE, permissionOptions, STAFF_TRANSACTION_TRANSFERS_ENABLED } from "@/lib/constants";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { AdminBusinessInvitation, AdminBusinessMember } from "../../admin-data";
 import {
@@ -41,7 +41,7 @@ function PendingInvitationCard({ invitation }: { invitation: AdminBusinessInvita
   const expired = invitation.expired;
   return <article className="admin-user-card invited">
     <header><div><strong>{invitation.email}</strong><span>Waiting for account signup and acceptance</span></div><div className="admin-user-badges"><span>{roleLabels[invitation.role]}</span><span className={`status-pill ${expired ? "expired" : "pending"}`}>{expired ? "expired" : "pending"}</span></div></header>
-    <p className="admin-warning-text">Email: {invitation.deliveryStatus}{invitation.deliveryError ? " · Delivery failed; regenerate or copy the link" : ""} · Expires {new Date(invitation.expiresAt).toLocaleDateString()}</p>
+    <p className="admin-warning-text">Email: {invitation.deliveryStatus}{invitation.deliveryError ? " · Delivery failed; regenerate or copy the link" : ""} · Expires {new Date(invitation.expiresAt).toLocaleDateString("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium" })}</p>
     <div className="admin-form-actions"><form action={resendAction}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="secondary-button" type="submit" disabled={resendPending}>{resendPending ? "Regenerating…" : "Regenerate & send"}</button></form><form action={revokeAction} onSubmit={(event) => { if (!window.confirm(`Revoke the invitation for ${invitation.email}?`)) event.preventDefault(); }}><input type="hidden" name="business_id" value={invitation.businessId} /><input type="hidden" name="invitation_id" value={invitation.id} /><button className="business-user-suspend-button" type="submit" disabled={revokePending}>{revokePending ? "Revoking…" : "Revoke"}</button></form></div>
     <ActionMessage state={resendState} /><ActionMessage state={revokeState} />
   </article>;

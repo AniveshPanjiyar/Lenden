@@ -1,7 +1,7 @@
 "use client";
 
 import { ReturnAwareLink } from "@/components/return-aware-link";
-import { businessLabels } from "@/lib/constants";
+import { businessLabels, INDIA_TIME_ZONE } from "@/lib/constants";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type { BusinessType } from "@/lib/types";
 import type { AdminBusinessRequest } from "../admin-data";
@@ -31,7 +31,7 @@ function RequestCard({ request }: { request: AdminBusinessRequest }) {
   const [rejectState, rejectAction, rejectPending] = useActionState(rejectBusinessRequestAdminAction, initialState);
   const defaultSlug = request.requestedName.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return <article className="admin-content-card business-request-card">
-    <header className="business-request-header"><div><p className="eyebrow">Requested {new Date(request.createdAt).toLocaleDateString()}</p><h2>{request.requestedName}</h2><p>{request.requester.fullName} · {request.requester.email}</p></div><span className="status-pill pending">pending</span></header>
+    <header className="business-request-header"><div><p className="eyebrow">Requested {new Date(request.createdAt).toLocaleDateString("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium" })}</p><h2>{request.requestedName}</h2><p>{request.requester.fullName} · {request.requester.email}</p></div><span className="status-pill pending">pending</span></header>
     {request.note ? <div className="admin-info-callout"><strong>Requester note</strong><p>{request.note}</p></div> : null}
     <form action={approveAction} className="admin-settings-form">
       <input type="hidden" name="request_id" value={request.id} />

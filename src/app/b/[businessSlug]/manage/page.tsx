@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { FocusedPageHeader } from "@/components/focused-page-header";
+import { INDIA_TIME_ZONE } from "@/lib/constants";
 import { safeReturnPath, withReturnTo } from "@/lib/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { invitationState } from "@/lib/invitations";
@@ -165,7 +166,7 @@ export default async function BusinessManagePage({
       <main className="business-manage-page">
 
       {context.accessMode === "support" && context.supportSession ? (
-        <div className="support-mode-banner"><strong>Audited support mode</strong><span>{context.supportSession.reason}</span><span>Expires {new Date(context.supportSession.expires_at).toLocaleString()}</span></div>
+        <div className="support-mode-banner"><strong>Audited support mode</strong><span>{context.supportSession.reason}</span><span>Expires {new Date(context.supportSession.expires_at).toLocaleString("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium", timeStyle: "short" })}</span></div>
       ) : null}
 
       <nav aria-label="Business settings sections" className="business-settings-tabs">

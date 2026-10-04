@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
-import { businessLabels } from "@/lib/constants";
+import { businessLabels, INDIA_TIME_ZONE } from "@/lib/constants";
 import { loadAdminBusiness } from "../admin-data";
 import BusinessStatusAction from "../business-status-action";
 import ModuleSettingsForm from "./module-settings-form";
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 export default async function BusinessOverviewPage({ params }: { params: Promise<{ businessId: string }> }) {

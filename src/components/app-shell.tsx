@@ -2677,7 +2677,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       const parsed = parseAppViewState(
         Object.fromEntries(new URLSearchParams(window.location.search)),
         appData.profile.id,
-        appData.profile.membership_role,
       );
       const nextTab = currentUserIsSalesAgent && (parsed.tab === "closing" || parsed.tab === "settings" || parsed.tab === "library_students")
         ? "home"
@@ -3327,7 +3326,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       {supportMode && appData.businessContext.supportSession ? (
         <div className="support-mode-banner" role="status">
           <strong>Audited support mode</strong>
-          <span>Configuration access only · Financial changes are blocked · Expires {new Date(appData.businessContext.supportSession.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          <span>Configuration access only · Financial changes are blocked · Expires {formatIndiaTime(appData.businessContext.supportSession.expires_at)}</span>
           <span>Reason: {appData.businessContext.supportSession.reason}</span>
         </div>
       ) : null}
@@ -3477,7 +3476,6 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 businessTypes={availableBusinessTypes}
                 transactionProfiles={transactionSelectableProfiles}
                 showTransactionProfile={!currentUserIsSalesAgent && canViewSharedBusinessHistory}
-                owner={owner}
                 salesAgent={currentUserIsSalesAgent}
                 defaultProfileId={appData.profile.id}
                 onApplyDashboard={setDashboardFilters}
@@ -4021,7 +4019,6 @@ function OperationalFilterDrawer({
   businessTypes,
   transactionProfiles,
   showTransactionProfile,
-  owner,
   salesAgent,
   defaultProfileId,
   onApplyDashboard,
@@ -4037,7 +4034,6 @@ function OperationalFilterDrawer({
   businessTypes: BusinessType[];
   transactionProfiles: Profile[];
   showTransactionProfile: boolean;
-  owner: boolean;
   salesAgent: boolean;
   defaultProfileId: string;
   onApplyDashboard: (filters: DashboardFilterState) => void;
@@ -4078,7 +4074,7 @@ function OperationalFilterDrawer({
   function resetDraft() {
     setError("");
     if (tab === "home") setDashboardDraft(defaultDashboardFilters());
-    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId, owner ? "co_owner" : "staff"));
+    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId));
     if (tab === "closing") setClosingDraft(defaultClosingFilters());
   }
 
@@ -4170,8 +4166,8 @@ function OperationalFilterDrawer({
                     }));
                   }}
                 >
-                  <option value="business">Business activity</option>
                   <option value="personal">My activity</option>
+                  <option value="business">Business activity</option>
                 </select>
               </label>
               {showTransactionProfile && transactionDraft.lens === "business" ? (
@@ -5950,15 +5946,6 @@ function TransactionsView({
         <nav className="transaction-primary-filters" aria-label="Transaction classification">
           <div className="transaction-lens-tabs" role="tablist" aria-label="Transaction lens">
             <button
-              aria-selected={transactionLens === "business"}
-              className={transactionLens === "business" ? "active" : ""}
-              onClick={() => onSelectLens("business")}
-              role="tab"
-              type="button"
-            >
-              Business
-            </button>
-            <button
               aria-selected={transactionLens === "personal"}
               className={transactionLens === "personal" ? "active" : ""}
               onClick={() => onSelectLens("personal")}
@@ -5966,6 +5953,15 @@ function TransactionsView({
               type="button"
             >
               My activity
+            </button>
+            <button
+              aria-selected={transactionLens === "business"}
+              className={transactionLens === "business" ? "active" : ""}
+              onClick={() => onSelectLens("business")}
+              role="tab"
+              type="button"
+            >
+              Business
             </button>
           </div>
           <div className="transaction-activity-chips" aria-label={transactionLens === "business" ? "Business activity filters" : "My activity filters"}>
@@ -7284,7 +7280,7 @@ function courseStudentRecordFromStudent(student: CourseStudent, source: CourseSt
     endTime: student.end_time,
     subscriptionStartDate: student.subscription_start_date,
     subscriptionEndDate: student.subscription_end_date,
-    lastPaymentDate: student.updated_at.slice(0, 10),
+    lastPaymentDate: indiaDateIso(student.updated_at),
     feeAmount: student.fee_amount,
     paidAmount: student.paid_amount,
     duesAmount: student.dues_amount,

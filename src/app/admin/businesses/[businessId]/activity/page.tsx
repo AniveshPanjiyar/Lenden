@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { INDIA_TIME_ZONE } from "@/lib/constants";
 import { loadAdminBusiness, loadAdminBusinessActivity } from "../../admin-data";
 
 const eventLabels: Record<string, string> = {
@@ -19,7 +20,7 @@ const eventLabels: Record<string, string> = {
 };
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-IN", { timeZone: INDIA_TIME_ZONE, dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));
 }
 
 function safeAuditData(value: Record<string, unknown> | null) {
