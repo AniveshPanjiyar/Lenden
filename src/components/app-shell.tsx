@@ -3066,18 +3066,14 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     }),
     [appData.agentSettlements, appData.businessContext.business.timezone, appData.expenses, appData.ledger, appData.movements, appData.payments, appData.profiles],
   );
-  const transactionReviewsOtherMember = transactionFilters.lens === "personal"
-    && canViewSharedBusinessHistory
-    && transactionFilters.profileId !== "all"
-    && transactionFilters.profileId !== appData.profile.id;
   const transactionPostingEvents = useMemo(
-    () => appData.financialActivity.length > 0 && !transactionReviewsOtherMember
+    () => appData.financialActivity.length > 0
       ? [
           ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens),
           ...postingEvents.filter((event) => event.source_type === "agent_settlement"),
         ]
       : postingEvents,
-    [appData.financialActivity, postingEvents, transactionFilters.lens, transactionReviewsOtherMember],
+    [appData.financialActivity, postingEvents, transactionFilters.lens],
   );
   const selectedBusiness = dashboardFilters.businessType;
   const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
@@ -3296,23 +3292,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
       recordType: "all",
       mode: target?.mode ?? "all",
       businessType: target?.businessType ?? dashboardFilters.businessType,
-    }));
-    changeTab("payments");
-  }
-
-  function openClosingReview(profileId: string) {
-    setTransactionFilters((current) => ({
-      ...current,
-      dateRange: closingDate === todayIso()
-        ? rangeForPreset("today")
-        : { preset: "custom", from: closingDate, to: closingDate },
-      dateFilterKey: closingFilters.dateFilterKey,
-      lens: "personal",
-      profileId,
-      activity: "all",
-      recordType: "all",
-      mode: "all",
-      businessType: "all",
     }));
     changeTab("payments");
   }
@@ -3754,13 +3733,17 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 date={closingDate}
                 dateFilterKey={closingFilters.dateFilterKey}
                 owner={owner}
+                canVerifyOnlineCollections={primaryOwner || supportMode}
                 profile={appData.profile}
                 summaries={closingSummaries}
                 payments={appData.payments}
                 expenses={appData.expenses}
+                movements={appData.movements}
+                agentSettlements={appData.agentSettlements}
+                postingEvents={postingEvents}
+                profiles={appData.profiles}
                 managerUnitScopes={appData.managerUnitScopes}
                 staffUnitAssignments={appData.staffUnitAssignments}
-                onReview={openClosingReview}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -5421,9 +5404,6 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  // The personal lens normally shows the viewer; a closing Review opens it for another member.
-  const personalProfileId = canUseProfileFilter && transactionProfileId !== "all" ? transactionProfileId : profile.id;
-  const viewingOtherMember = transactionLens === "personal" && personalProfileId !== profile.id;
   // Pending approvals carry forward: every record still awaiting approval up to the range end
   // stays reachable from the PENDING tab, while ALL/IN/OUT stay on the selected dates.
   const pendingAwaitingInScope = useCallback((isoDate: string) => isoDate.slice(0, 10) <= dateRange.to, [dateRange.to]);
@@ -5476,7 +5456,7 @@ function TransactionsView({
       approvalDate?: string;
     };
     const selectedUserId = transactionLens === "personal"
-      ? personalProfileId
+      ? profile.id
       : canUseProfileFilter
         ? transactionProfileId
         : profile.id;
@@ -5907,8 +5887,6 @@ function TransactionsView({
     financialActivity
       .filter((activity) => {
         if (activity.lens !== transactionLens) return false;
-        // The personal activity feed belongs to the viewer, never to another member being reviewed.
-        if (transactionLens === "personal" && selectedUserId !== profile.id) return false;
         if (
           transactionLens === "business"
           && selectedUserId !== "all"
@@ -6005,7 +5983,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows, ...feedFallbackRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, permissionsByProfile, personalProfileId, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -6125,7 +6103,7 @@ function TransactionsView({
               role="tab"
               type="button"
             >
-              {viewingOtherMember ? profileName(profiles, personalProfileId, t) : "My activity"}
+              My activity
             </button>
             <button
               aria-selected={transactionLens === "business"}
@@ -10846,30 +10824,39 @@ function ClosingView({
   date,
   dateFilterKey,
   owner,
+  canVerifyOnlineCollections,
   profile,
   summaries,
   payments,
   expenses,
+  movements,
+  agentSettlements,
+  postingEvents,
+  profiles,
   managerUnitScopes,
   staffUnitAssignments,
-  onReview,
   setNotice,
   startTransition,
 }: {
   date: string;
   dateFilterKey: DateFilterKey;
   owner: boolean;
+  canVerifyOnlineCollections: boolean;
   profile: Profile;
   summaries: UserClosingSummary[];
   payments: Payment[];
   expenses: Expense[];
+  movements: MoneyMovement[];
+  agentSettlements: AgentSettlement[];
+  postingEvents: DailyPostingEvent[];
+  profiles: Profile[];
   managerUnitScopes: ManagerUnitScope[];
   staffUnitAssignments: StaffUnitAssignment[];
-  onReview: (profileId: string) => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
+  const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
   const viewerManagerBusinessTypes = new Set(
     managerUnitScopes
@@ -10926,6 +10913,10 @@ function ClosingView({
     const scope = closingBusinessTypesByProfile.get(profileId);
     return scope === null || Boolean(businessType && scope?.has(businessType));
   };
+  const selectedReviewSummary = reviewProfileId ? visibleSummaries.find((summary) => summary.profile.id === reviewProfileId) ?? null : null;
+  const selectedReviewBusinessTypes = selectedReviewSummary
+    ? closingBusinessTypesByProfile.get(selectedReviewSummary.profile.id) ?? null
+    : null;
   const pendingReviewSummary = (summary: UserClosingSummary): ClosingPendingBreakdown => {
     const paymentBreakdowns = payments
       .filter(
@@ -10963,6 +10954,33 @@ function ClosingView({
     summary,
     pending: pendingReviewSummary(summary),
   }));
+
+  if (selectedReviewSummary && owner) {
+    return (
+      <ClosingReviewDetail
+        key={`${selectedReviewSummary.profile.id}-${date}`}
+        summary={selectedReviewSummary}
+        date={date}
+        payments={payments}
+        expenses={expenses}
+        movements={movements}
+        agentSettlements={agentSettlements}
+        postingEvents={postingEvents}
+        dateFilterKey={dateFilterKey}
+        profiles={profiles}
+        businessTypes={selectedReviewBusinessTypes === null ? null : [...selectedReviewBusinessTypes]}
+        canVerifyOnlineCollections={canVerifyOnlineCollections}
+        reviewActionsEnabled={
+          profile.membership_role !== "co_owner"
+          || selectedReviewSummary.profile.membership_role === "staff"
+          || selectedReviewSummary.profile.id === profile.id
+        }
+        close={() => setReviewProfileId(null)}
+        setNotice={setNotice}
+        startTransition={startTransition}
+      />
+    );
+  }
 
   return (
     <div className="view-stack closing-workspace">
@@ -11100,7 +11118,7 @@ function ClosingView({
                 ) : null}
                 {owner ? (
                   <div className="closing-staff-actions">
-                    <button className="closing-review-button" type="button" onClick={() => onReview(summary.profile.id)}>
+                    <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
                       {t("reviewAndSettle")}
                     </button>
                     {canReceiveFromUser ? (
@@ -11141,6 +11159,510 @@ function ClosingView({
               </article>
             );
           })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ClosingReviewDetail({
+  summary,
+  date,
+  dateFilterKey,
+  payments,
+  expenses,
+  movements,
+  agentSettlements,
+  postingEvents,
+  profiles,
+  businessTypes,
+  canVerifyOnlineCollections,
+  reviewActionsEnabled,
+  close,
+  setNotice,
+  startTransition,
+}: {
+  summary: UserClosingSummary;
+  date: string;
+  dateFilterKey: DateFilterKey;
+  payments: Payment[];
+  expenses: Expense[];
+  movements: MoneyMovement[];
+  agentSettlements: AgentSettlement[];
+  postingEvents: DailyPostingEvent[];
+  profiles: Profile[];
+  businessTypes: BusinessType[] | null;
+  canVerifyOnlineCollections: boolean;
+  reviewActionsEnabled: boolean;
+  close: () => void;
+  setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
+}) {
+  const { t } = useLanguage();
+  const [reviewFilter, setReviewFilter] = useState<"all" | "in" | "out" | "pending">("all");
+  type ClosingReviewRecord = {
+    id: string;
+    sourceId: string;
+    recordType: "payment" | "expense" | "movement";
+    title: string;
+    amount: number;
+    mode: string;
+    status: string;
+    recordDate: string;
+    transactionDate: string;
+    approvalDate: string | null;
+    isBacklog: boolean;
+    createdAt: string;
+    businessLabel: string;
+    cashAmount: number;
+    onlineAmount: number;
+    cashStatus: ApprovalStatus | null;
+    onlineStatus: ApprovalStatus | null;
+    note: string;
+    transferLines: string[];
+    journey: TransactionJourneyStep[];
+    journeyLanes?: TransactionJourneyLane[];
+    hasPendingTransfer: boolean;
+    canReview: boolean;
+    isMixedPayment: boolean;
+    tone: "positive" | "negative";
+    icon: ReactNode;
+  };
+  const recordInScope = (businessType: BusinessType | null | undefined) =>
+    businessTypes === null || Boolean(businessType && businessTypes.includes(businessType));
+  const profileDayEvents = postingEventsForProfileDate(postingEvents, summary.profile.id, date, dateFilterKey)
+    .filter((event) => recordInScope(event.business_type));
+  const paymentEventGroups = new Map<string, DailyPostingEvent[]>();
+  profileDayEvents.filter((event) => event.source_type === "payment").forEach((event) => {
+    paymentEventGroups.set(event.source_id, [...(paymentEventGroups.get(event.source_id) ?? []), event]);
+  });
+
+  const approvedPaymentRecords: ClosingReviewRecord[] = [...paymentEventGroups.entries()].flatMap(([paymentId, events]) => {
+    const payment = payments.find((item) => item.id === paymentId);
+    if (!payment) return [];
+    const cashAmount = events.reduce((sum, event) => sum + event.cash_amount, 0);
+    const onlineAmount = events.reduce((sum, event) => sum + event.online_amount, 0);
+    return [{
+      id: `${payment.id}-${date}`,
+      sourceId: payment.id,
+      recordType: "payment",
+      title: paymentDisplayTitle(payment, t),
+      amount: cashAmount + onlineAmount,
+      mode: paymentModeLabel(payment, t),
+      status: "approved",
+      recordDate: date,
+      transactionDate: payment.payment_date,
+      approvalDate: events.map((event) => event.approval_date).sort().at(-1) ?? null,
+      isBacklog: false,
+      createdAt: events.map((event) => event.approved_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? payment.created_at,
+      businessLabel: transactionBusinessTag(payment.business_type, t),
+      cashAmount,
+      onlineAmount,
+      cashStatus: paymentComponentStatus(payment, "cash"),
+      onlineStatus: paymentComponentStatus(payment, "online"),
+      note: paymentReference(payment, t),
+      transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
+      journey: [],
+      journeyLanes: paymentJourneyLanes(payment, paymentTransfers(movements, payment.id), profiles, t),
+      hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
+      canReview: false,
+      isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
+      tone: "positive",
+      icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
+    }];
+  });
+
+  const pendingPaymentRecords: ClosingReviewRecord[] = payments
+    .filter((payment) =>
+      paymentReviewProfileId(payment) === summary.profile.id &&
+      recordInScope(payment.business_type) &&
+      payment.record_status === "active" &&
+      belongsToClosingReview(payment.payment_date, date, payment.approval_status) &&
+      isPendingReviewStatus(payment.approval_status),
+    )
+    .map((payment) => {
+      const pendingCash = paymentComponentStatus(payment, "cash") === "approved" ? 0 : paymentCashAmount(payment);
+      const pendingOnline = paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment);
+      return {
+        id: `${payment.id}-pending`,
+        sourceId: payment.id,
+        recordType: "payment" as const,
+        title: paymentDisplayTitle(payment, t),
+        amount: pendingCash + pendingOnline,
+        mode: paymentModeLabel(payment, t),
+        status: payment.approval_status,
+        recordDate: payment.payment_date,
+        transactionDate: payment.payment_date,
+        approvalDate: null,
+        isBacklog: payment.payment_date < date,
+        createdAt: payment.created_at,
+        businessLabel: transactionBusinessTag(payment.business_type, t),
+        cashAmount: pendingCash,
+        onlineAmount: pendingOnline,
+        cashStatus: paymentComponentStatus(payment, "cash"),
+        onlineStatus: paymentComponentStatus(payment, "online"),
+        note: paymentReference(payment, t),
+        transferLines: transferSummaryLines(paymentTransfers(movements, payment.id), profiles, t),
+        journey: [],
+        journeyLanes: paymentJourneyLanes(payment, paymentTransfers(movements, payment.id), profiles, t),
+        hasPendingTransfer: Boolean(pendingPaymentTransfer(movements, payment.id)),
+        canReview: true,
+        isMixedPayment: paymentCashAmount(payment) > 0 && paymentOnlineAmount(payment) > 0,
+        tone: "positive" as const,
+        icon: payment.business_type === "guest_house" ? <Hotel size={22} /> : payment.business_type === "library" ? <BookOpen size={22} /> : <WalletCards size={22} />,
+      };
+    });
+
+  const approvedExpenseRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => event.source_type === "expense")
+    .flatMap((event) => {
+      const expense = expenses.find((item) => item.id === event.source_id);
+      if (!expense) return [];
+      return [{
+        id: `${expense.id}-${date}`,
+        sourceId: expense.id,
+        recordType: "expense" as const,
+        title: expenseDisplayTitle(expense),
+        amount: -event.amount,
+        mode: labelForMode(expense.mode, t),
+        status: "approved",
+        recordDate: date,
+        transactionDate: expense.expense_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: event.approved_at ?? expense.created_at,
+        businessLabel: transactionBusinessTag(expense.business_type, t),
+        cashAmount: event.cash_amount,
+        onlineAmount: event.online_amount,
+        cashStatus: null,
+        onlineStatus: null,
+        note: expenseReference(expense, t),
+        transferLines: [],
+        journey: expenseJourneySteps(expense, profiles, t),
+        hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
+        tone: "negative" as const,
+        icon: <ReceiptText size={22} />,
+      }];
+    });
+
+  const pendingExpenseRecords: ClosingReviewRecord[] = expenses
+    .filter((expense) =>
+      expense.spent_by === summary.profile.id &&
+      recordInScope(expense.business_type ?? "general") &&
+      expense.record_status === "active" &&
+      belongsToClosingReview(expense.expense_date, date, expense.approval_status) &&
+      isPendingReviewStatus(expense.approval_status),
+    )
+    .map((expense) => ({
+      id: `${expense.id}-pending`,
+      sourceId: expense.id,
+      recordType: "expense" as const,
+      title: expenseDisplayTitle(expense),
+      amount: -numberValue(expense.amount),
+      mode: labelForMode(expense.mode, t),
+      status: expense.approval_status,
+      recordDate: expense.expense_date,
+      transactionDate: expense.expense_date,
+      approvalDate: null,
+      isBacklog: expense.expense_date < date,
+      createdAt: expense.created_at,
+      businessLabel: transactionBusinessTag(expense.business_type, t),
+      cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
+      onlineAmount: expense.mode === "online" ? numberValue(expense.amount) : 0,
+      cashStatus: null,
+      onlineStatus: null,
+      note: expenseReference(expense, t),
+      transferLines: [],
+      journey: expenseJourneySteps(expense, profiles, t),
+      hasPendingTransfer: false,
+      canReview: true,
+      isMixedPayment: false,
+      tone: "negative" as const,
+      icon: <ReceiptText size={22} />,
+    }));
+
+  const movementRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => event.source_type === "transfer" || event.source_type === "settlement")
+    .flatMap((event) => {
+      const movement = movements.find((item) => item.id === event.source_id);
+      if (!movement) return [];
+      const incoming = event.direction === "in";
+      return [{
+        id: `${movement.id}-${event.direction}`,
+        sourceId: movement.id,
+        recordType: "movement" as const,
+        title: incoming ? t("cashReceived") : t("cashSent"),
+        amount: incoming ? event.amount : -event.amount,
+        mode: labelForMode(movement.mode, t),
+        status: movement.status,
+        recordDate: date,
+        transactionDate: event.transaction_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: movement.responded_at ?? movement.created_at,
+        businessLabel: t("cashTransfer"),
+        cashAmount: event.cash_amount,
+        onlineAmount: 0,
+        cashStatus: null,
+        onlineStatus: null,
+        note: movement.note ?? t("noReason"),
+        transferLines: [`${profileName(profiles, movement.from_profile_id, t)} → ${profileName(profiles, movement.to_profile_id, t)}`],
+        journey: cashTransferJourneySteps(movement, profiles, t, incoming ? "cash_in" : "cash_out"),
+        hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
+        tone: incoming ? "positive" as const : "negative" as const,
+        icon: incoming ? <ArrowDown size={22} /> : <ArrowUp size={22} />,
+      }];
+    });
+
+  const agentSettlementRecords: ClosingReviewRecord[] = profileDayEvents
+    .filter((event) => businessTypes === null && event.source_type === "agent_settlement")
+    .flatMap((event) => {
+      const settlement = agentSettlements.find((item) => item.id === event.source_id);
+      if (!settlement) return [];
+      const incoming = event.direction === "in";
+      return [{
+        id: `${settlement.id}-${event.direction}`,
+        sourceId: settlement.id,
+        recordType: "movement" as const,
+        title: incoming ? t("incentivePayout") : t("agentPayout"),
+        amount: incoming ? event.amount : -event.amount,
+        mode: t("cash"),
+        status: settlement.status,
+        recordDate: date,
+        transactionDate: event.transaction_date,
+        approvalDate: event.approval_date,
+        isBacklog: false,
+        createdAt: settlement.responded_at ?? settlement.created_at,
+        businessLabel: t("cashTransfer"),
+        cashAmount: event.cash_amount,
+        onlineAmount: event.online_amount,
+        cashStatus: null,
+        onlineStatus: null,
+        note: settlement.note ?? t("noReason"),
+        transferLines: [`${profileName(profiles, settlement.paid_by, t)} → ${profileName(profiles, settlement.agent_id, t)}`],
+        journey: agentPayoutJourneySteps(settlement, profiles, t, incoming ? "cash_in" : "cash_out"),
+        hasPendingTransfer: false,
+        canReview: false,
+        isMixedPayment: false,
+        tone: incoming ? "positive" as const : "negative" as const,
+        icon: <WalletCards size={22} />,
+      }];
+    });
+
+  const reviewRecords = [
+    ...approvedPaymentRecords,
+    ...approvedExpenseRecords,
+    ...movementRecords,
+    ...agentSettlementRecords,
+    ...pendingPaymentRecords,
+    ...pendingExpenseRecords,
+  ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
+  // ALL / IN / OUT stay on the closing date (ALL includes that day's pending records);
+  // PENDING carries every record still awaiting approval up to the closing date.
+  const todayRecords = reviewRecords.filter((record) => !record.canReview && record.recordDate === date);
+  const pendingRecords = reviewRecords.filter((record) => record.canReview);
+  const allDayRecords = reviewRecords.filter((record) => record.recordDate === date);
+  const inRecords = todayRecords.filter((record) => record.tone === "positive");
+  const outRecords = todayRecords.filter((record) => record.tone === "negative");
+  const pendingReviewAmount = pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
+  const pendingReviewCount = pendingRecords.length;
+  const reviewFilterOptions = [
+    { value: "all" as const, label: t("all"), records: allDayRecords },
+    { value: "in" as const, label: "IN", records: inRecords },
+    { value: "out" as const, label: "OUT", records: outRecords },
+    { value: "pending" as const, label: t("pending"), records: pendingRecords },
+  ];
+  const visibleReviewRecords = reviewFilterOptions.find((option) => option.value === reviewFilter)?.records ?? allDayRecords;
+  const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
+  const reviewInCash = summary.inCash;
+  const reviewInOnline = summary.inOnline;
+  const reviewOutCash = summary.outCash;
+  const reviewOutOnline = summary.outOnline;
+
+  return (
+    <div className="closing-review-detail">
+      <header className="closing-review-header">
+        <button className="icon-button" type="button" aria-label={t("back")} onClick={close}>
+          <ArrowLeft size={18} />
+        </button>
+        <span className="closing-avatar">{profileInitials(summary.profile)}</span>
+        <div>
+          <p className="eyebrow">{t("reviewAndSettle")}</p>
+          <h2>{summary.profile.full_name}</h2>
+        </div>
+      </header>
+
+      <section className="review-summary-grid">
+        {summary.profile.membership_role !== "primary_owner" ? (
+          <article className="review-net-card">
+            <span>{t("closingCashInHand")}</span>
+            <strong>{formatMoney(summary.closing)}</strong>
+          </article>
+        ) : null}
+        <article className="positive">
+          <span>{t("cashIn")}</span>
+          <strong>{formatMoney(reviewInCash + reviewInOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewInCash)} · {t("online")} {formatMoney(reviewInOnline)}</p>
+        </article>
+        <article className="negative">
+          <span>{t("cashOut")}</span>
+          <strong>{formatMoney(reviewOutCash + reviewOutOnline)}</strong>
+          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)} · {t("online")} {formatMoney(reviewOutOnline)}</p>
+        </article>
+        <article className="pending">
+          <span>{t("pending")}{pendingReviewCount > 0 ? ` · ${pendingReviewCount}` : ""}</span>
+          <strong>{formatMoney(pendingReviewAmount)}</strong>
+        </article>
+      </section>
+      <p className="closing-online-note review-online-note"><Landmark aria-hidden="true" size={15} /> {t("onlineOwnerBankNote")}</p>
+
+      <section className="closing-info-banner">
+        <AlertCircle size={20} />
+        <p>{t("reviewSettlementNotice")}</p>
+      </section>
+
+      <section className="review-transaction-section">
+        <div className="closing-ledger-heading">
+          <h2>{reviewFilter === "pending" ? t("pendingReview") : t("dailyTransactions")}</h2>
+          <span>{date}</span>
+        </div>
+        <div className="transaction-activity-chips review-activity-chips" aria-label={t("reviewAndSettle")}>
+          {reviewFilterOptions.map((option) => (
+            <button
+              aria-pressed={reviewFilter === option.value}
+              className={reviewFilter === option.value ? "active" : ""}
+              key={option.value}
+              onClick={() => setReviewFilter(option.value)}
+              type="button"
+            >
+              {option.label} · {option.records.length}
+            </button>
+          ))}
+        </div>
+        {reviewFilter === "pending" && pendingRecords.length > 0 ? <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p> : null}
+        <div className="review-transaction-list">
+          {visibleReviewRecords.length > 0 ? visibleReviewRecords.map((record) => {
+            const canReview = record.canReview && reviewActionsEnabled;
+            const hasCashComponent = record.recordType === "payment" && record.cashStatus !== null;
+            const hasOnlineComponent = record.recordType === "payment" && record.onlineStatus !== null;
+            const recordWhen = record.isBacklog ? `${record.recordDate} · ${createdTime(record.createdAt)} · ${t("backlog")}` : createdTime(record.createdAt);
+            return (
+              <article className={`history-card closing-history-card ${record.tone}`} key={`${record.recordType}-${record.id}`}>
+                <div className="history-card-icon">{record.icon}</div>
+                <div className="history-card-main">
+                  <strong>{record.title}</strong>
+                  <span className="history-business-badge">{record.businessLabel}</span>
+                  {record.approvalDate && record.transactionDate !== record.approvalDate ? (
+                    <small className="history-date-context">
+                      {t("transactionDate")} {record.transactionDate} · {t("approvalDate")} {record.approvalDate}
+                    </small>
+                  ) : null}
+                </div>
+                <div className="history-card-side">
+                  <TransactionCardAmount
+                    amount={record.amount}
+                    cashAmount={record.cashAmount}
+                    onlineAmount={record.onlineAmount}
+                    tone={record.tone}
+                  />
+                </div>
+                <details className="history-actions-menu closing-history-actions">
+                  <summary aria-label={t("moreOptions")}>
+                    <MoreHorizontal size={18} />
+                  </summary>
+                  <div className="details-menu transaction-options-menu closing-history-menu">
+                    <div className="closing-history-menu-copy">
+                      <strong>{recordWhen}</strong>
+                      <span>{record.mode} · {labelForStatus(record.status, t)}</span>
+                      <span>{record.note}</span>
+                      {record.transferLines.map((line, index) => (
+                        <span key={`${line}-${index}`}>{line}</span>
+                      ))}
+                    </div>
+                    {canReview && record.recordType === "expense" ? (
+                      <MiniAction
+                        hidden={{ record_type: record.recordType, id: record.sourceId, decision: "rejected" }}
+                        label={t("reject")}
+                        tone="reject"
+                        action={approveRecordAction}
+                        setNotice={setNotice}
+                        startTransition={startTransition}
+                      />
+                    ) : null}
+                  </div>
+                </details>
+                <div className="history-card-flow">
+                  <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
+                    <div className="journey-action-row closing-history-approval-actions">
+                      {record.recordType === "payment" ? (
+                        <>
+                          {hasCashComponent ? (
+                            record.cashStatus === "approved" ? (
+                              <span className="component-approved"><Check size={16} /> {t("cash")} {labelForStatus("approved", t)}</span>
+                            ) : record.hasPendingTransfer && canReview ? (
+                              <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                                {t("approve")} {t("cash")}
+                              </button>
+                            ) : canReview && canApproveRecordStatus(record.cashStatus ?? record.status) ? (
+                              <MiniAction
+                                hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "cash" }}
+                                label={`${t("approve")} ${t("cash")}`}
+                                tone="approve"
+                                action={approveRecordAction}
+                                setNotice={setNotice}
+                                startTransition={startTransition}
+                              />
+                            ) : null
+                          ) : null}
+                          {hasOnlineComponent ? (
+                            record.onlineStatus === "approved" ? (
+                              <span className="component-owner-verification verified"><Landmark size={15} /> {t("verifiedByOwner")}</span>
+                            ) : canVerifyOnlineCollections && canReview && record.hasPendingTransfer ? (
+                              <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                                {t("verifyOnline")}
+                              </button>
+                            ) : canVerifyOnlineCollections && canReview && canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
+                              <MiniAction
+                                hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}
+                                label={t("verifyOnline")}
+                                tone="approve"
+                                action={approveRecordAction}
+                                setNotice={setNotice}
+                                startTransition={startTransition}
+                              />
+                            ) : (
+                              <span className="component-owner-verification pending"><Landmark size={15} /> {t("awaitingOwnerVerification")}</span>
+                            )
+                          ) : null}
+                        </>
+                      ) : canReview ? (
+                        record.hasPendingTransfer ? (
+                          <button className="mini-action tone-approve" type="button" disabled title={t("resolveTransferFirst")}>
+                            {t("resolveTransferFirst")}
+                          </button>
+                        ) : (
+                          <MiniAction
+                            hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved" }}
+                            label={t("approve")}
+                            tone="approve"
+                            action={approveRecordAction}
+                            setNotice={setNotice}
+                            startTransition={startTransition}
+                          />
+                        )
+                      ) : null}
+                    </div>
+                  </TransactionJourney>
+                </div>
+              </article>
+            );
+          }) : (
+            <p className="muted">{t("noRecordsForFilter")}</p>
+          )}
         </div>
       </section>
     </div>
