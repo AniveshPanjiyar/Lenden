@@ -179,6 +179,7 @@ type UserClosingSummary = {
 type ClosingPendingBreakdown = {
   totalAmount: number;
   totalRecordCount: number;
+  onlineAmount: number;
 };
 
 type ClosingCardViewModel = {
@@ -10945,6 +10946,7 @@ function ClosingView({
     return {
       totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount,
       totalRecordCount: paymentBreakdowns.length + pendingExpenses.length,
+      onlineAmount: onlinePaymentAmount,
     };
   };
   const closingCards: ClosingCardViewModel[] = visibleSummaries.map((summary) => ({
@@ -11081,17 +11083,20 @@ function ClosingView({
                 <section
                   className="closing-online-activity"
                   title={t("onlineOwnerBankNote")}
-                  aria-label={`${t("onlineIn")} ${formatMoney(summary.inOnline)} · ${t("reviewed")} · ${t("verifiedByOwner")}`}
+                  aria-label={`${t("onlineIn")} ${formatMoney(summary.inOnline + pendingSummary.onlineAmount)} · ${t("verifiedOnline")} ${formatMoney(summary.inOnline)}`}
                 >
                   <div className="closing-online-summary">
                     <span className="closing-online-metric">
                       <small><Landmark aria-hidden="true" size={15} /> {t("onlineIn")}</small>
-                      <strong>+{formatMoney(summary.inOnline)}</strong>
+                      <strong>+{formatMoney(summary.inOnline + pendingSummary.onlineAmount)}</strong>
                     </span>
                     <span aria-hidden="true" className="closing-online-divider" />
                     <span className="closing-online-metric reviewed">
-                      <small><ShieldCheck aria-hidden="true" size={15} /> {t("reviewed")}</small>
-                      <em>{t("verifiedByOwner")}</em>
+                      <small><ShieldCheck aria-hidden="true" size={15} /> {t("verifiedOnline")}</small>
+                      <strong>{formatMoney(summary.inOnline)}</strong>
+                      {pendingSummary.onlineAmount > 0 ? (
+                        <em>{t("awaitingVerification")} {formatMoney(pendingSummary.onlineAmount)}</em>
+                      ) : null}
                     </span>
                   </div>
                 </section>
