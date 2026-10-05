@@ -6024,7 +6024,7 @@ function TransactionsView({
   }, [businessTypeFilter, modeFilter, recordTypeFilter]);
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
     if (!matchesSecondaryFilters(record)) return false;
-    if (transactionFilter === "all") return !record.pendingApproval;
+    if (transactionFilter === "all") return true;
     if (transactionFilter === "pending") return Boolean(record.pendingApproval);
     return record.filter === transactionFilter && !record.pendingApproval;
   }), [allTransactionRecords, matchesSecondaryFilters, transactionFilter]);

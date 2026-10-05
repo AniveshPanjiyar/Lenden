@@ -11145,3 +11145,11 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
 /* Closing card Review button uses the online/verification blue. */
 .closing-review-button { background: #185aa5; }
 .closing-review-button:hover { background: #134a86; }
+
+/* Transaction filter chips: uniform uppercase labels (ALL / IN / OUT / PENDING). */
+.transaction-activity-chips button {
+  min-width: 64px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  text-align: center;
+}
