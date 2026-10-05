@@ -399,6 +399,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "Change password",
     closing: "Closing",
     work: "Work",
+    todaysCash: "Today's cash",
     verifiedOnline: "Verified online",
     awaitingVerification: "Awaiting",
     date: "Date",
@@ -860,6 +861,7 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     work: "काम",
+    todaysCash: "आज का नकद",
     verifiedOnline: "सत्यापित ऑनलाइन",
     awaitingVerification: "बाकी",
     date: "तारीख",
@@ -10919,6 +10921,7 @@ function ClosingView({
             const cashToReceive = Math.max(summary.closing, 0);
             const custodyCashIn = summary.collected + summary.received;
             const custodyCashOut = summary.expenses + summary.sent;
+            const ownerCard = summary.profile.membership_role === "primary_owner";
             const settlementProfileKey = `${date}:${summary.profile.id}`;
             const canReceiveFromUser = summary.profile.id !== profile.id && (
               (
@@ -10956,24 +10959,34 @@ function ClosingView({
                 </div>
                 <section className="closing-cash-custody">
                   <div className="closing-section-heading">
-                    <span><Banknote aria-hidden="true" size={17} /> {t("cashInHand")}</span>
+                    <span><Banknote aria-hidden="true" size={17} /> {ownerCard ? t("todaysCash") : t("cashInHand")}</span>
                     <small>{t("approvalDate")} · {date}</small>
                   </div>
-                  <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
-                    <span>
-                      <small>{t("closingCashInHand")}</small>
-                      <em>{date}</em>
-                      {summary.closing < 0 ? (
-                        <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
-                      ) : null}
-                    </span>
-                    <strong>{formatMoney(summary.closing)}</strong>
-                  </div>
-                  <div className="closing-cash-equation" aria-label={`${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}>
-                    <span className="closing-equation-part">
-                      <small>{t("openingCash")}</small>
-                      <strong>{formatMoney(summary.opening)}</strong>
-                    </span>
+                  {/* The Owner is where cash ends up, so a running balance is not meaningful; show only the day's flow. */}
+                  {!ownerCard ? (
+                    <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
+                      <span>
+                        <small>{t("closingCashInHand")}</small>
+                        <em>{date}</em>
+                        {summary.closing < 0 ? (
+                          <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
+                        ) : null}
+                      </span>
+                      <strong>{formatMoney(summary.closing)}</strong>
+                    </div>
+                  ) : null}
+                  <div
+                    className={`closing-cash-equation${ownerCard ? " owner-day-flow" : ""}`}
+                    aria-label={ownerCard
+                      ? `${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}`
+                      : `${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}
+                  >
+                    {!ownerCard ? (
+                      <span className="closing-equation-part">
+                        <small>{t("openingCash")}</small>
+                        <strong>{formatMoney(summary.opening)}</strong>
+                      </span>
+                    ) : null}
                     <span className="closing-equation-part positive">
                       <small>+ {t("cashIn")}</small>
                       <strong>{formatMoney(custodyCashIn)}</strong>
@@ -11391,10 +11404,12 @@ function ClosingReviewDetail({
       </header>
 
       <section className="review-summary-grid">
-        <article className="review-net-card">
-          <span>{t("closingCashInHand")}</span>
-          <strong>{formatMoney(summary.closing)}</strong>
-        </article>
+        {summary.profile.membership_role !== "primary_owner" ? (
+          <article className="review-net-card">
+            <span>{t("closingCashInHand")}</span>
+            <strong>{formatMoney(summary.closing)}</strong>
+          </article>
+        ) : null}
         <article className="positive">
           <span>{t("cashIn")}</span>
           <strong>{formatMoney(reviewInCash + reviewInOnline)}</strong>
