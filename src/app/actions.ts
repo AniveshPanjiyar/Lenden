@@ -14,7 +14,15 @@ import {
 } from "@/lib/lenden-actions";
 
 const appPath = "/";
-const salesAgentAllowedActions = new Set<LendenActionName>(["markNotificationsRead", "updateProfile"]);
+const workActions = new Set<LendenActionName>([
+  "checkIn",
+  "checkOut",
+  "createWorkTask",
+  "setWorkTaskStatus",
+  "postWorkUpdate",
+  "deleteWorkUpdate",
+]);
+const salesAgentAllowedActions = new Set<LendenActionName>(["markNotificationsRead", "updateProfile", ...workActions]);
 const financialActions = new Set<LendenActionName>([
   "createPayment",
   "saveLibraryStudent",
@@ -76,6 +84,11 @@ async function invokeLendenAction(action: LendenActionName, formData = new FormD
     }
     if (profile.accessMode === "support" && financialActions.has(action)) {
       const result = { ok: false, message: "Financial changes are blocked in audited support mode." } satisfies ActionResult;
+      logActionTiming(action, profile, startedAt, result);
+      return result;
+    }
+    if (profile.accessMode === "support" && workActions.has(action)) {
+      const result = { ok: false, message: "Attendance and work updates are blocked in audited support mode." } satisfies ActionResult;
       logActionTiming(action, profile, startedAt, result);
       return result;
     }
@@ -417,4 +430,28 @@ export async function deleteReferralAction(formData: FormData): Promise<ActionRe
 
 export async function setReferralActiveAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("setReferralActive", formData);
+}
+
+export async function checkInAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("checkIn", formData);
+}
+
+export async function checkOutAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("checkOut", formData);
+}
+
+export async function createWorkTaskAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("createWorkTask", formData);
+}
+
+export async function setWorkTaskStatusAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("setWorkTaskStatus", formData);
+}
+
+export async function postWorkUpdateAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("postWorkUpdate", formData);
+}
+
+export async function deleteWorkUpdateAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("deleteWorkUpdate", formData);
 }

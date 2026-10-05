@@ -744,3 +744,54 @@ export type OperationalPagePayload =
   | ClosingOverviewPayload
   | StudentRosterPayload
   | SettingsPagePayload;
+
+export type WorkTaskStatus = "todo" | "in_progress" | "done";
+
+export type WorkMember = {
+  id: string;
+  full_name: string;
+  role: BusinessRole;
+};
+
+export type WorkTask = {
+  id: string;
+  title: string;
+  notes: string | null;
+  assigned_to: string;
+  created_by: string;
+  due_date: string | null;
+  status: WorkTaskStatus;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type WorkUpdate = {
+  id: string;
+  task_id: string | null;
+  author_id: string;
+  entry_date: string;
+  body: string | null;
+  photo_url: string | null;
+  voice_url: string | null;
+  voice_seconds: number | null;
+  status_change: WorkTaskStatus | null;
+  created_at: string;
+};
+
+export type WorkAttendance = {
+  id: string;
+  profile_id: string;
+  attendance_date: string;
+  check_in_at: string;
+  check_out_at: string | null;
+};
+
+export type WorkPage = {
+  date: string;
+  today: string;
+  timezone: string;
+  members: WorkMember[];
+  attendance: WorkAttendance[];
+  tasks: WorkTask[];
+  updates: WorkUpdate[];
+};

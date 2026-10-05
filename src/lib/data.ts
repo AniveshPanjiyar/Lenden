@@ -1,4 +1,4 @@
-import { businessPermissions } from "@/lib/constants";
+import { businessPermissions, dateIsoInTimeZone } from "@/lib/constants";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { isBusinessOwner, isBusinessSalesAgent, profileForBusiness } from "@/lib/tenancy";
 import { rangeForPreset, type AppTab, type AppViewState } from "@/lib/view-state";
@@ -28,6 +28,10 @@ import type {
   OperationalPagePayload,
   Payment,
   Profile,
+  WorkAttendance,
+  WorkMember,
+  WorkPage,
+  WorkTask,
   ReferralCode,
   Room,
   StaffPermission,
@@ -1003,5 +1007,94 @@ export function emptyDashboardData(): DashboardPayload {
     changeRequests: [],
     agentSettlements: [],
     notifications: [],
+  };
+}
+
+type WorkUpdateRow = {
+  id: string;
+  task_id: string | null;
+  author_id: string;
+  entry_date: string;
+  body: string | null;
+  photo_path: string | null;
+  voice_path: string | null;
+  voice_seconds: number | null;
+  status_change: WorkTask["status"] | null;
+  created_at: string;
+};
+
+function shiftIsoDate(isoDate: string, days: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+export async function getWorkPage(businessContext: BusinessContext, requestedDate: string | null): Promise<WorkPage> {
+  const businessId = businessContext.business.id;
+  const timezone = businessContext.business.timezone || "Asia/Kolkata";
+  const today = dateIsoInTimeZone(new Date(), timezone);
+  const date = requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : today;
+  const supabase = await createClient({ businessId });
+
+  const [attendanceResult, openTasksResult, doneTasksResult, updatesResult] = await Promise.all([
+    supabase.from("work_attendance").select("id,profile_id,attendance_date,check_in_at,check_out_at")
+      .eq("business_id", businessId).eq("attendance_date", date),
+    supabase.from("work_tasks").select("id,title,notes,assigned_to,created_by,due_date,status,completed_at,created_at")
+      .eq("business_id", businessId).neq("status", "done").order("due_date", { ascending: true, nullsFirst: false }).order("created_at").limit(300),
+    // Completion is a timestamp; widen by a day each side, then keep the ones that fall on `date` in the business timezone.
+    supabase.from("work_tasks").select("id,title,notes,assigned_to,created_by,due_date,status,completed_at,created_at")
+      .eq("business_id", businessId).eq("status", "done")
+      .gte("completed_at", `${shiftIsoDate(date, -1)}T00:00:00Z`).lt("completed_at", `${shiftIsoDate(date, 2)}T00:00:00Z`).limit(300),
+    supabase.from("work_updates").select("id,task_id,author_id,entry_date,body,photo_path,voice_path,voice_seconds,status_change,created_at")
+      .eq("business_id", businessId).eq("entry_date", date).order("created_at", { ascending: false }).limit(300),
+  ]);
+  for (const result of [attendanceResult, openTasksResult, doneTasksResult, updatesResult]) {
+    if (result.error) throw new Error(result.error.message);
+  }
+
+  // Shared board: every member sees every name. Membership was verified by the caller,
+  // and staff cannot always read peer memberships under RLS, so names come from the service client.
+  let memberClient: SupabaseServerClient | ReturnType<typeof createAdminClient> = supabase;
+  try {
+    memberClient = createAdminClient();
+  } catch {
+    // Without a service key, fall back to whatever RLS lets this user see.
+  }
+  const membershipsResult = await memberClient
+    .from("business_memberships")
+    .select("profile_id,role")
+    .eq("business_id", businessId)
+    .eq("status", "active");
+  if (membershipsResult.error) throw new Error(membershipsResult.error.message);
+  const memberships = (membershipsResult.data ?? []) as Array<{ profile_id: string; role: BusinessRole }>;
+  const profilesResult = memberships.length
+    ? await memberClient.from("profiles").select("id,full_name").in("id", memberships.map((row) => row.profile_id))
+    : { data: [], error: null };
+  if (profilesResult.error) throw new Error(profilesResult.error.message);
+  const names = new Map(((profilesResult.data ?? []) as Array<{ id: string; full_name: string | null }>).map((row) => [row.id, row.full_name]));
+  const members: WorkMember[] = memberships
+    .map((row) => ({ id: row.profile_id, role: row.role, full_name: names.get(row.profile_id) || "Member" }))
+    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+
+  const updateRows = (updatesResult.data ?? []) as WorkUpdateRow[];
+  const signed = await signedStorageUrlMap(
+    supabase,
+    "work-media",
+    updateRows.flatMap((row) => [row.photo_path, row.voice_path]),
+  );
+  const doneTasks = ((doneTasksResult.data ?? []) as WorkTask[])
+    .filter((task) => task.completed_at && dateIsoInTimeZone(task.completed_at, timezone) === date);
+
+  return {
+    date,
+    today,
+    timezone,
+    members,
+    attendance: (attendanceResult.data ?? []) as WorkAttendance[],
+    tasks: [...((openTasksResult.data ?? []) as WorkTask[]), ...doneTasks],
+    updates: updateRows.map(({ photo_path, voice_path, ...row }) => ({
+      ...row,
+      photo_url: photo_path ? signed.get(photo_path) ?? null : null,
+      voice_url: voice_path ? signed.get(voice_path) ?? null : null,
+    })),
   };
 }

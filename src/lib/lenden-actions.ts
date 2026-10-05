@@ -72,6 +72,7 @@ type SupabaseAdminClient = {
         data: { signedUrl: string } | null;
         error: { message: string } | null;
       }>;
+      remove: (paths: string[]) => Promise<{ error: { message: string } | null }>;
     };
   };
 };
@@ -103,7 +104,7 @@ type QueryResponse<T> = {
   count?: number | null;
 };
 
-type AppNotificationCategory = "payment" | "expense" | "transfer" | "approval" | "agent" | "settings" | "system";
+type AppNotificationCategory = "payment" | "expense" | "transfer" | "approval" | "agent" | "settings" | "system" | "task";
 type AppNotificationTone = "success" | "error" | "warning" | "info";
 const notificationFailureCollectors = new WeakMap<SupabaseAdminClient, unknown[]>();
 
@@ -803,6 +804,37 @@ async function uploadProfilePhoto(
     throw new Error(error.message);
   }
 
+  return path;
+}
+
+const workPhotoTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const workVoiceTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/aac"]);
+
+async function uploadWorkMedia(
+  admin: SupabaseAdminClient,
+  businessId: string,
+  file: FormDataEntryValue | null,
+  kind: "photo" | "voice",
+  requestKey: string,
+) {
+  if (!(file instanceof File) || file.size === 0) return null;
+  // Browsers report recordings as e.g. "audio/webm;codecs=opus"; the bucket allow-list matches the bare type.
+  const contentType = file.type.split(";")[0].trim().toLowerCase();
+  const allowed = kind === "photo" ? workPhotoTypes : workVoiceTypes;
+  if (!allowed.has(contentType)) {
+    return fail(kind === "photo" ? "Choose a JPG, PNG or WebP photo." : "This voice note format is not supported.");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    return fail(kind === "photo" ? "Photo must be 5 MB or smaller." : "Voice note must be 5 MB or smaller.");
+  }
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `${businessId}/work/${requestKey}/${kind}-${safeName}`;
+  const { error } = await admin.storage.from("work-media").upload(path, file, { contentType, upsert: false });
+  if (error) {
+    if (isStorageDuplicateError(error)) return path;
+    throw new Error(error.message);
+  }
   return path;
 }
 
@@ -4175,6 +4207,188 @@ const handlers = {
     const { error } = await admin.from("referral_codes").update({ active }).eq("id", id);
     if (error) throw new Error(error.message);
     return ok(active ? "Coupon restored." : "Coupon hidden.");
+  }),
+
+  checkIn: withErrors("Could not check in.", async (_formData, { admin, profile }) => {
+    const today = dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
+    const existing = await admin
+      .from("work_attendance")
+      .select("id")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", profile.id)
+      .eq("attendance_date", today)
+      .maybeSingle();
+    if (existing.error) throw new Error(existing.error.message);
+    if (existing.data) return ok("You are already checked in today.");
+    const { error } = await admin.from("work_attendance").insert({
+      business_id: profile.businessId,
+      profile_id: profile.id,
+      attendance_date: today,
+    });
+    if (error && !isDuplicateError(error)) throw new Error(error.message);
+    return ok("Checked in.");
+  }),
+
+  checkOut: withErrors("Could not check out.", async (_formData, { admin, profile }) => {
+    const today = dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
+    const response = await admin
+      .from("work_attendance")
+      .select("id,check_out_at")
+      .eq("business_id", profile.businessId)
+      .eq("profile_id", profile.id)
+      .eq("attendance_date", today)
+      .maybeSingle();
+    if (response.error) throw new Error(response.error.message);
+    const row = typedData<{ id: string; check_out_at: string | null }>(response);
+    if (!row) return fail("Check in first.");
+    if (row.check_out_at) return ok("You are already checked out today.");
+    const { error } = await admin.from("work_attendance").update({ check_out_at: new Date().toISOString() }).eq("id", row.id);
+    if (error) throw new Error(error.message);
+    return ok("Checked out.");
+  }),
+
+  createWorkTask: withErrors("Could not add task.", async (formData, { admin, profile, idempotencyKey }) => {
+    const title = asString(formData, "title");
+    const notes = asString(formData, "notes");
+    const assignedTo = asString(formData, "assigned_to") ?? profile.id;
+    const dueDate = asString(formData, "due_date");
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
+    if (!title) return fail("Enter a task title.", { title: "Task title is required." });
+    if (title.length > 200) return fail("Review the task title.", { title: "Use 200 characters or fewer." });
+    if (notes && notes.length > 2000) return fail("Review the notes.", { notes: "Use 2000 characters or fewer." });
+    if (dueDate && !isIsoDate(dueDate)) return fail("Choose a valid due date.", { due_date: "Choose a valid date." });
+
+    const assignee = assignedTo === profile.id ? null : await businessMember(admin, profile.businessId, assignedTo);
+    if (assignedTo !== profile.id && (!assignee?.active || assignee.status !== "active")) {
+      return fail("Choose an active member of this business.", { assigned_to: "Choose an active member." });
+    }
+
+    const existing = await existingByClientRequest<{ id: string }>(
+      admin, "work_tasks", "created_by", profile.id, requestKey, "id", profile.businessId,
+    );
+    if (existing) return ok("Task added.");
+
+    const response = await admin
+      .from("work_tasks")
+      .insert({
+        business_id: profile.businessId,
+        title,
+        notes,
+        assigned_to: assignedTo,
+        created_by: profile.id,
+        due_date: dueDate,
+        client_request_id: requestKey,
+      })
+      .select("id")
+      .single();
+    const task = typedData<{ id: string }>(response);
+    if (response.error || !task) throw new Error(response.error?.message ?? "Could not add task.");
+
+    if (assignee) {
+      await createNotifications(admin, {
+        recipientIds: [assignedTo],
+        actorId: profile.id,
+        title: "New task",
+        body: `${profile.full_name} assigned you: ${title}`,
+        category: "task",
+        tone: "info",
+        eventKey: `work-task:${task.id}`,
+        metadata: { task_id: task.id },
+      });
+    }
+    return ok("Task added.");
+  }),
+
+  setWorkTaskStatus: withErrors("Could not update task.", async (formData, { admin, profile }) => {
+    const id = asString(formData, "id");
+    const status = asString(formData, "status");
+    if (!id) return fail("Task is required.");
+    if (status !== "todo" && status !== "in_progress" && status !== "done") return fail("Choose a valid task stage.");
+    const response = await admin
+      .from("work_tasks")
+      .update({ status, completed_at: status === "done" ? new Date().toISOString() : null })
+      .eq("id", id)
+      .eq("business_id", profile.businessId)
+      .select("id")
+      .maybeSingle();
+    if (response.error) throw new Error(response.error.message);
+    if (!response.data) return fail("Task was not found.");
+    return ok(status === "done" ? "Task completed." : status === "in_progress" ? "Task started." : "Task moved to To do.");
+  }),
+
+  postWorkUpdate: withErrors("Could not post update.", async (formData, { admin, profile, idempotencyKey }) => {
+    const body = asString(formData, "body");
+    const taskId = asString(formData, "task_id");
+    const markDone = asBool(formData, "mark_done");
+    const voiceSeconds = asNumber(formData, "voice_seconds");
+    const photo = formData.get("photo");
+    const voice = formData.get("voice");
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const hasPhoto = photo instanceof File && photo.size > 0;
+    const hasVoice = voice instanceof File && voice.size > 0;
+    if (!body && !hasPhoto && !hasVoice) return fail("Add text, a photo or a voice note.");
+    if (body && body.length > 4000) return fail("Review the update.", { body: "Use 4000 characters or fewer." });
+
+    if (taskId) {
+      const taskResponse = await admin.from("work_tasks").select("id").eq("id", taskId).eq("business_id", profile.businessId).maybeSingle();
+      if (taskResponse.error) throw new Error(taskResponse.error.message);
+      if (!taskResponse.data) return fail("The linked task was not found.");
+    }
+
+    const existing = await existingByClientRequest<{ id: string }>(
+      admin, "work_updates", "author_id", profile.id, requestKey, "id", profile.businessId,
+    );
+    if (existing) return ok("Update posted.");
+
+    const photoPath = await uploadWorkMedia(admin, profile.businessId, photo, "photo", requestKey);
+    if (photoPath && typeof photoPath === "object") return photoPath;
+    const voicePath = await uploadWorkMedia(admin, profile.businessId, voice, "voice", requestKey);
+    if (voicePath && typeof voicePath === "object") return voicePath;
+
+    const completesTask = Boolean(taskId && markDone);
+    const { error } = await admin.from("work_updates").insert({
+      business_id: profile.businessId,
+      task_id: taskId,
+      author_id: profile.id,
+      entry_date: dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
+      body,
+      photo_path: photoPath,
+      voice_path: voicePath,
+      voice_seconds: voicePath && voiceSeconds !== null ? Math.max(0, Math.min(600, Math.round(voiceSeconds))) : null,
+      status_change: completesTask ? "done" : null,
+      client_request_id: requestKey,
+    });
+    if (error && !isDuplicateError(error)) throw new Error(error.message);
+
+    if (completesTask) {
+      const taskUpdate = await admin
+        .from("work_tasks")
+        .update({ status: "done", completed_at: new Date().toISOString() })
+        .eq("id", taskId)
+        .eq("business_id", profile.businessId);
+      if (taskUpdate.error) throw new Error(taskUpdate.error.message);
+    }
+    return ok(completesTask ? "Update posted and task completed." : "Update posted.");
+  }),
+
+  deleteWorkUpdate: withErrors("Could not delete update.", async (formData, { admin, profile }) => {
+    const id = asString(formData, "id");
+    if (!id) return fail("Update is required.");
+    const response = await admin
+      .from("work_updates")
+      .select("id,author_id,photo_path,voice_path")
+      .eq("id", id)
+      .eq("business_id", profile.businessId)
+      .maybeSingle();
+    if (response.error) throw new Error(response.error.message);
+    const update = typedData<{ id: string; author_id: string; photo_path: string | null; voice_path: string | null }>(response);
+    if (!update) return fail("Update was not found.");
+    if (update.author_id !== profile.id) return fail("You can delete only your own updates.");
+    const { error } = await admin.from("work_updates").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    const paths = [update.photo_path, update.voice_path].filter((path): path is string => Boolean(path));
+    if (paths.length) await admin.storage.from("work-media").remove(paths);
+    return ok("Update deleted.");
   }),
 } satisfies Record<string, (formData: FormData, context: ActionContext) => Promise<ActionResult>>;
 

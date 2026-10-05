@@ -11036,3 +11036,65 @@ option {
     align-self: flex-start;
   }
 }
+
+/* Work: attendance, tasks and daily work log */
+.work-page { display: grid; gap: 14px; }
+.work-toolbar { display: flex; flex-wrap: wrap; gap: 12px; }
+.work-toolbar label { display: grid; gap: 4px; flex: 1 1 160px; }
+.work-toolbar input,
+.work-toolbar select {
+  min-height: 42px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel-solid); color: var(--foreground); padding: 0 12px;
+}
+.work-card {
+  display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line);
+  border-radius: 18px; background: var(--panel);
+}
+.work-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.work-card-heading h3 { margin: 0; font-size: 1.05rem; }
+.work-inline-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.work-attendance-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.work-attendance-list li {
+  display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px;
+  border-radius: 12px; background: var(--surface-container-low);
+}
+.work-attendance-list li.present span { color: var(--good); font-weight: 600; }
+.work-attendance-list li.absent span { color: var(--muted); }
+.work-media-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.work-voice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.work-voice-preview { display: inline-flex; align-items: center; gap: 6px; }
+.work-voice-preview audio,
+.work-log-item audio { height: 36px; max-width: 100%; }
+.work-recording { color: var(--bad); }
+.work-recording-dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--bad);
+  animation: work-pulse 1s ease-in-out infinite;
+}
+@keyframes work-pulse { 50% { opacity: .35; } }
+.work-check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; }
+.work-stage-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.work-stage-chips button {
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px;
+  background: var(--panel-solid); color: var(--foreground); font-weight: 600;
+}
+.work-stage-chips button span { color: var(--muted); margin-left: 4px; }
+.work-stage-chips button.active { background: var(--brand); border-color: var(--brand); color: var(--on-primary); }
+.work-stage-chips button.active span { color: var(--on-primary); opacity: .8; }
+.work-task-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.work-task-list li {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel-solid);
+}
+.work-task-list li > div { display: grid; gap: 4px; min-width: 0; }
+.work-task-list p { margin: 0; color: var(--on-surface-variant); white-space: pre-wrap; }
+.work-overdue { color: var(--bad); font-weight: 600; }
+.work-empty { margin: 0; }
+.work-log { display: grid; gap: 14px; }
+.work-log h4 { margin: 0 0 6px; font-size: .95rem; }
+.work-log-item {
+  position: relative; display: grid; gap: 6px; padding: 10px 40px 10px 12px; margin-bottom: 8px;
+  border-radius: 14px; background: var(--surface-container-low);
+}
+.work-log-item p { margin: 0; white-space: pre-wrap; }
+.work-log-item form { position: absolute; top: 6px; right: 6px; }
+.work-log-photo img { max-width: min(260px, 100%); max-height: 220px; border-radius: 12px; object-fit: cover; }

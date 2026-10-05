@@ -18,6 +18,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   Copy,
   CreditCard,
@@ -25,6 +26,7 @@ import {
   Hotel,
   Landmark,
   LogOut,
+  Mic,
   Minus,
   MoreHorizontal,
   Pencil,
@@ -46,10 +48,16 @@ import {
 import {
   approveRecordAction,
   cancelRecordAction,
+  checkInAction,
+  checkOutAction,
   createAgentSettlementAction,
   createExpenseAction,
   createPaymentAction,
+  createWorkTaskAction,
+  deleteWorkUpdateAction,
   logoutAction,
+  postWorkUpdateAction,
+  setWorkTaskStatusAction,
   markNotificationsReadAction,
   requestPaymentTransferAction,
   saveCourseStudentAction,
@@ -65,7 +73,7 @@ import { clearPersistedQueryCache } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -97,7 +105,7 @@ type ActionModal = "positive" | "negative" | null;
 type PositiveFlow = BusinessType | "receive_money";
 type NegativeFlow = "expense" | "send_money" | "agent_settlement";
 type ClientAction = (formData: FormData) => Promise<ActionResult>;
-type MutationRefreshScope = "dashboard" | "bootstrap" | "dashboard-library" | "none";
+type MutationRefreshScope = "dashboard" | "bootstrap" | "dashboard-library" | "work" | "none";
 type MutationRefreshDetail = {
   scope: MutationRefreshScope;
   savingMessageKey: string;
@@ -289,6 +297,8 @@ function getTabIcon(id: Tab) {
       return <BookOpen size={21} />;
     case "closing":
       return <ClipboardList size={21} />;
+    case "work":
+      return <ClipboardCheck size={21} />;
     case "settings":
       return <Settings size={21} />;
     case "notifications":
@@ -301,6 +311,7 @@ const tabItems: { id: Tab; labelKey: string; icon: ReactNode }[] = [
   { id: "payments", labelKey: "transactions", icon: <ReceiptText size={17} /> },
   { id: "library_students", labelKey: "libraryStudents", icon: <BookOpen size={17} /> },
   { id: "closing", labelKey: "closing", icon: <ClipboardList size={17} /> },
+  { id: "work", labelKey: "work", icon: <ClipboardCheck size={17} /> },
 ];
 
 const paymentOptions: { type: BusinessType | "expense"; labelKey: string; icon: ReactNode }[] = [
@@ -387,6 +398,51 @@ const messages: Record<Language, Record<string, string>> = {
     changeRequests: "Change requests",
     changePassword: "Change password",
     closing: "Closing",
+    work: "Work",
+    date: "Date",
+    member: "Member",
+    loading: "Loading…",
+    attendance: "Attendance",
+    checkIn: "Check in",
+    checkOut: "Check out",
+    checkedInSince: "In since",
+    notCheckedIn: "Not checked in",
+    workedFor: "Worked",
+    teamToday: "Team attendance",
+    present: "Present",
+    absent: "Not in",
+    postUpdate: "Post update",
+    whatDidYouDo: "What did you do today?",
+    addPhoto: "Photo",
+    recordVoice: "Voice note",
+    stopRecording: "Stop",
+    removeVoice: "Remove voice note",
+    linkedTask: "Linked task",
+    noLinkedTask: "No task",
+    markTaskDone: "Mark this task done",
+    tasks: "Tasks",
+    addTask: "Add task",
+    taskTitle: "Task",
+    assignTo: "Assign to",
+    dueDate: "Due date",
+    taskNotes: "Notes",
+    toDo: "To do",
+    inProgress: "In progress",
+    done: "Done",
+    startTask: "Start",
+    completeTask: "Complete",
+    reopenTask: "Reopen",
+    workLog: "Work log",
+    noWorkUpdates: "No updates for this day yet.",
+    noTasksHere: "No tasks here.",
+    everyone: "Everyone",
+    me: "Me",
+    overdue: "Overdue",
+    deleteUpdate: "Delete update",
+    microphoneBlocked: "Allow microphone access to record a voice note.",
+    voiceNotSupported: "Voice recording is not supported on this device.",
+    completedTask: "completed",
+    assignedBy: "by",
     closingBalance: "Closing balance",
     closingBalancePostingNote: "IN and OUT use transaction date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
     closingCash: "Closing cash",
@@ -801,6 +857,51 @@ const messages: Record<Language, Record<string, string>> = {
     changeRequests: "बदलाव की मांग",
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
+    work: "काम",
+    date: "तारीख",
+    member: "सदस्य",
+    loading: "लोड हो रहा है…",
+    attendance: "हाज़िरी",
+    checkIn: "चेक इन",
+    checkOut: "चेक आउट",
+    checkedInSince: "से मौजूद",
+    notCheckedIn: "चेक इन नहीं किया",
+    workedFor: "काम किया",
+    teamToday: "टीम हाज़िरी",
+    present: "मौजूद",
+    absent: "मौजूद नहीं",
+    postUpdate: "अपडेट डालें",
+    whatDidYouDo: "आज आपने क्या किया?",
+    addPhoto: "फ़ोटो",
+    recordVoice: "वॉइस नोट",
+    stopRecording: "रोकें",
+    removeVoice: "वॉइस नोट हटाएँ",
+    linkedTask: "जुड़ा काम",
+    noLinkedTask: "कोई काम नहीं",
+    markTaskDone: "इस काम को पूरा करें",
+    tasks: "काम की सूची",
+    addTask: "काम जोड़ें",
+    taskTitle: "काम",
+    assignTo: "किसे दें",
+    dueDate: "अंतिम तारीख",
+    taskNotes: "नोट्स",
+    toDo: "करना है",
+    inProgress: "चल रहा है",
+    done: "पूरा",
+    startTask: "शुरू करें",
+    completeTask: "पूरा करें",
+    reopenTask: "फिर खोलें",
+    workLog: "काम का लेखा",
+    noWorkUpdates: "इस दिन का कोई अपडेट नहीं।",
+    noTasksHere: "यहाँ कोई काम नहीं।",
+    everyone: "सभी",
+    me: "मैं",
+    overdue: "समय निकल गया",
+    deleteUpdate: "अपडेट हटाएँ",
+    microphoneBlocked: "वॉइस नोट के लिए माइक की अनुमति दें।",
+    voiceNotSupported: "इस डिवाइस पर वॉइस रिकॉर्डिंग उपलब्ध नहीं है।",
+    completedTask: "पूरा किया",
+    assignedBy: "द्वारा",
     closingBalance: "बंद हिसाब",
     closingBalancePostingNote: "IN और OUT ट्रांजैक्शन तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
     closingCash: "दिन के अंत का नकद",
@@ -1253,6 +1354,15 @@ const libraryRefreshActions = new Set<ClientAction>([
   setStudentStatusAction,
 ]);
 
+const workRefreshActions = new Set<ClientAction>([
+  checkInAction,
+  checkOutAction,
+  createWorkTaskAction,
+  deleteWorkUpdateAction,
+  postWorkUpdateAction,
+  setWorkTaskStatusAction,
+]);
+
 function setDocumentAppBusy(busy: boolean) {
   if (typeof document === "undefined") return;
   if (busy) {
@@ -1280,6 +1390,13 @@ function mutationRefreshDetail(action: ClientAction, formData: FormData): Mutati
     return {
       scope: "dashboard",
       savingMessageKey: "savingTransaction",
+    };
+  }
+
+  if (workRefreshActions.has(action)) {
+    return {
+      scope: "work",
+      savingMessageKey: "savingChanges",
     };
   }
 
@@ -2319,7 +2436,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     placeholderData: (previousDashboard, previousQuery) =>
       previousQuery?.queryKey[2] === activeOperationalPage ? previousDashboard : undefined,
     staleTime: activeOperationalPage === "students" ? 300_000 : 30_000,
-    enabled: tab !== "notifications" && tab !== "library_students",
+    enabled: tab !== "notifications" && tab !== "library_students" && tab !== "work",
   });
   const prefetchOperationalFilters = useCallback((
     nextTab: AppTab,
@@ -2402,11 +2519,11 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     [enabledModules, scopedBusinessTypes],
   );
   const visibleTabItems = useMemo(() => currentUserIsSalesAgent
-    ? tabItems.filter((item) => item.id === "home" || item.id === "payments")
+    ? tabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "work")
     : tabItems.filter((item) => item.id !== "library_students" || canViewStudentRecords),
   [canViewStudentRecords, currentUserIsSalesAgent]);
   const bottomTabItems = useMemo(
-    () => visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing"),
+    () => visibleTabItems.filter((item) => item.id === "home" || item.id === "payments" || item.id === "closing" || item.id === "work"),
     [visibleTabItems],
   );
 
@@ -2550,6 +2667,9 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
       if (detail.scope === "dashboard-library") {
         refreshes.push(refreshStudentCaches());
       }
+      if (detail.scope === "work") {
+        refreshes.push(queryClient.invalidateQueries({ queryKey: ["work", cacheScope] }));
+      }
       await Promise.all(refreshes);
     }
 
@@ -2626,6 +2746,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           queryClient.invalidateQueries({ queryKey: ["student-detail", cacheScope] }),
           queryClient.invalidateQueries({ queryKey: ["library-student-history", cacheScope] }),
           queryClient.invalidateQueries({ queryKey: ["course-student-history", cacheScope] }),
+          queryClient.invalidateQueries({ queryKey: ["work", cacheScope] }),
         ]);
       } catch (error) {
         pushNotice({
@@ -3219,7 +3340,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
     : pending
       ? t("saving")
       : null;
-  const pageUsesOperationalQuery = tab !== "notifications" && tab !== "library_students";
+  const pageUsesOperationalQuery = tab !== "notifications" && tab !== "library_students" && tab !== "work";
   const operationalPagePending = pageUsesOperationalQuery && (
     !hasHydrated
     || (dashboardQuery.isPending && !dashboardQuery.data)
@@ -3558,6 +3679,16 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
                 setSelectedSourceId={(sourceId) => setStudentFilters((current) => ({ ...current, sourceId }))}
                 listMode={effectiveStudentFilters.status}
                 setListMode={(status) => setStudentFilters((current) => ({ ...current, status }))}
+                setNotice={pushNotice}
+                startTransition={startTransition}
+              />
+            ) : null}
+
+            {tab === "work" ? (
+              <WorkView
+                businessId={businessId}
+                cacheScope={cacheScope}
+                profileId={appData.profile.id}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -9728,6 +9859,412 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
         <input name="end_date" type="date" defaultValue={subscription ? addMonthsIso() : todayIso()} required />
       </label>
     </>
+  );
+}
+
+function formatTimeInZone(value: string | null | undefined, timeZone: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-IN", { timeZone, hour: "numeric", minute: "2-digit", hour12: true })
+    .format(date)
+    .replace(/\b(am|pm)\b/gi, (period) => period.toUpperCase());
+}
+
+function formatDuration(fromIso: string, toIso: string) {
+  const minutes = Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60000));
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+const workNextStage: Record<WorkTaskStatus, { status: WorkTaskStatus; labelKey: string }> = {
+  todo: { status: "in_progress", labelKey: "startTask" },
+  in_progress: { status: "done", labelKey: "completeTask" },
+  done: { status: "todo", labelKey: "reopenTask" },
+};
+
+const voiceNoteMaxSeconds = 120;
+
+function preferredVoiceMimeType() {
+  if (typeof MediaRecorder === "undefined") return null;
+  return ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/webm"]
+    .find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+}
+
+function VoiceNoteRecorder({ setNotice }: { setNotice: (notice: ActionResult | null) => void }) {
+  const { t } = useLanguage();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const stopTimerRef = useRef<number | null>(null);
+  const startedAtRef = useRef(0);
+  const [recording, setRecording] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(0);
+
+  const clearVoice = useCallback(() => {
+    if (inputRef.current) preparedPhotoFiles.delete(inputRef.current);
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setSeconds(0);
+  }, []);
+
+  useEffect(() => {
+    const form = inputRef.current?.form;
+    if (!form) return;
+    form.addEventListener("reset", clearVoice);
+    return () => form.removeEventListener("reset", clearVoice);
+  }, [clearVoice]);
+
+  useEffect(() => () => {
+    if (stopTimerRef.current) window.clearTimeout(stopTimerRef.current);
+    recorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  async function startRecording() {
+    const mimeType = preferredVoiceMimeType();
+    if (mimeType === null || !navigator.mediaDevices?.getUserMedia) {
+      setNotice({ ok: false, message: t("voiceNotSupported") });
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setNotice({ ok: false, message: t("microphoneBlocked") });
+      return;
+    }
+    clearVoice();
+    const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 32000 });
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+      if (stopTimerRef.current) window.clearTimeout(stopTimerRef.current);
+      setRecording(false);
+      const type = recorder.mimeType || mimeType || "audio/webm";
+      const blob = new Blob(chunks, { type });
+      if (blob.size === 0 || !inputRef.current) return;
+      const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+      preparedPhotoFiles.set(inputRef.current, new File([blob], `voice-note.${extension}`, { type }));
+      setSeconds(Math.min(voiceNoteMaxSeconds, Math.round((Date.now() - startedAtRef.current) / 1000)));
+      setPreviewUrl(URL.createObjectURL(blob));
+    };
+    recorderRef.current = recorder;
+    startedAtRef.current = Date.now();
+    recorder.start();
+    setRecording(true);
+    stopTimerRef.current = window.setTimeout(() => recorder.state === "recording" && recorder.stop(), voiceNoteMaxSeconds * 1000);
+  }
+
+  function stopRecording() {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  }
+
+  return (
+    <div className="work-voice">
+      <input ref={inputRef} type="file" name="voice" hidden tabIndex={-1} aria-hidden="true" />
+      <input type="hidden" name="voice_seconds" value={previewUrl ? String(seconds) : ""} />
+      {recording ? (
+        <button className="secondary-button work-recording" type="button" onClick={stopRecording}>
+          <span className="work-recording-dot" aria-hidden="true" />
+          {t("stopRecording")}
+        </button>
+      ) : (
+        <button className="secondary-button" type="button" onClick={startRecording}>
+          <Mic size={16} />
+          {t("recordVoice")}
+        </button>
+      )}
+      {previewUrl ? (
+        <span className="work-voice-preview">
+          <audio controls src={previewUrl} preload="metadata" />
+          <button className="icon-button" type="button" onClick={clearVoice} aria-label={t("removeVoice")}>
+            <Trash2 size={16} />
+          </button>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkView({
+  businessId,
+  cacheScope,
+  profileId,
+  setNotice,
+  startTransition,
+}: {
+  businessId: string;
+  cacheScope: string;
+  profileId: string;
+  setNotice: (notice: ActionResult | null) => void;
+  startTransition: ReturnType<typeof useTransition>[1];
+}) {
+  const { t } = useLanguage();
+  const [date, setDate] = useState<string | null>(null);
+  const [personFilter, setPersonFilter] = useState("all");
+  const [taskStage, setTaskStage] = useState<WorkTaskStatus>("todo");
+  const [addingTask, setAddingTask] = useState(false);
+  const [linkedTaskId, setLinkedTaskId] = useState("");
+  const workQuery = useQuery({
+    queryKey: ["work", cacheScope, date ?? "today"],
+    queryFn: ({ signal }) => fetchJson<WorkPage>(`/api/businesses/${businessId}/work${date ? `?date=${date}` : ""}`, signal),
+    staleTime: 15_000,
+  });
+  const data = workQuery.data;
+
+  if (!data) {
+    return (
+      <section className="work-page" aria-busy={workQuery.isPending}>
+        <p className="muted">{workQuery.isError ? workQuery.error.message : t("loading")}</p>
+      </section>
+    );
+  }
+
+  const memberName = (id: string) => data.members.find((member) => member.id === id)?.full_name ?? "Member";
+  const isToday = data.date === data.today;
+  const myAttendance = data.attendance.find((row) => row.profile_id === profileId);
+  const matchesPerson = (id: string) => personFilter === "all" || personFilter === id;
+  const openTasks = data.tasks.filter((task) => task.status !== "done");
+  const stageTasks = data.tasks.filter((task) => task.status === taskStage && matchesPerson(task.assigned_to));
+  const stageCount = (stage: WorkTaskStatus) => data.tasks.filter((task) => task.status === stage && matchesPerson(task.assigned_to)).length;
+  const taskTitle = (id: string | null) => data.tasks.find((task) => task.id === id)?.title ?? null;
+  const visibleUpdates = data.updates.filter((update) => matchesPerson(update.author_id));
+  const updatesByAuthor = visibleUpdates.reduce<Map<string, WorkUpdate[]>>((groups, update) => {
+    groups.set(update.author_id, [...(groups.get(update.author_id) ?? []), update]);
+    return groups;
+  }, new Map());
+
+  return (
+    <section className="work-page" aria-label={t("work")}>
+      <div className="work-toolbar">
+        <label>
+          <span className="eyebrow">{t("date")}</span>
+          <input
+            type="date"
+            value={data.date}
+            max={data.today}
+            onChange={(event) => setDate(event.target.value && event.target.value !== data.today ? event.target.value : null)}
+          />
+        </label>
+        <label>
+          <span className="eyebrow">{t("member")}</span>
+          <select value={personFilter} onChange={(event) => setPersonFilter(event.target.value)}>
+            <option value="all">{t("everyone")}</option>
+            <option value={profileId}>{t("me")}</option>
+            {data.members.filter((member) => member.id !== profileId).map((member) => (
+              <option key={member.id} value={member.id}>{member.full_name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <article className="work-card">
+        <header className="work-card-heading">
+          <h3>{t("attendance")}</h3>
+          {isToday ? (
+            myAttendance ? (
+              myAttendance.check_out_at ? (
+                <span className="status-pill active">
+                  {formatTimeInZone(myAttendance.check_in_at, data.timezone)} – {formatTimeInZone(myAttendance.check_out_at, data.timezone)} · {formatDuration(myAttendance.check_in_at, myAttendance.check_out_at)}
+                </span>
+              ) : (
+                <form onSubmit={(event) => submitWith(event, checkOutAction, setNotice, startTransition)} className="work-inline-form">
+                  <span className="muted">{t("checkedInSince")} {formatTimeInZone(myAttendance.check_in_at, data.timezone)}</span>
+                  <button className="secondary-button" type="submit">{t("checkOut")}</button>
+                </form>
+              )
+            ) : (
+              <form onSubmit={(event) => submitWith(event, checkInAction, setNotice, startTransition)}>
+                <button className="primary-button" type="submit">
+                  <UserCheck size={16} />
+                  {t("checkIn")}
+                </button>
+              </form>
+            )
+          ) : null}
+        </header>
+        <ul className="work-attendance-list">
+          {data.members.filter((member) => matchesPerson(member.id)).map((member) => {
+            const row = data.attendance.find((item) => item.profile_id === member.id);
+            return (
+              <li key={member.id} className={row ? "present" : "absent"}>
+                <strong>{member.full_name}</strong>
+                <span>
+                  {row
+                    ? `${formatTimeInZone(row.check_in_at, data.timezone)} – ${row.check_out_at ? formatTimeInZone(row.check_out_at, data.timezone) : "…"}`
+                    : t("absent")}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </article>
+
+      {isToday ? (
+        <article className="work-card">
+          <header className="work-card-heading"><h3>{t("postUpdate")}</h3></header>
+          <form
+            className="form-grid"
+            onSubmit={(event) => submitWith(event, postWorkUpdateAction, setNotice, startTransition, true, () => setLinkedTaskId(""))}
+          >
+            <label className="full-span">
+              {t("whatDidYouDo")}
+              <textarea name="body" rows={3} maxLength={4000} />
+            </label>
+            <div className="work-media-row full-span">
+              <CompressedImageInput inputName="photo" label={t("addPhoto")} previewLabel={t("addPhoto")} variant="document" />
+              <VoiceNoteRecorder setNotice={setNotice} />
+            </div>
+            <label className="full-span">
+              {t("linkedTask")}
+              <select name="task_id" value={linkedTaskId} onChange={(event) => setLinkedTaskId(event.target.value)}>
+                <option value="">{t("noLinkedTask")}</option>
+                {openTasks.map((task) => (
+                  <option key={task.id} value={task.id}>{task.title} · {memberName(task.assigned_to)}</option>
+                ))}
+              </select>
+            </label>
+            {linkedTaskId ? (
+              <label className="work-check full-span">
+                <input type="checkbox" name="mark_done" />
+                {t("markTaskDone")}
+              </label>
+            ) : null}
+            <button className="primary-button full-span" type="submit">{t("postUpdate")}</button>
+          </form>
+        </article>
+      ) : null}
+
+      <article className="work-card">
+        <header className="work-card-heading">
+          <h3>{t("tasks")}</h3>
+          <button className="secondary-button" type="button" onClick={() => setAddingTask((current) => !current)}>
+            {addingTask ? <X size={16} /> : <Plus size={16} />}
+            {addingTask ? t("cancel") : t("addTask")}
+          </button>
+        </header>
+        {addingTask ? (
+          <form
+            className="form-grid two work-task-form"
+            onSubmit={(event) => submitWith(event, createWorkTaskAction, setNotice, startTransition, true, () => setAddingTask(false))}
+          >
+            <label className="full-span">
+              {t("taskTitle")}
+              <input name="title" required maxLength={200} />
+            </label>
+            <label>
+              {t("assignTo")}
+              <select name="assigned_to" defaultValue={profileId}>
+                {data.members.map((member) => (
+                  <option key={member.id} value={member.id}>{member.id === profileId ? `${member.full_name} (${t("me")})` : member.full_name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("dueDate")}
+              <input name="due_date" type="date" min={data.today} />
+            </label>
+            <label className="full-span">
+              {t("taskNotes")}
+              <textarea name="notes" rows={2} maxLength={2000} />
+            </label>
+            <button className="primary-button full-span" type="submit">{t("addTask")}</button>
+          </form>
+        ) : null}
+        <div className="work-stage-chips" role="tablist" aria-label={t("tasks")}>
+          {(["todo", "in_progress", "done"] as const).map((stage) => (
+            <button
+              key={stage}
+              type="button"
+              role="tab"
+              aria-selected={taskStage === stage}
+              className={taskStage === stage ? "active" : ""}
+              onClick={() => setTaskStage(stage)}
+            >
+              {t(stage === "todo" ? "toDo" : stage === "in_progress" ? "inProgress" : "done")} <span>{stageCount(stage)}</span>
+            </button>
+          ))}
+        </div>
+        {stageTasks.length ? (
+          <ul className="work-task-list">
+            {stageTasks.map((task: WorkTask) => {
+              const overdue = task.status !== "done" && Boolean(task.due_date) && (task.due_date as string) < data.today;
+              const next = workNextStage[task.status];
+              return (
+                <li key={task.id}>
+                  <div>
+                    <strong>{task.title}</strong>
+                    <small className="muted">
+                      {memberName(task.assigned_to)}
+                      {task.created_by !== task.assigned_to ? ` · ${t("assignedBy")} ${memberName(task.created_by)}` : ""}
+                      {task.due_date ? <> · <span className={overdue ? "work-overdue" : ""}>{overdue ? `${t("overdue")} ` : ""}{displayDate(task.due_date)}</span></> : null}
+                    </small>
+                    {task.notes ? <p>{task.notes}</p> : null}
+                  </div>
+                  <form onSubmit={(event) => submitWith(event, setWorkTaskStatusAction, setNotice, startTransition, false)}>
+                    <input type="hidden" name="id" value={task.id} />
+                    <input type="hidden" name="status" value={next.status} />
+                    <button className={next.status === "done" ? "primary-button" : "secondary-button"} type="submit">
+                      {next.status === "done" ? <Check size={16} /> : null}
+                      {t(next.labelKey)}
+                    </button>
+                  </form>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="muted work-empty">{t("noTasksHere")}</p>
+        )}
+      </article>
+
+      <article className="work-card">
+        <header className="work-card-heading"><h3>{t("workLog")}</h3></header>
+        {updatesByAuthor.size ? (
+          <div className="work-log">
+            {[...updatesByAuthor.entries()].map(([authorId, updates]) => (
+              <section key={authorId}>
+                <h4>{memberName(authorId)}</h4>
+                {updates.map((update) => {
+                  const linkedTitle = taskTitle(update.task_id);
+                  return (
+                    <article key={update.id} className="work-log-item">
+                      <small className="muted">
+                        {formatTimeInZone(update.created_at, data.timezone)}
+                        {linkedTitle ? ` · ${linkedTitle}` : ""}
+                        {update.status_change === "done" ? ` · ${t("completedTask")}` : ""}
+                      </small>
+                      {update.body ? <p>{update.body}</p> : null}
+                      {update.photo_url ? (
+                        <a href={update.photo_url} target="_blank" rel="noreferrer" className="work-log-photo">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- signed Supabase URLs are not served through next/image */}
+                          <img src={update.photo_url} alt="" loading="lazy" />
+                        </a>
+                      ) : null}
+                      {update.voice_url ? <audio controls preload="none" src={update.voice_url} /> : null}
+                      {update.author_id === profileId ? (
+                        <form onSubmit={(event) => submitWith(event, deleteWorkUpdateAction, setNotice, startTransition, false)}>
+                          <input type="hidden" name="id" value={update.id} />
+                          <button className="icon-button" type="submit" aria-label={t("deleteUpdate")}>
+                            <Trash2 size={15} />
+                          </button>
+                        </form>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <p className="muted work-empty">{t("noWorkUpdates")}</p>
+        )}
+      </article>
+    </section>
   );
 }
 

@@ -4,6 +4,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  experimental: {
+    serverActions: {
+      // Work updates carry a compressed photo (≤1 MB) plus a voice note; Vercel caps request bodies at 4.5 MB.
+      bodySizeLimit: "4mb",
+    },
+  },
   async headers() {
     return [
       {
