@@ -1650,7 +1650,6 @@ const handlers = {
 
     const roomId = asString(formData, "room_id");
     const courseId = asString(formData, "course_id");
-    const skillCourseId = asString(formData, "skill_course_id");
     const requestedCourseStudentId = asString(formData, "course_student_id");
     const libraryPaymentKind = asString(formData, "library_payment_kind") === "dues" ? "dues" : "renewal";
     const coursePaymentKind = asString(formData, "course_payment_kind") === "dues" ? "dues" : "renewal";
@@ -1816,8 +1815,8 @@ const handlers = {
     }
 
     if (business === "course") {
-      const sourceCourseId = skillCourseId ?? courseId;
-      if (!sourceCourseId) return fail("Choose a main or skill course.");
+      const sourceCourseId = courseId;
+      if (!sourceCourseId) return fail("Choose a course.");
       let existingCourseStudent: CourseStudent | null = null;
       if (requestedCourseStudentId) {
         const existingStudentResponse = await admin
@@ -1914,7 +1913,6 @@ const handlers = {
       slot_hours: libraryStudentFields?.slotHours
         ?? (business === "course" && coursePaymentKind === "dues" ? courseStudent?.slot_hours : asNumber(formData, "slot_hours")),
       course_id: courseId,
-      skill_course_id: skillCourseId,
       course_student_id: courseStudent?.id ?? null,
       student_subscription_key: studentSubscriptionKey,
       referral_code_id: referralCodeId,
@@ -2368,10 +2366,8 @@ const handlers = {
       .update(identityUpdates)
       .eq("business_type", "course")
       .eq("record_status", "active");
-    if (typeof payment.skill_course_id === "string" && payment.skill_course_id) {
-      identityQuery = identityQuery.eq("skill_course_id", payment.skill_course_id);
-    } else if (typeof payment.course_id === "string" && payment.course_id) {
-      identityQuery = identityQuery.eq("course_id", payment.course_id).is("skill_course_id", null);
+    if (typeof payment.course_id === "string" && payment.course_id) {
+      identityQuery = identityQuery.eq("course_id", payment.course_id);
     } else {
       identityQuery = identityQuery.eq("id", paymentId);
     }
@@ -2397,7 +2393,7 @@ const handlers = {
       .eq("id", paymentId);
     if (error) throw new Error(error.message);
 
-    const sourceCourseId = String(payment.skill_course_id ?? payment.course_id ?? "");
+    const sourceCourseId = String(payment.course_id ?? "");
     if (!sourceCourseId) return fail("Course source was not found.");
     const identityKey = courseStudentIdentityKey(rollNumber, customerName, paymentId);
     if (!identityKey) return fail("Student name and roll number are required.");
@@ -4032,22 +4028,15 @@ const handlers = {
   saveCourse: withErrors("Could not save course.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const name = asString(formData, "name");
-    const kind = asString(formData, "kind") ?? "main";
     if (!name) return fail("Enter a course name.", { name: "Course name is required." });
     if (name.length > 120) {
       return fail("Review the course name.", { name: "Use 120 characters or fewer." });
     }
-    if (kind !== "main" && kind !== "skill") {
-      return fail("Choose a valid course type.", { kind: "Choose Main course or Skill course." });
-    }
-    const duplicateMessage = kind === "skill"
-      ? "This skill course already exists."
-      : "This course already exists.";
+    const duplicateMessage = "This course already exists.";
     const existingResponse = await admin
       .from("courses")
       .select("id,name,active")
-      .eq("business_id", profile.businessId)
-      .eq("kind", kind);
+      .eq("business_id", profile.businessId);
     if (existingResponse.error) throw new Error(existingResponse.error.message);
     const normalizedName = name.toLocaleLowerCase();
     const existing = typedDataArray<{ id: string; name: string; active: boolean }>(existingResponse)
@@ -4063,26 +4052,24 @@ const handlers = {
     const { error } = await admin.from("courses").insert({
       business_id: profile.businessId,
       name,
-      kind,
       active: true,
     });
     if (isDuplicateError(error)) {
       return fail(duplicateMessage, { name: "Choose another name." });
     }
     if (error) throw new Error(error.message);
-    return ok(kind === "skill" ? "Skill course saved." : "Course saved.");
+    return ok("Course saved.");
   }),
 
   deleteCourse: withErrors("Could not delete course.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");
     if (!id) return fail("Course is required.");
-    const [mainPayments, skillPayments, students] = await Promise.all([
+    const [payments, students] = await Promise.all([
       referencedRowCount(admin, "payments", "course_id", id),
-      referencedRowCount(admin, "payments", "skill_course_id", id),
       referencedRowCount(admin, "course_students", "source_course_id", id),
     ]);
-    if (mainPayments + skillPayments + students > 0) {
+    if (payments + students > 0) {
       const { error } = await admin.from("courses").update({ active: false }).eq("id", id);
       if (error) throw new Error(error.message);
       return ok("Course hidden because student or transaction history uses it.");

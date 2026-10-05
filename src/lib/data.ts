@@ -157,7 +157,7 @@ async function loadBootstrap(
     supabase.from("business_manager_unit_scopes").select("business_id,manager_profile_id,business_type").eq("business_id", businessContext.business.id),
     supabase.from("business_staff_unit_assignments").select("business_id,staff_profile_id,business_type,manager_profile_id").eq("business_id", businessContext.business.id),
     supabase.from("rooms").select("*").eq("business_id", businessContext.business.id).order("room_number"),
-    supabase.from("courses").select("*").eq("business_id", businessContext.business.id).order("kind").order("name"),
+    supabase.from("courses").select("*").eq("business_id", businessContext.business.id).order("name"),
     supabase.from("referral_codes").select("*").eq("business_id", businessContext.business.id).order("code"),
     supabase.from("app_notifications").select("*").eq("business_id", businessContext.business.id).eq("recipient_id", userId).order("created_at", { ascending: false }).limit(80),
   ]);

@@ -100,7 +100,7 @@ With the service role key set, `/setup` remains a deployment-only bootstrap for 
 - Owner settlement by amount
 - Daily closing screen calculated from all previous unsettled ledger entries
 - Staff permissions by collection type
-- Owner-only settings for rooms, courses, skill courses, and referral codes
+- Owner-only settings for rooms, courses, and referral codes
 - Cash settlement chain from Staff to Manager to Owner, with Owner funding transfers to Managers or Staff
 - Automatic referral-code deactivation when its sales-agent membership is suspended
 - Referral code linkage for sales-agent visibility

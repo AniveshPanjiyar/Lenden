@@ -177,7 +177,6 @@ export type Course = {
   id: string;
   business_id: string;
   name: string;
-  kind: "main" | "skill";
   active: boolean;
 };
 
@@ -221,7 +220,6 @@ export type Payment = {
   course_student_id: string | null;
   student_subscription_key: string | null;
   course_id: string | null;
-  skill_course_id: string | null;
   referral_code_id: string | null;
   referral_code_snapshot: string | null;
   referral_agent_id: string | null;

@@ -64,7 +64,7 @@ const transactionModes = ["all", "cash", "online", "mixed"] as const;
 const businessTypes = ["all", "guest_house", "library", "course", "general"] as const;
 const studentStatuses = ["active", "live", "inactive"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
-const studentSourcePattern = /^(library|(?:course|skill):[0-9a-f-]{36})$/i;
+const studentSourcePattern = /^(library|course:[0-9a-f-]{36})$/i;
 
 function singleParam(params: RawSearchParams, name: string) {
   const value = params[name];

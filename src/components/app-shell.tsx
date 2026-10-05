@@ -110,8 +110,8 @@ type LibraryStudentListMode = "active" | "live" | "inactive";
 type StudentDrawerView = "details" | "history" | "subscription";
 type StudentRecordSource =
   | { id: "library"; type: "library"; label: string }
-  | { id: string; type: "mainCourse" | "skillCourse"; label: string; course: Course };
-type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "mainCourse" | "skillCourse" }>;
+  | { id: string; type: "course"; label: string; course: Course };
+type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "course" }>;
 type CourseStudentRecord = {
   id: string;
   paymentId: string | null;
@@ -644,7 +644,6 @@ const messages: Record<Language, Record<string, string>> = {
     selectAnotherType: "Select another type",
     selectCourse: "Select course",
     selectRoom: "Select room",
-    selectSkill: "Select skill",
     selectStaff: "Select staff",
     selectUser: "Select user",
     searchUser: "Search user",
@@ -669,7 +668,6 @@ const messages: Record<Language, Record<string, string>> = {
     settlementHistory: "Settlement history",
     settlements: "Settlements",
     shikshanSansthan: "Shikshan Sansthan",
-    skill: "Skill",
     slotHours: "Slot hours",
     staff: "Staff",
     staffBusinessStatus: "My service status",
@@ -1060,7 +1058,6 @@ const messages: Record<Language, Record<string, string>> = {
     selectAnotherType: "दूसरा प्रकार चुनें",
     selectCourse: "कोर्स चुनें",
     selectRoom: "कमरा चुनें",
-    selectSkill: "स्किल चुनें",
     selectStaff: "स्टाफ चुनें",
     selectUser: "यूजर चुनें",
     searchUser: "यूजर खोजें",
@@ -1085,7 +1082,6 @@ const messages: Record<Language, Record<string, string>> = {
     settlementHistory: "सेटलमेंट हिसाब",
     settlements: "सेटलमेंट",
     shikshanSansthan: "शिक्षण संस्थान",
-    skill: "स्किल",
     slotHours: "घंटा",
     staff: "स्टाफ",
     staffBusinessStatus: "मेरे काम का स्टेटस",
@@ -2880,8 +2876,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
   );
   const canViewSharedBusinessHistory =
     !currentUserIsSalesAgent && (owner || scopedBusinessTypes.size > 0);
-  const mainCourses = appData.courses.filter((course) => course.kind === "main" && course.active);
-  const skillCourses = appData.courses.filter((course) => course.kind === "skill" && course.active);
+  const activeCourses = appData.courses.filter((course) => course.active);
   const activeRooms = appData.rooms.filter((room) => room.active);
   const salesAgents = appData.profiles.filter((profile) => profile.active && profile.membership_status === "active" && profile.role === "sales_agent");
   const receiveMoneyProfiles = appData.profiles.filter((item) => {
@@ -3632,8 +3627,7 @@ export function AppShell({ data, initialViewState }: { data: AppData; initialVie
           canUsePayment={canUsePayment}
           businessTypes={availableBusinessTypes}
           rooms={activeRooms}
-          mainCourses={mainCourses}
-          skillCourses={skillCourses}
+          courses={activeCourses}
           referrals={appData.referrals}
           courseStudents={appData.courseStudents}
           libraryStudents={appData.libraryStudents}
@@ -7242,7 +7236,7 @@ function SubscriptionHistoryTimeline({
 }
 
 function studentRecordSourceId(course: Course) {
-  return `${course.kind === "skill" ? "skill" : "course"}:${course.id}`;
+  return `course:${course.id}`;
 }
 
 function studentRecordSources(
@@ -7256,8 +7250,8 @@ function studentRecordSources(
     ...(includeLibrary ? [{ id: "library", type: "library", label: t("library") } satisfies StudentRecordSource] : []),
     ...visibleCourses.map((course): StudentRecordSource => ({
       id: studentRecordSourceId(course),
-      type: course.kind === "skill" ? "skillCourse" : "mainCourse",
-      label: course.kind === "skill" ? `${course.name} (${t("skill")})` : course.name,
+      type: "course",
+      label: course.name,
       course,
     })),
   ];
@@ -8022,8 +8016,7 @@ function LibraryStudentsView({
                     cacheScope={cacheScope}
                     type="library"
                     rooms={[]}
-                    mainCourses={[]}
-                    skillCourses={[]}
+                    courses={[]}
                     referrals={[]}
                     courseStudents={mergedCourseStudentRows}
                     libraryStudents={mergedLibraryStudents}
@@ -8047,8 +8040,7 @@ function LibraryStudentsView({
                     cacheScope={cacheScope}
                     type="course"
                     rooms={[]}
-                    mainCourses={courses.filter((course) => course.kind === "main")}
-                    skillCourses={courses.filter((course) => course.kind === "skill")}
+                    courses={courses}
                     referrals={[]}
                     courseStudents={mergedCourseStudentRows}
                     libraryStudents={mergedLibraryStudents}
@@ -8092,8 +8084,7 @@ function StudentCollectionFlow({
   businessId,
   cacheScope,
   type,
-  mainCourses,
-  skillCourses,
+  courses,
   referrals,
   courseStudents,
   libraryStudents,
@@ -8104,8 +8095,7 @@ function StudentCollectionFlow({
   businessId: string;
   cacheScope: string;
   type: "library" | "course";
-  mainCourses: Course[];
-  skillCourses: Course[];
+  courses: Course[];
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
@@ -8118,8 +8108,8 @@ function StudentCollectionFlow({
   const studentSources = useMemo(
     () => type === "library"
       ? [{ id: "library", type: "library", label: t("library") } satisfies StudentRecordSource]
-      : studentRecordSources([...mainCourses, ...skillCourses], t, false, true),
-    [mainCourses, skillCourses, t, type],
+      : studentRecordSources(courses, t, false, true),
+    [courses, t, type],
   );
   const [selectedSourceId, setSelectedSourceId] = useState(studentSources[0]?.id ?? "");
   const selectedCourseSource = studentSources.find(
@@ -8157,8 +8147,7 @@ function StudentCollectionFlow({
           cacheScope={cacheScope}
           type={type}
           rooms={[]}
-          mainCourses={mainCourses}
-          skillCourses={skillCourses}
+          courses={courses}
           referrals={referrals}
           courseStudents={courseStudents}
           libraryStudents={libraryStudents}
@@ -8178,7 +8167,7 @@ function StudentCollectionFlow({
           variant="collection"
           students={libraryStudents}
           courseStudentRows={courseStudents}
-          courses={[...mainCourses, ...skillCourses]}
+          courses={courses}
           studentSources={studentSources}
           selectedSourceId={selectedSourceId}
           setSelectedSourceId={setSelectedSourceId}
@@ -8205,8 +8194,7 @@ function ActionSheet({
   canUsePayment,
   businessTypes,
   rooms,
-  mainCourses,
-  skillCourses,
+  courses,
   referrals,
   courseStudents,
   libraryStudents,
@@ -8229,8 +8217,7 @@ function ActionSheet({
   canUsePayment: (type: BusinessType | "expense") => boolean;
   businessTypes: BusinessType[];
   rooms: { id: string; room_number: string; label: string | null }[];
-  mainCourses: Course[];
-  skillCourses: Course[];
+  courses: Course[];
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
@@ -8306,8 +8293,7 @@ function ActionSheet({
               businessId={businessId}
               cacheScope={cacheScope}
               type={selectedPositive}
-              mainCourses={mainCourses}
-              skillCourses={skillCourses}
+              courses={courses}
               referrals={referrals}
               courseStudents={courseStudents}
               libraryStudents={libraryStudents}
@@ -8332,8 +8318,7 @@ function ActionSheet({
               cacheScope={cacheScope}
               type={selectedPositive}
               rooms={rooms}
-              mainCourses={mainCourses}
-              skillCourses={skillCourses}
+              courses={courses}
               referrals={referrals}
               courseStudents={courseStudents}
               libraryStudents={libraryStudents}
@@ -8408,8 +8393,7 @@ function PaymentForm({
   cacheScope,
   type,
   rooms,
-  mainCourses,
-  skillCourses,
+  courses,
   referrals,
   courseStudents,
   libraryStudents,
@@ -8425,8 +8409,7 @@ function PaymentForm({
   cacheScope: string;
   type: BusinessType;
   rooms: { id: string; room_number: string; label: string | null }[];
-  mainCourses: Course[];
-  skillCourses: Course[];
+  courses: Course[];
   referrals: Pick<ReferralCode, "code">[];
   courseStudents: CourseStudent[];
   libraryStudents: LibraryStudent[];
@@ -8446,11 +8429,7 @@ function PaymentForm({
   const initialCoursePrefill = type === "course" && initialCourseStudent ? courseStudentPrefill(initialCourseStudent, t) : null;
   const initialCourseRenewalRange = type === "course" && initialCourseStudent ? courseRenewalDateRange(initialCourseStudent) : null;
   const initialCourseDueAmount = type === "course" && initialCourseStudent ? Math.max(Number(initialCourseStudent.duesAmount ?? 0), 0) : 0;
-  const initialCourseMainCourse = type === "course" && initialCourseSource
-    ? initialCourseSource.type === "skillCourse"
-      ? mainCourses.find((course) => course.name === "Skills") ?? null
-      : initialCourseSource.course
-    : null;
+  const initialCourse = type === "course" && initialCourseSource ? initialCourseSource.course : null;
   const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : initialMemberMode ?? null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
   const [paid, setPaid] = useState(
@@ -8466,8 +8445,7 @@ function PaymentForm({
   const [onlineCollection, setOnlineCollection] = useState("");
   const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? initialCoursePrefill?.startTime ?? "06:00");
   const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? initialCoursePrefill?.endTime ?? "07:00");
-  const [selectedCourseId, setSelectedCourseId] = useState(initialCourseMainCourse?.id ?? "");
-  const [selectedSkillCourseId, setSelectedSkillCourseId] = useState(initialCourseSource?.type === "skillCourse" ? initialCourseSource.course.id : "");
+  const [selectedCourseId, setSelectedCourseId] = useState(initialCourse?.id ?? "");
   const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(initialCoursePrefill ? "existing" : initialMemberMode ?? null);
   const [courseSearch, setCourseSearch] = useState(initialCoursePrefill?.searchLabel ?? "");
   const [debouncedCourseSearch, setDebouncedCourseSearch] = useState("");
@@ -8486,34 +8464,10 @@ function PaymentForm({
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? initialCourseRenewalRange?.startDate ?? todayIso());
   const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? initialCourseRenewalRange?.endDate ?? addMonthsIso());
-  const selectedMainCourse = useMemo(
-    () => mainCourses.find((course) => course.id === selectedCourseId) ?? null,
-    [mainCourses, selectedCourseId],
-  );
-  const courseNeedsSkill = selectedMainCourse?.name === "Skills";
-  const selectedSkillCourse = useMemo(
-    () => skillCourses.find((course) => course.id === selectedSkillCourseId) ?? null,
-    [selectedSkillCourseId, skillCourses],
-  );
   const selectedCourseSource = useMemo<CourseStudentRecordSource | null>(() => {
-    if (courseNeedsSkill) {
-      if (!selectedSkillCourse) return null;
-      return {
-        id: studentRecordSourceId(selectedSkillCourse),
-        type: "skillCourse",
-        label: `${selectedSkillCourse.name} (${t("skill")})`,
-        course: selectedSkillCourse,
-      };
-    }
-
-    if (!selectedMainCourse) return null;
-    return {
-      id: studentRecordSourceId(selectedMainCourse),
-      type: "mainCourse",
-      label: selectedMainCourse.name,
-      course: selectedMainCourse,
-    };
-  }, [courseNeedsSkill, selectedMainCourse, selectedSkillCourse, t]);
+    const course = courses.find((item) => item.id === selectedCourseId);
+    return course ? { id: studentRecordSourceId(course), type: "course", label: course.name, course } : null;
+  }, [courses, selectedCourseId]);
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedLibrarySearch(librarySearch.trim()), 250);
     return () => window.clearTimeout(timeout);
@@ -8882,12 +8836,6 @@ function PaymentForm({
 
   function handleCourseChange(courseId: string) {
     setSelectedCourseId(courseId);
-    setSelectedSkillCourseId("");
-    resetCourseMemberFlow();
-  }
-
-  function handleSkillCourseChange(skillCourseId: string) {
-    setSelectedSkillCourseId(skillCourseId);
     resetCourseMemberFlow();
   }
 
@@ -9330,10 +9278,7 @@ function PaymentForm({
           {initialCourseStudent && initialCourseSource ? (
             <>
               <input type="hidden" name="course_student_id" value={initialCourseStudent.id} />
-              <input type="hidden" name="course_id" value={initialCourseMainCourse?.id ?? ""} />
-              {initialCourseSource.type === "skillCourse" ? (
-                <input type="hidden" name="skill_course_id" value={initialCourseSource.course.id} />
-              ) : null}
+              <input type="hidden" name="course_id" value={initialCourse?.id ?? ""} />
             </>
           ) : (
             <>
@@ -9346,31 +9291,13 @@ function PaymentForm({
                   onChange={(event) => handleCourseChange(event.target.value)}
                 >
                   <option value="">{t("selectCourse")}</option>
-                  {mainCourses.map((course) => (
+                  {courses.map((course) => (
                     <option key={course.id} value={course.id}>
                       {course.name}
                     </option>
                   ))}
                 </select>
               </label>
-              {courseNeedsSkill ? (
-                <label className="full-span">
-                  {t("skill")}
-                  <select
-                    name="skill_course_id"
-                    required
-                    value={selectedSkillCourseId}
-                    onChange={(event) => handleSkillCourseChange(event.target.value)}
-                  >
-                    <option value="">{t("selectSkill")}</option>
-                    {skillCourses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
             </>
           )}
           {selectedCourseSource ? (

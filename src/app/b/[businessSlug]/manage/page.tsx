@@ -69,7 +69,7 @@ export default async function BusinessManagePage({
     client.from("business_staff_unit_assignments").select("business_id,staff_profile_id,business_type,manager_profile_id,created_by,created_at,updated_at").eq("business_id", context.business.id),
     createAdminClient().from("business_invitations").select("id,email,intended_role,permissions,unit_scopes,unit_manager_assignments,status,expires_at,delivery_status,delivery_error,last_sent_at,created_at,updated_at").eq("business_id", context.business.id).eq("status", "pending").order("created_at", { ascending: false }),
     client.from("rooms").select("*").eq("business_id", context.business.id).order("room_number"),
-    client.from("courses").select("*").eq("business_id", context.business.id).order("kind").order("name"),
+    client.from("courses").select("*").eq("business_id", context.business.id).order("name"),
     client.from("referral_codes").select("*").eq("business_id", context.business.id).order("code"),
     client.from("record_change_requests").select("*").eq("business_id", context.business.id).order("created_at", { ascending: false }),
   ]);

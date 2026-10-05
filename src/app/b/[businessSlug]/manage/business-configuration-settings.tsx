@@ -279,14 +279,14 @@ export function BusinessSetupSettings({
           <div>
             <p className="eyebrow">Education</p>
             <h2>Courses</h2>
-            <p>Main and skill courses remain separate student sources.</p>
+            <p>Each course keeps its own student records.</p>
           </div>
           <GraduationCap size={26} />
         </div>
         <div className="business-setup-list">
           {courses.map((course) => (
             <article key={course.id}>
-              <div><strong>{course.name}</strong><span>{course.kind === "main" ? "Main course" : "Skill course"}</span></div>
+              <div><strong>{course.name}</strong></div>
               <span className={`status-pill ${course.active ? "active" : "suspended"}`}>
                 {course.active ? "Active" : "Hidden"}
               </span>
@@ -304,7 +304,6 @@ export function BusinessSetupSettings({
         </div>
         <BusinessMutationForm action={saveCourseAction} onResult={handleResult} className="business-setup-form">
           <label>Course name<input name="name" required /></label>
-          <label>Type<select name="kind"><option value="main">Main course</option><option value="skill">Skill course</option></select></label>
           <span className="business-setup-form-icon"><BookOpen size={18} /></span>
         </BusinessMutationForm>
       </section>
