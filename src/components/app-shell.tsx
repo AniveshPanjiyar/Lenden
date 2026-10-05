@@ -11468,8 +11468,6 @@ function ClosingReviewDetail({
   const allDayRecords = reviewRecords.filter((record) => record.recordDate === date);
   const inRecords = todayRecords.filter((record) => record.tone === "positive");
   const outRecords = todayRecords.filter((record) => record.tone === "negative");
-  const pendingReviewAmount = pendingRecords.reduce((sum, record) => sum + Math.abs(record.amount), 0);
-  const pendingReviewCount = pendingRecords.length;
   const reviewFilterOptions = [
     { value: "all" as const, label: t("all"), records: allDayRecords },
     { value: "in" as const, label: "IN", records: inRecords },
@@ -11478,10 +11476,6 @@ function ClosingReviewDetail({
   ];
   const visibleReviewRecords = reviewFilterOptions.find((option) => option.value === reviewFilter)?.records ?? allDayRecords;
   const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
-  const reviewInCash = summary.inCash;
-  const reviewInOnline = summary.inOnline;
-  const reviewOutCash = summary.outCash;
-  const reviewOutOnline = summary.outOnline;
 
   return (
     <div className="closing-review-detail">
@@ -11495,35 +11489,6 @@ function ClosingReviewDetail({
           <h2>{summary.profile.full_name}</h2>
         </div>
       </header>
-
-      <section className="review-summary-grid">
-        {summary.profile.membership_role !== "primary_owner" ? (
-          <article className="review-net-card">
-            <span>{t("closingCashInHand")}</span>
-            <strong>{formatMoney(summary.closing)}</strong>
-          </article>
-        ) : null}
-        <article className="positive">
-          <span>{t("cashIn")}</span>
-          <strong>{formatMoney(reviewInCash + reviewInOnline)}</strong>
-          <p className="money-split-line">{t("cash")} {formatMoney(reviewInCash)} · {t("online")} {formatMoney(reviewInOnline)}</p>
-        </article>
-        <article className="negative">
-          <span>{t("cashOut")}</span>
-          <strong>{formatMoney(reviewOutCash + reviewOutOnline)}</strong>
-          <p className="money-split-line">{t("cash")} {formatMoney(reviewOutCash)} · {t("online")} {formatMoney(reviewOutOnline)}</p>
-        </article>
-        <article className="pending">
-          <span>{t("pending")}{pendingReviewCount > 0 ? ` · ${pendingReviewCount}` : ""}</span>
-          <strong>{formatMoney(pendingReviewAmount)}</strong>
-        </article>
-      </section>
-      <p className="closing-online-note review-online-note"><Landmark aria-hidden="true" size={15} /> {t("onlineOwnerBankNote")}</p>
-
-      <section className="closing-info-banner">
-        <AlertCircle size={20} />
-        <p>{t("reviewSettlementNotice")}</p>
-      </section>
 
       <section className="review-transaction-section">
         <div className="closing-ledger-heading">
