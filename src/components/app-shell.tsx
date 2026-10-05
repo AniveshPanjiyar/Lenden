@@ -10951,7 +10951,7 @@ function ClosingView({
                       {profileRoleLabel(summary.profile, t)}
                     </small>
                   </span>
-                  {pendingSummary.totalRecordCount > 0 ? (
+                  {!ownerCard && pendingSummary.totalRecordCount > 0 ? (
                     <span className="closing-status warning">
                       {pendingSummary.totalRecordCount} {t("pending")}
                     </span>
@@ -10963,18 +10963,6 @@ function ClosingView({
                     <small>{t("approvalDate")} · {date}</small>
                   </div>
                   {/* The Owner is where cash ends up, so a running balance is not meaningful; show only the day's flow. */}
-                  {!ownerCard ? (
-                    <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
-                      <span>
-                        <small>{t("closingCashInHand")}</small>
-                        <em>{date}</em>
-                        {summary.closing < 0 ? (
-                          <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
-                        ) : null}
-                      </span>
-                      <strong>{formatMoney(summary.closing)}</strong>
-                    </div>
-                  ) : null}
                   <div
                     className={`closing-cash-equation${ownerCard ? " owner-day-flow" : ""}`}
                     aria-label={ownerCard
@@ -11002,6 +10990,18 @@ function ClosingView({
                       </span>
                     ) : null}
                   </div>
+                  {!ownerCard ? (
+                    <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
+                      <span>
+                        <small>{t("closingCashInHand")}</small>
+                        <em>{date}</em>
+                        {summary.closing < 0 ? (
+                          <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
+                        ) : null}
+                      </span>
+                      <strong>{formatMoney(summary.closing)}</strong>
+                    </div>
+                  ) : null}
                 </section>
 
                 <section
@@ -11022,6 +11022,7 @@ function ClosingView({
                   </div>
                 </section>
 
+                {!ownerCard ? (
                 <section className={`closing-pending-panel${pendingSummary.totalRecordCount > 0 ? " active" : ""}`}>
                   <div className="closing-pending-head">
                     <span className="closing-pending-icon">
@@ -11034,6 +11035,7 @@ function ClosingView({
                     <strong className="closing-pending-amount">{formatMoney(pendingSummary.totalAmount)}</strong>
                   </div>
                 </section>
+                ) : null}
                 {owner ? (
                   <div className="closing-staff-actions">
                     <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>

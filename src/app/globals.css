@@ -11141,3 +11141,7 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
   .flow-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .flow-row-label { grid-column: 1 / -1; }
 }
+
+/* Closing card Review button uses the online/verification blue. */
+.closing-review-button { background: #185aa5; }
+.closing-review-button:hover { background: #134a86; }
