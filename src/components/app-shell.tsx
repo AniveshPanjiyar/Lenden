@@ -69,7 +69,7 @@ import {
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
-import { clearPersistedQueryCache } from "@/components/query-provider";
+import { clearPersistedQueryCache, QueryProvider } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
@@ -2321,7 +2321,17 @@ function LogoutButton({ label }: { label: string }) {
   );
 }
 
-export function AppShell({ data, initialViewState }: { data: AppData; initialViewState: AppViewState }) {
+// The query client lives with its consumers: providing it from the root layout let the
+// webpack dev server's first compile hand the layout and page separate React Query instances.
+export function AppShell(props: { data: AppData; initialViewState: AppViewState }) {
+  return (
+    <QueryProvider>
+      <AppShellContent {...props} />
+    </QueryProvider>
+  );
+}
+
+function AppShellContent({ data, initialViewState }: { data: AppData; initialViewState: AppViewState }) {
   const hasHydrated = useHasHydrated();
   const businessId = data.businessContext.business.id;
   const cacheScope = `${data.profile.id}:${businessId}`;

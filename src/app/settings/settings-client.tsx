@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 import { logoutAction } from "@/app/actions";
+import { QueryProvider } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { businessLabels } from "@/lib/constants";
@@ -703,7 +704,15 @@ function PreferencesSection() {
   );
 }
 
-export default function SettingsClient({
+export default function SettingsClient(props: Parameters<typeof SettingsClientContent>[0]) {
+  return (
+    <QueryProvider>
+      <SettingsClientContent {...props} />
+    </QueryProvider>
+  );
+}
+
+function SettingsClientContent({
   payload,
   activeSection,
   returnTo,
