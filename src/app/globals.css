@@ -11098,3 +11098,46 @@ option {
 .work-log-item p { margin: 0; white-space: pre-wrap; }
 .work-log-item form { position: absolute; top: 6px; right: 6px; }
 .work-log-photo img { max-width: min(260px, 100%); max-height: 220px; border-radius: 12px; object-fit: cover; }
+
+/* Cash and online IN/OUT breakdown (dashboard "Your activity", transactions summary) */
+.flow-breakdown { display: grid; gap: 8px; }
+.flow-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+}
+.flow-row.tone-cash { border-color: rgba(28, 122, 65, 0.28); background: rgba(221, 248, 228, 0.66); }
+.flow-row.tone-online { border-color: rgba(30, 104, 196, 0.28); background: rgba(226, 239, 255, 0.78); }
+.flow-row-label {
+  display: inline-flex; align-items: center; gap: 6px; padding-left: 4px;
+  font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em;
+}
+.flow-row.tone-cash .flow-row-label { color: #155d33; }
+.flow-row.tone-online .flow-row-label { color: #185aa5; }
+.flow-cell {
+  display: grid; gap: 2px; align-content: center; min-width: 0;
+  padding: 8px 10px; border-radius: 12px; border: 0; text-align: left;
+  background: rgba(255, 255, 255, 0.72); color: inherit; font: inherit;
+}
+button.flow-cell { cursor: pointer; }
+button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
+.flow-cell small {
+  color: var(--muted); font-size: 10px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase;
+}
+.flow-cell strong {
+  font-family: var(--font-headline); font-size: clamp(1rem, 4vw, 1.3rem);
+  font-variant-numeric: tabular-nums; line-height: 1.1; white-space: nowrap;
+}
+.flow-row.tone-cash .flow-cell.in strong { color: #187a5a; }
+.flow-row.tone-cash .flow-cell.out strong { color: var(--bad); }
+.flow-row.tone-online .flow-cell strong { color: #185aa5; }
+.flow-cell em { color: #185aa5; font-size: 10px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.flow-note { margin: 0; color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
+@media (max-width: 380px) {
+  .flow-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .flow-row-label { grid-column: 1 / -1; }
+}

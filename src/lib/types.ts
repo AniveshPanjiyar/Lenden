@@ -555,6 +555,7 @@ export type DashboardSummary = {
   expenses: { total: number; cash: number; online: number };
   personalIn: { total: number; cash: number; online: number };
   personalOut: { total: number; cash: number; online: number };
+  personalOnlinePending?: number;
   pending: { amount: number; count: number };
   businessUnits: Array<{
     businessType: BusinessType;

@@ -399,6 +399,8 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "Change password",
     closing: "Closing",
     work: "Work",
+    verifiedOnline: "Verified online",
+    awaitingVerification: "Awaiting",
     date: "Date",
     member: "Member",
     loading: "Loading…",
@@ -858,6 +860,8 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     work: "काम",
+    verifiedOnline: "सत्यापित ऑनलाइन",
+    awaitingVerification: "बाकी",
     date: "तारीख",
     member: "सदस्य",
     loading: "लोड हो रहा है…",
@@ -4510,24 +4514,18 @@ function RoleDashboardView({
           <div><p className="eyebrow">Your activity</p><h2>Your money movement</h2></div>
           <span>{dateLabel} · {dateBasisLabel}</span>
         </header>
-        {pairedSummary(
-          summaryMetric(
-            "IN",
-            summary.personalIn.total,
-            `${t("cash")} ${formatMoney(summary.personalIn.cash)} · ${t("online")} ${formatMoney(summary.personalIn.online)}`,
-            "primary",
-            () => openTransactions("personal", "cash_in"),
-            "+",
-          ),
-          summaryMetric(
-            "OUT",
-            summary.personalOut.total,
-            `${t("cash")} ${formatMoney(summary.personalOut.cash)} · ${t("online")} ${formatMoney(summary.personalOut.online)}`,
-            "negative",
-            () => openTransactions("personal", "cash_out"),
-            "-",
-          ),
-        )}
+        <FlowBreakdown
+          inLabel={t("cashIn")}
+          outLabel={t("cashOut")}
+          cashIn={summary.personalIn.cash}
+          cashOut={summary.personalOut.cash}
+          onlineIn={summary.personalIn.online + (summary.personalOnlinePending ?? 0)}
+          onlineVerified={summary.personalIn.online}
+          onlineOut={summary.personalOut.online}
+          onCashIn={() => openTransactions("personal", "cash_in", { mode: "cash" })}
+          onCashOut={() => openTransactions("personal", "cash_out", { mode: "cash" })}
+          onOnline={() => openTransactions("personal", "cash_in", { mode: "online" })}
+        />
       </section>
 
       <section className="business-status-panel">
@@ -6001,7 +5999,9 @@ function TransactionsView({
   };
   const matchesSecondaryFilters = useCallback((record: (typeof allTransactionRecords)[number]) => {
     if (recordTypeFilter !== "all" && record.recordCategory !== recordTypeFilter) return false;
-    if (businessTypeFilter !== "all" && record.businessType !== businessTypeFilter) return false;
+    // Cash handovers between members belong to no business unit, so a unit filter must not hide them.
+    const unitlessTransfer = record.recordCategory === "transfer" && !record.businessType;
+    if (businessTypeFilter !== "all" && !unitlessTransfer && record.businessType !== businessTypeFilter) return false;
     if (modeFilter !== "all") {
       const cash = numberValue(record.cashAmount);
       const online = numberValue(record.onlineAmount);
@@ -6032,7 +6032,9 @@ function TransactionsView({
   const outOnlineTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) < 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
-  const negativeTotal = outCashTotal + outOnlineTotal;
+  const pendingOnlineInTotal = allTransactionRecords
+    .filter((record) => record.pendingApproval && numberValue(record.amount) > 0 && matchesSecondaryFilters(record))
+    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const groupedRecords = transactionRecords.reduce<{ date: string; records: typeof transactionRecords }[]>((groups, record) => {
     const lastGroup = groups.at(-1);
     if (lastGroup?.date === record.date) {
@@ -6111,19 +6113,15 @@ function TransactionsView({
           <strong>{transactionRecords.length} {t("transactions")}</strong>
         </div>
         {!currentUserIsSalesAgent ? (
-          <div className="history-total-card">
-            <div>
-              <span>{positiveLabel}</span>
-              <strong className="positive">+{formatMoney(positiveTotal)}</strong>
-              <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
-            </div>
-            <div className="history-total-divider" />
-            <div>
-              <span>{negativeLabel}</span>
-              <strong className="negative">-{formatMoney(negativeTotal)}</strong>
-              <small className="history-total-breakdown">{t("cash")} {formatMoney(outCashTotal)} · {t("online")} {formatMoney(outOnlineTotal)}</small>
-            </div>
-          </div>
+          <FlowBreakdown
+            inLabel={positiveLabel}
+            outLabel={negativeLabel}
+            cashIn={inCashTotal}
+            cashOut={outCashTotal}
+            onlineIn={inOnlineTotal + pendingOnlineInTotal}
+            onlineVerified={inOnlineTotal}
+            onlineOut={outOnlineTotal}
+          />
         ) : (
           <div className="agent-history-total">
             <span>{t("cashIn")}</span>
@@ -9859,6 +9857,81 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
         <input name="end_date" type="date" defaultValue={subscription ? addMonthsIso() : todayIso()} required />
       </label>
     </>
+  );
+}
+
+function FlowCell({
+  className,
+  label,
+  value,
+  note,
+  onClick,
+}: {
+  className: string;
+  label: string;
+  value: string;
+  note?: string | null;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
+      <small>{label}</small>
+      <strong>{value}</strong>
+      {note ? <em>{note}</em> : null}
+    </>
+  );
+  return onClick ? (
+    <button className={`flow-cell ${className}`} type="button" onClick={onClick}>{content}</button>
+  ) : (
+    <div className={`flow-cell ${className}`}>{content}</div>
+  );
+}
+
+function FlowBreakdown({
+  inLabel,
+  outLabel,
+  cashIn,
+  cashOut,
+  onlineIn,
+  onlineVerified,
+  onlineOut = 0,
+  onCashIn,
+  onCashOut,
+  onOnline,
+}: {
+  inLabel: string;
+  outLabel: string;
+  cashIn: number;
+  cashOut: number;
+  onlineIn: number;
+  onlineVerified: number;
+  onlineOut?: number;
+  onCashIn?: () => void;
+  onCashOut?: () => void;
+  onOnline?: () => void;
+}) {
+  const { t } = useLanguage();
+  const awaiting = Math.max(onlineIn - onlineVerified, 0);
+  return (
+    <div className="flow-breakdown">
+      <div className="flow-row tone-cash">
+        <span className="flow-row-label"><Banknote size={16} />{t("cash")}</span>
+        <FlowCell className="in" label={inLabel} value={`+${formatMoney(cashIn)}`} onClick={onCashIn} />
+        <FlowCell className="out" label={outLabel} value={`-${formatMoney(cashOut)}`} onClick={onCashOut} />
+      </div>
+      <div className="flow-row tone-online">
+        <span className="flow-row-label"><CreditCard size={16} />{t("online")}</span>
+        <FlowCell className="in" label={inLabel} value={`+${formatMoney(onlineIn)}`} onClick={onOnline} />
+        <FlowCell
+          className="verified"
+          label={t("verifiedOnline")}
+          value={formatMoney(onlineVerified)}
+          note={awaiting > 0 ? `${t("awaitingVerification")} ${formatMoney(awaiting)}` : null}
+          onClick={onOnline}
+        />
+      </div>
+      {onlineOut > 0 ? <p className="flow-note">{t("online")} {outLabel}: -{formatMoney(onlineOut)}</p> : null}
+    </div>
   );
 }
 
