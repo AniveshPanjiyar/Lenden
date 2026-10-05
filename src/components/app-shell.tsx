@@ -399,6 +399,11 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "Change password",
     closing: "Closing",
     work: "Work",
+    noCheckOut: "No check-out recorded",
+    myDay: "My day",
+    updates: "Updates",
+    previousDay: "Previous day",
+    nextDay: "Next day",
     todaysCash: "Today's cash",
     verifiedOnline: "Verified online",
     awaitingVerification: "Awaiting",
@@ -861,6 +866,11 @@ const messages: Record<Language, Record<string, string>> = {
     changePassword: "पासवर्ड बदलें",
     closing: "दिन बंद",
     work: "काम",
+    noCheckOut: "चेक आउट दर्ज नहीं",
+    myDay: "मेरा दिन",
+    updates: "अपडेट",
+    previousDay: "पिछला दिन",
+    nextDay: "अगला दिन",
     todaysCash: "आज का नकद",
     verifiedOnline: "सत्यापित ऑनलाइन",
     awaitingVerification: "बाकी",
@@ -10075,6 +10085,15 @@ function VoiceNoteRecorder({ setNotice }: { setNotice: (notice: ActionResult | n
   );
 }
 
+function shiftWorkDate(isoDate: string, days: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function workInitials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
+}
+
 function WorkView({
   businessId,
   cacheScope,
@@ -10091,8 +10110,10 @@ function WorkView({
   const { t } = useLanguage();
   const [date, setDate] = useState<string | null>(null);
   const [personFilter, setPersonFilter] = useState("all");
+  const [section, setSection] = useState<"updates" | "tasks">("updates");
   const [taskStage, setTaskStage] = useState<WorkTaskStatus>("todo");
   const [addingTask, setAddingTask] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [linkedTaskId, setLinkedTaskId] = useState("");
   const workQuery = useQuery({
     queryKey: ["work", cacheScope, date ?? "today"],
@@ -10111,8 +10132,28 @@ function WorkView({
 
   const memberName = (id: string) => data.members.find((member) => member.id === id)?.full_name ?? "Member";
   const isToday = data.date === data.today;
-  const myAttendance = data.attendance.find((row) => row.profile_id === profileId);
   const matchesPerson = (id: string) => personFilter === "all" || personFilter === id;
+  const goToDate = (next: string) => setDate(next >= data.today ? null : next);
+  const dateLabel = isToday
+    ? t("today")
+    : data.date === shiftWorkDate(data.today, -1)
+      ? t("yesterday")
+      : new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" })
+        .format(new Date(`${data.date}T00:00:00Z`));
+
+  const myAttendance = data.attendance.find((row) => row.profile_id === profileId);
+  const presentCount = data.members.filter((member) => data.attendance.some((row) => row.profile_id === member.id)).length;
+  const myStatusTitle = !myAttendance
+    ? t("notCheckedIn")
+    : myAttendance.check_out_at
+      ? `${formatTimeInZone(myAttendance.check_in_at, data.timezone)} – ${formatTimeInZone(myAttendance.check_out_at, data.timezone)}`
+      : `${t("checkedInSince")} ${formatTimeInZone(myAttendance.check_in_at, data.timezone)}`;
+  const myStatusDetail = !myAttendance
+    ? ""
+    : myAttendance.check_out_at || isToday
+      ? `${t("workedFor")} ${formatDuration(myAttendance.check_in_at, myAttendance.check_out_at ?? new Date().toISOString())}`
+      : t("noCheckOut");
+
   const openTasks = data.tasks.filter((task) => task.status !== "done");
   const stageTasks = data.tasks.filter((task) => task.status === taskStage && matchesPerson(task.assigned_to));
   const stageCount = (stage: WorkTaskStatus) => data.tasks.filter((task) => task.status === stage && matchesPerson(task.assigned_to)).length;
@@ -10125,230 +10166,263 @@ function WorkView({
 
   return (
     <section className="work-page" aria-label={t("work")}>
-      <div className="work-toolbar">
-        <label>
-          <span className="eyebrow">{t("date")}</span>
-          <input
-            type="date"
-            value={data.date}
-            max={data.today}
-            onChange={(event) => setDate(event.target.value && event.target.value !== data.today ? event.target.value : null)}
-          />
-        </label>
-        <label>
-          <span className="eyebrow">{t("member")}</span>
-          <select value={personFilter} onChange={(event) => setPersonFilter(event.target.value)}>
-            <option value="all">{t("everyone")}</option>
-            <option value={profileId}>{t("me")}</option>
-            {data.members.filter((member) => member.id !== profileId).map((member) => (
-              <option key={member.id} value={member.id}>{member.full_name}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <article className="work-card">
-        <header className="work-card-heading">
-          <h3>{t("attendance")}</h3>
-          {isToday ? (
-            myAttendance ? (
-              myAttendance.check_out_at ? (
-                <span className="status-pill active">
-                  {formatTimeInZone(myAttendance.check_in_at, data.timezone)} – {formatTimeInZone(myAttendance.check_out_at, data.timezone)} · {formatDuration(myAttendance.check_in_at, myAttendance.check_out_at)}
-                </span>
-              ) : (
-                <form onSubmit={(event) => submitWith(event, checkOutAction, setNotice, startTransition)} className="work-inline-form">
-                  <span className="muted">{t("checkedInSince")} {formatTimeInZone(myAttendance.check_in_at, data.timezone)}</span>
-                  <button className="secondary-button" type="submit">{t("checkOut")}</button>
-                </form>
-              )
-            ) : (
-              <form onSubmit={(event) => submitWith(event, checkInAction, setNotice, startTransition)}>
-                <button className="primary-button" type="submit">
-                  <UserCheck size={16} />
-                  {t("checkIn")}
-                </button>
-              </form>
-            )
-          ) : null}
-        </header>
-        <ul className="work-attendance-list">
-          {data.members.filter((member) => matchesPerson(member.id)).map((member) => {
-            const row = data.attendance.find((item) => item.profile_id === member.id);
-            return (
-              <li key={member.id} className={row ? "present" : "absent"}>
-                <strong>{member.full_name}</strong>
-                <span>
-                  {row
-                    ? `${formatTimeInZone(row.check_in_at, data.timezone)} – ${row.check_out_at ? formatTimeInZone(row.check_out_at, data.timezone) : "…"}`
-                    : t("absent")}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </article>
-
-      {isToday ? (
-        <article className="work-card">
-          <header className="work-card-heading"><h3>{t("postUpdate")}</h3></header>
-          <form
-            className="form-grid"
-            onSubmit={(event) => submitWith(event, postWorkUpdateAction, setNotice, startTransition, true, () => setLinkedTaskId(""))}
-          >
-            <label className="full-span">
-              {t("whatDidYouDo")}
-              <textarea name="body" rows={3} maxLength={4000} />
-            </label>
-            <div className="work-media-row full-span">
-              <CompressedImageInput inputName="photo" label={t("addPhoto")} previewLabel={t("addPhoto")} variant="document" />
-              <VoiceNoteRecorder setNotice={setNotice} />
-            </div>
-            <label className="full-span">
-              {t("linkedTask")}
-              <select name="task_id" value={linkedTaskId} onChange={(event) => setLinkedTaskId(event.target.value)}>
-                <option value="">{t("noLinkedTask")}</option>
-                {openTasks.map((task) => (
-                  <option key={task.id} value={task.id}>{task.title} · {memberName(task.assigned_to)}</option>
-                ))}
-              </select>
-            </label>
-            {linkedTaskId ? (
-              <label className="work-check full-span">
-                <input type="checkbox" name="mark_done" />
-                {t("markTaskDone")}
-              </label>
-            ) : null}
-            <button className="primary-button full-span" type="submit">{t("postUpdate")}</button>
-          </form>
-        </article>
-      ) : null}
-
-      <article className="work-card">
-        <header className="work-card-heading">
-          <h3>{t("tasks")}</h3>
-          <button className="secondary-button" type="button" onClick={() => setAddingTask((current) => !current)}>
-            {addingTask ? <X size={16} /> : <Plus size={16} />}
-            {addingTask ? t("cancel") : t("addTask")}
+      <header className="work-topbar">
+        <div className="work-date-stepper">
+          <button className="icon-button" type="button" aria-label={t("previousDay")} onClick={() => goToDate(shiftWorkDate(data.date, -1))}>
+            <ArrowLeft size={18} />
           </button>
-        </header>
-        {addingTask ? (
-          <form
-            className="form-grid two work-task-form"
-            onSubmit={(event) => submitWith(event, createWorkTaskAction, setNotice, startTransition, true, () => setAddingTask(false))}
-          >
-            <label className="full-span">
-              {t("taskTitle")}
-              <input name="title" required maxLength={200} />
-            </label>
-            <label>
-              {t("assignTo")}
-              <select name="assigned_to" defaultValue={profileId}>
-                {data.members.map((member) => (
-                  <option key={member.id} value={member.id}>{member.id === profileId ? `${member.full_name} (${t("me")})` : member.full_name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {t("dueDate")}
-              <input name="due_date" type="date" min={data.today} />
-            </label>
-            <label className="full-span">
-              {t("taskNotes")}
-              <textarea name="notes" rows={2} maxLength={2000} />
-            </label>
-            <button className="primary-button full-span" type="submit">{t("addTask")}</button>
-          </form>
-        ) : null}
-        <div className="work-stage-chips" role="tablist" aria-label={t("tasks")}>
-          {(["todo", "in_progress", "done"] as const).map((stage) => (
-            <button
-              key={stage}
-              type="button"
-              role="tab"
-              aria-selected={taskStage === stage}
-              className={taskStage === stage ? "active" : ""}
-              onClick={() => setTaskStage(stage)}
-            >
-              {t(stage === "todo" ? "toDo" : stage === "in_progress" ? "inProgress" : "done")} <span>{stageCount(stage)}</span>
-            </button>
-          ))}
+          <label className="work-date-label">
+            <CalendarDays size={16} aria-hidden="true" />
+            <span>{dateLabel}</span>
+            <input
+              type="date"
+              value={data.date}
+              max={data.today}
+              aria-label={t("date")}
+              onChange={(event) => event.target.value && goToDate(event.target.value)}
+            />
+          </label>
+          <button className="icon-button" type="button" aria-label={t("nextDay")} disabled={isToday} onClick={() => goToDate(shiftWorkDate(data.date, 1))}>
+            <ChevronRight size={18} />
+          </button>
         </div>
-        {stageTasks.length ? (
-          <ul className="work-task-list">
-            {stageTasks.map((task: WorkTask) => {
-              const overdue = task.status !== "done" && Boolean(task.due_date) && (task.due_date as string) < data.today;
-              const next = workNextStage[task.status];
+        <select className="work-person-select" value={personFilter} onChange={(event) => setPersonFilter(event.target.value)} aria-label={t("member")}>
+          <option value="all">{t("everyone")}</option>
+          <option value={profileId}>{t("me")}</option>
+          {data.members.filter((member) => member.id !== profileId).map((member) => (
+            <option key={member.id} value={member.id}>{member.full_name}</option>
+          ))}
+        </select>
+      </header>
+
+      <article className="work-hero">
+        <div className="work-hero-main">
+          <span className={`work-status-dot${myAttendance ? (myAttendance.check_out_at ? " done" : " in") : ""}`} aria-hidden="true" />
+          <div className="work-hero-copy">
+            <small>{t("myDay")}</small>
+            <strong>{myStatusTitle}</strong>
+            {myStatusDetail ? <span>{myStatusDetail}</span> : null}
+          </div>
+          {isToday && !myAttendance?.check_out_at ? (
+            <form onSubmit={(event) => submitWith(event, myAttendance ? checkOutAction : checkInAction, setNotice, startTransition)}>
+              <button className={myAttendance ? "secondary-button" : "primary-button"} type="submit">
+                {myAttendance ? <LogOut size={16} /> : <UserCheck size={16} />}
+                {myAttendance ? t("checkOut") : t("checkIn")}
+              </button>
+            </form>
+          ) : null}
+        </div>
+        <div className="work-team-strip">
+          <div className="work-team-avatars">
+            {data.members.map((member) => {
+              const row = data.attendance.find((item) => item.profile_id === member.id);
+              const detail = row
+                ? `${formatTimeInZone(row.check_in_at, data.timezone)} – ${row.check_out_at ? formatTimeInZone(row.check_out_at, data.timezone) : "…"}`
+                : t("absent");
               return (
-                <li key={task.id}>
-                  <div>
-                    <strong>{task.title}</strong>
-                    <small className="muted">
-                      {memberName(task.assigned_to)}
-                      {task.created_by !== task.assigned_to ? ` · ${t("assignedBy")} ${memberName(task.created_by)}` : ""}
-                      {task.due_date ? <> · <span className={overdue ? "work-overdue" : ""}>{overdue ? `${t("overdue")} ` : ""}{displayDate(task.due_date)}</span></> : null}
-                    </small>
-                    {task.notes ? <p>{task.notes}</p> : null}
-                  </div>
-                  <form onSubmit={(event) => submitWith(event, setWorkTaskStatusAction, setNotice, startTransition, false)}>
-                    <input type="hidden" name="id" value={task.id} />
-                    <input type="hidden" name="status" value={next.status} />
-                    <button className={next.status === "done" ? "primary-button" : "secondary-button"} type="submit">
-                      {next.status === "done" ? <Check size={16} /> : null}
-                      {t(next.labelKey)}
-                    </button>
-                  </form>
-                </li>
+                <button
+                  key={member.id}
+                  type="button"
+                  className={`work-avatar${row ? " present" : ""}${personFilter === member.id ? " selected" : ""}`}
+                  title={`${member.full_name} · ${detail}`}
+                  aria-label={`${member.full_name} · ${detail}`}
+                  onClick={() => setPersonFilter((current) => current === member.id ? "all" : member.id)}
+                >
+                  {workInitials(member.full_name)}
+                </button>
               );
             })}
-          </ul>
-        ) : (
-          <p className="muted work-empty">{t("noTasksHere")}</p>
-        )}
+          </div>
+          <small>{presentCount}/{data.members.length} {t("present")}</small>
+        </div>
       </article>
 
-      <article className="work-card">
-        <header className="work-card-heading"><h3>{t("workLog")}</h3></header>
-        {updatesByAuthor.size ? (
-          <div className="work-log">
-            {[...updatesByAuthor.entries()].map(([authorId, updates]) => (
-              <section key={authorId}>
-                <h4>{memberName(authorId)}</h4>
-                {updates.map((update) => {
-                  const linkedTitle = taskTitle(update.task_id);
-                  return (
-                    <article key={update.id} className="work-log-item">
-                      <small className="muted">
-                        {formatTimeInZone(update.created_at, data.timezone)}
-                        {linkedTitle ? ` · ${linkedTitle}` : ""}
-                        {update.status_change === "done" ? ` · ${t("completedTask")}` : ""}
-                      </small>
-                      {update.body ? <p>{update.body}</p> : null}
-                      {update.photo_url ? (
-                        <a href={update.photo_url} target="_blank" rel="noreferrer" className="work-log-photo">
-                          {/* eslint-disable-next-line @next/next/no-img-element -- signed Supabase URLs are not served through next/image */}
-                          <img src={update.photo_url} alt="" loading="lazy" />
-                        </a>
-                      ) : null}
-                      {update.voice_url ? <audio controls preload="none" src={update.voice_url} /> : null}
-                      {update.author_id === profileId ? (
-                        <form onSubmit={(event) => submitWith(event, deleteWorkUpdateAction, setNotice, startTransition, false)}>
-                          <input type="hidden" name="id" value={update.id} />
-                          <button className="icon-button" type="submit" aria-label={t("deleteUpdate")}>
-                            <Trash2 size={15} />
-                          </button>
-                        </form>
-                      ) : null}
-                    </article>
-                  );
-                })}
-              </section>
-            ))}
+      <div className="work-segments" role="tablist" aria-label={t("work")}>
+        <button type="button" role="tab" aria-selected={section === "updates"} className={section === "updates" ? "active" : ""} onClick={() => setSection("updates")}>
+          {t("updates")} <span>{visibleUpdates.length}</span>
+        </button>
+        <button type="button" role="tab" aria-selected={section === "tasks"} className={section === "tasks" ? "active" : ""} onClick={() => setSection("tasks")}>
+          {t("tasks")} <span>{openTasks.filter((task) => matchesPerson(task.assigned_to)).length}</span>
+        </button>
+      </div>
+
+      {section === "updates" ? (
+        <>
+          {isToday ? (
+            <form
+              className={`work-composer${composerOpen ? " open" : ""}`}
+              onSubmit={(event) => submitWith(event, postWorkUpdateAction, setNotice, startTransition, true, () => {
+                setLinkedTaskId("");
+                setComposerOpen(false);
+              })}
+            >
+              <textarea
+                name="body"
+                rows={composerOpen ? 3 : 1}
+                maxLength={4000}
+                placeholder={t("whatDidYouDo")}
+                onFocus={() => setComposerOpen(true)}
+              />
+              {composerOpen ? (
+                <>
+                  <div className="work-composer-tools">
+                    <CompressedImageInput inputName="photo" label={t("addPhoto")} previewLabel={t("addPhoto")} variant="document" />
+                    <VoiceNoteRecorder setNotice={setNotice} />
+                  </div>
+                  <div className="work-composer-row">
+                    <select name="task_id" value={linkedTaskId} onChange={(event) => setLinkedTaskId(event.target.value)} aria-label={t("linkedTask")}>
+                      <option value="">{t("noLinkedTask")}</option>
+                      {openTasks.map((task) => (
+                        <option key={task.id} value={task.id}>{task.title} · {memberName(task.assigned_to)}</option>
+                      ))}
+                    </select>
+                    {linkedTaskId ? (
+                      <label className="work-check">
+                        <input type="checkbox" name="mark_done" />
+                        {t("markTaskDone")}
+                      </label>
+                    ) : null}
+                  </div>
+                  <div className="work-composer-actions">
+                    <button className="secondary-button" type="reset" onClick={() => { setLinkedTaskId(""); setComposerOpen(false); }}>
+                      {t("cancel")}
+                    </button>
+                    <button className="primary-button" type="submit">{t("postUpdate")}</button>
+                  </div>
+                </>
+              ) : null}
+            </form>
+          ) : null}
+
+          {updatesByAuthor.size ? (
+            <div className="work-feed">
+              {[...updatesByAuthor.entries()].map(([authorId, updates]) => (
+                <section key={authorId} className="work-feed-group">
+                  <header>
+                    <span className="work-avatar small" aria-hidden="true">{workInitials(memberName(authorId))}</span>
+                    <strong>{authorId === profileId ? `${memberName(authorId)} (${t("me")})` : memberName(authorId)}</strong>
+                    <small>{updates.length}</small>
+                  </header>
+                  {updates.map((update) => {
+                    const linkedTitle = taskTitle(update.task_id);
+                    return (
+                      <article key={update.id} className="work-feed-item">
+                        <div className="work-feed-meta">
+                          <time>{formatTimeInZone(update.created_at, data.timezone)}</time>
+                          {linkedTitle ? <span className="work-task-chip">{linkedTitle}</span> : null}
+                          {update.status_change === "done" ? <span className="work-done-chip"><Check size={12} />{t("completedTask")}</span> : null}
+                        </div>
+                        {update.body ? <p>{update.body}</p> : null}
+                        {update.photo_url ? (
+                          <a href={update.photo_url} target="_blank" rel="noreferrer" className="work-log-photo">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- signed Supabase URLs are not served through next/image */}
+                            <img src={update.photo_url} alt="" loading="lazy" />
+                          </a>
+                        ) : null}
+                        {update.voice_url ? <audio controls preload="none" src={update.voice_url} /> : null}
+                        {update.author_id === profileId ? (
+                          <form className="work-feed-delete" onSubmit={(event) => submitWith(event, deleteWorkUpdateAction, setNotice, startTransition, false)}>
+                            <input type="hidden" name="id" value={update.id} />
+                            <button className="icon-button" type="submit" aria-label={t("deleteUpdate")}>
+                              <Trash2 size={15} />
+                            </button>
+                          </form>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="work-empty">{t("noWorkUpdates")}</p>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="work-task-toolbar">
+            <div className="work-stage-chips" role="tablist" aria-label={t("tasks")}>
+              {(["todo", "in_progress", "done"] as const).map((stage) => (
+                <button
+                  key={stage}
+                  type="button"
+                  role="tab"
+                  aria-selected={taskStage === stage}
+                  className={taskStage === stage ? "active" : ""}
+                  onClick={() => setTaskStage(stage)}
+                >
+                  {t(stage === "todo" ? "toDo" : stage === "in_progress" ? "inProgress" : "done")} <span>{stageCount(stage)}</span>
+                </button>
+              ))}
+            </div>
+            <button className={addingTask ? "secondary-button" : "primary-button"} type="button" onClick={() => setAddingTask((current) => !current)}>
+              {addingTask ? <X size={16} /> : <Plus size={16} />}
+              {addingTask ? t("cancel") : t("addTask")}
+            </button>
           </div>
-        ) : (
-          <p className="muted work-empty">{t("noWorkUpdates")}</p>
-        )}
-      </article>
+
+          {addingTask ? (
+            <form
+              className="form-grid two work-task-form"
+              onSubmit={(event) => submitWith(event, createWorkTaskAction, setNotice, startTransition, true, () => setAddingTask(false))}
+            >
+              <label className="full-span">
+                {t("taskTitle")}
+                <input name="title" required maxLength={200} autoFocus />
+              </label>
+              <label>
+                {t("assignTo")}
+                <select name="assigned_to" defaultValue={profileId}>
+                  {data.members.map((member) => (
+                    <option key={member.id} value={member.id}>{member.id === profileId ? `${member.full_name} (${t("me")})` : member.full_name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("dueDate")}
+                <input name="due_date" type="date" min={data.today} />
+              </label>
+              <label className="full-span">
+                {t("taskNotes")}
+                <textarea name="notes" rows={2} maxLength={2000} />
+              </label>
+              <button className="primary-button full-span" type="submit">{t("addTask")}</button>
+            </form>
+          ) : null}
+
+          {stageTasks.length ? (
+            <ul className="work-task-list">
+              {stageTasks.map((task: WorkTask) => {
+                const overdue = task.status !== "done" && Boolean(task.due_date) && (task.due_date as string) < data.today;
+                const next = workNextStage[task.status];
+                return (
+                  <li key={task.id} className={`stage-${task.status}`}>
+                    <div className="work-task-body">
+                      <strong>{task.title}</strong>
+                      <small>
+                        <span className="work-avatar tiny" aria-hidden="true">{workInitials(memberName(task.assigned_to))}</span>
+                        {memberName(task.assigned_to)}
+                        {task.due_date ? <span className={overdue ? "work-overdue" : ""}> · {overdue ? `${t("overdue")} ` : ""}{displayDate(task.due_date)}</span> : null}
+                      </small>
+                      {task.notes ? <p>{task.notes}</p> : null}
+                    </div>
+                    <form onSubmit={(event) => submitWith(event, setWorkTaskStatusAction, setNotice, startTransition, false)}>
+                      <input type="hidden" name="id" value={task.id} />
+                      <input type="hidden" name="status" value={next.status} />
+                      <button className={`work-stage-button to-${next.status}`} type="submit">
+                        {next.status === "done" ? <Check size={15} /> : null}
+                        {t(next.labelKey)}
+                      </button>
+                    </form>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="work-empty">{t("noTasksHere")}</p>
+          )}
+        </>
+      )}
     </section>
   );
 }
