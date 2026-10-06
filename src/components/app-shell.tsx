@@ -179,6 +179,9 @@ type UserClosingSummary = {
   outOnline: number;
 };
 
+type ClosingReviewFilter = "all" | "in" | "out" | "pending";
+type ClosingReviewMode = "all" | "cash" | "online";
+
 type ClosingPendingBreakdown = {
   totalAmount: number;
   totalRecordCount: number;
@@ -400,6 +403,7 @@ const messages: Record<Language, Record<string, string>> = {
     pendingAllDates: "All dates · not yet approved",
     retry: "Retry",
     asOf: "As of",
+    since: "since",
     allUnits: "All units",
     assignedUnits: "Assigned units",
     assignedUnit: "Assigned unit",
@@ -881,6 +885,7 @@ const messages: Record<Language, Record<string, string>> = {
     pendingAllDates: "सभी तारीखें · अभी मंजूर नहीं",
     retry: "फिर कोशिश करें",
     asOf: "तक",
+    since: "से",
     allUnits: "सभी यूनिट",
     assignedUnits: "दी गई यूनिट",
     assignedUnit: "दी गई यूनिट",
@@ -3337,12 +3342,14 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     target?: {
       businessType?: BusinessTypeFilter;
       mode?: TransactionModeFilter;
+      dateRange?: DateRangeState;
+      dateFilterKey?: DateFilterKey;
     },
   ) {
     setTransactionFilters((current) => ({
       ...current,
-      dateRange: dashboardFilters.dateRange,
-      dateFilterKey: dashboardFilters.dateFilterKey,
+      dateRange: target?.dateRange ?? dashboardFilters.dateRange,
+      dateFilterKey: target?.dateFilterKey ?? dashboardFilters.dateFilterKey,
       lens,
       activity,
       profileId: lens === "personal" ? appData.profile.id : "all",
@@ -4535,7 +4542,9 @@ function RoleDashboardView({
   dateFilterKey,
   asOfDate,
   openTransactions,
+  openClosing,
 }: {
+  openClosing: () => void;
   summary: DashboardSummary;
   dateLabel: string;
   dateFilterKey: DateFilterKey;
@@ -4546,6 +4555,8 @@ function RoleDashboardView({
     target?: {
       businessType?: BusinessTypeFilter;
       mode?: TransactionModeFilter;
+      dateRange?: DateRangeState;
+      dateFilterKey?: DateFilterKey;
     },
   ) => void;
 }) {
@@ -4567,8 +4578,16 @@ function RoleDashboardView({
           className="custody"
           label={staff ? `${t("cashInHand")} · ${t("self")}` : t("self")}
           value={formatMoney(cashSelfTotal)}
-          note={cashSelfPending !== 0 ? `${t("awaitingVerification")} ${formatMoney(cashSelfPending)}` : null}
-          onClick={() => openTransactions("personal", "all", { mode: "cash" })}
+          note={[
+            cashSelfPending !== 0 ? `${t("awaitingVerification")} ${formatMoney(cashSelfPending)}` : null,
+            summary.cashSelfSince && cashSelfTotal !== 0 ? `${t("since")} ${summary.cashSelfSince}` : null,
+          ].filter(Boolean).join(" · ") || null}
+          // Every cash IN / OUT since the balance last stood at zero adds up to this figure.
+          onClick={() => openTransactions("personal", "all", {
+            mode: "cash",
+            dateFilterKey: "approval",
+            dateRange: { preset: "custom", from: summary.cashSelfSince ?? asOfDate, to: asOfDate },
+          })}
         />
       ) : null}
       {!staff ? (
@@ -4577,7 +4596,8 @@ function RoleDashboardView({
           label={t("cashWithStaff")}
           value={formatMoney(summary.cashWithStaff)}
           note={`${t("asOf")} ${asOfDate}`}
-          onClick={() => openTransactions("business", "all", { mode: "cash" })}
+          // Closing lists each person's cash in hand.
+          onClick={openClosing}
         />
       ) : null}
     </div>
@@ -4783,6 +4803,8 @@ function HomeView({
     target?: {
       businessType?: BusinessTypeFilter;
       mode?: TransactionModeFilter;
+      dateRange?: DateRangeState;
+      dateFilterKey?: DateFilterKey;
     },
   ) => void;
   setNotice: (notice: ActionResult | null) => void;
@@ -4842,6 +4864,7 @@ function HomeView({
         dateFilterKey={dateFilterKey}
         asOfDate={dateRange.to}
         openTransactions={openTransactions}
+        openClosing={() => changeTab("closing")}
       />
     );
   }
@@ -5548,9 +5571,9 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  // Pending approvals carry forward: every record still awaiting approval up to the range end
-  // stays reachable from the PENDING tab, while ALL/IN/OUT stay on the selected dates.
-  const pendingAwaitingInScope = useCallback((isoDate: string) => isoDate.slice(0, 10) <= dateRange.to, [dateRange.to]);
+  // Pending records have no approval date yet, so the date filter always applies to their
+  // transaction date. (Every pending record regardless of dates lives behind the header button.)
+  const pendingAwaitingInScope = useCallback((isoDate: string) => dateInRange(isoDate.slice(0, 10), dateRange), [dateRange]);
   const pendingInSelectedDates = useCallback((record: { date: string }) => dateInRange(record.date.slice(0, 10), dateRange), [dateRange]);
   const allTransactionRecords = useMemo(() => {
     type HistoryRecordFilter = Exclude<TransactionFilter, "all" | "pending">;
@@ -6285,6 +6308,10 @@ function TransactionsView({
           />
         </span>
       </label>
+
+      {transactionFilter === "pending" && !pendingOnly ? (
+        <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
+      ) : null}
 
       {/* Totals live on the Dashboard; Sales agents keep their incentive total here. */}
       {currentUserIsSalesAgent ? (
@@ -11137,7 +11164,10 @@ function ClosingView({
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
-  const [reviewProfileId, setReviewProfileId] = useState<string | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ profileId: string; filter: ClosingReviewFilter; mode: ClosingReviewMode } | null>(null);
+  const reviewProfileId = reviewTarget?.profileId ?? null;
+  const openReview = (profileId: string, filter: ClosingReviewFilter = "all", mode: ClosingReviewMode = "all") =>
+    setReviewTarget({ profileId, filter, mode });
   const [settlementEntryAmounts, setSettlementEntryAmounts] = useState<Record<string, string>>({});
   const viewerManagerBusinessTypes = new Set(
     managerUnitScopes
@@ -11243,10 +11273,13 @@ function ClosingView({
     pending: pendingReviewSummary(summary),
   }));
 
-  if (selectedReviewSummary && owner) {
+  // Owners review and approve; others may open their own card's records read-only.
+  if (selectedReviewSummary && (owner || selectedReviewSummary.profile.id === profile.id)) {
     return (
       <ClosingReviewDetail
-        key={`${selectedReviewSummary.profile.id}-${date}`}
+        key={`${selectedReviewSummary.profile.id}-${date}-${reviewTarget?.filter}-${reviewTarget?.mode}`}
+        initialFilter={reviewTarget?.filter}
+        initialMode={reviewTarget?.mode}
         summary={selectedReviewSummary}
         date={date}
         payments={payments}
@@ -11258,12 +11291,12 @@ function ClosingView({
         profiles={profiles}
         businessTypes={selectedReviewBusinessTypes === null ? null : [...selectedReviewBusinessTypes]}
         canVerifyOnlineCollections={canVerifyOnlineCollections}
-        reviewActionsEnabled={
+        reviewActionsEnabled={owner && (
           profile.membership_role !== "co_owner"
           || selectedReviewSummary.profile.membership_role === "staff"
           || selectedReviewSummary.profile.id === profile.id
-        }
-        close={() => setReviewProfileId(null)}
+        )}
+        close={() => setReviewTarget(null)}
         setNotice={setNotice}
         startTransition={startTransition}
       />
@@ -11287,6 +11320,7 @@ function ClosingView({
             const custodyCashIn = summary.collected + summary.received;
             const custodyCashOut = summary.expenses + summary.sent;
             const ownerCard = summary.profile.membership_role === "primary_owner";
+            const canOpenReview = (owner || summary.profile.id === profile.id);
             const settlementProfileKey = `${date}:${summary.profile.id}`;
             const canReceiveFromUser = summary.profile.id !== profile.id && (
               (
@@ -11340,22 +11374,22 @@ function ClosingView({
                         <strong>{formatMoney(summary.opening)}</strong>
                       </span>
                     ) : null}
-                    <span className="closing-equation-part positive">
+                    <button type="button" disabled={!canOpenReview} className="closing-equation-part positive" onClick={() => openReview(summary.profile.id, "in", "cash")}>
                       <small>+ {t("cash")} {t("cashIn")}</small>
                       <strong>{formatMoney(custodyCashIn + pendingSummary.dayCashIn)}</strong>
-                    </span>
-                    <span className="closing-equation-part positive approved">
+                    </button>
+                    <button type="button" disabled={!canOpenReview} className="closing-equation-part positive approved" onClick={() => openReview(summary.profile.id, "in", "cash")}>
                       <small>{labelForStatus("approved", t)}</small>
                       <strong>{formatMoney(custodyCashIn)}</strong>
-                    </span>
-                    <span className="closing-equation-part negative">
+                    </button>
+                    <button type="button" disabled={!canOpenReview} className="closing-equation-part negative" onClick={() => openReview(summary.profile.id, "out", "cash")}>
                       <small>− {t("cash")} {t("cashOut")}</small>
                       <strong>{formatMoney(custodyCashOut + pendingSummary.dayCashOut)}</strong>
-                    </span>
-                    <span className="closing-equation-part negative approved">
+                    </button>
+                    <button type="button" disabled={!canOpenReview} className="closing-equation-part negative approved" onClick={() => openReview(summary.profile.id, "out", "cash")}>
                       <small>{labelForStatus("approved", t)}</small>
                       <strong>{formatMoney(custodyCashOut)}</strong>
-                    </span>
+                    </button>
                     {summary.adjustments !== 0 ? (
                       <span className={`closing-equation-part full-row${summary.adjustments < 0 ? " negative" : " positive"}`}>
                         <small>{summary.adjustments < 0 ? "−" : "+"} {t("adjustments")}</small>
@@ -11382,7 +11416,7 @@ function ClosingView({
                   title={t("onlineOwnerBankNote")}
                   aria-label={`${t("onlineIn")} ${formatMoney(summary.inOnline + pendingSummary.onlineAmount)} · ${t("verifiedOnline")} ${formatMoney(summary.inOnline)}`}
                 >
-                  <div className="closing-online-summary">
+                  <button type="button" disabled={!canOpenReview} className="closing-online-summary" onClick={() => openReview(summary.profile.id, "in", "online")}>
                     <span className="closing-online-metric">
                       <small><Landmark aria-hidden="true" size={15} /> {t("onlineIn")}</small>
                       <strong>+{formatMoney(summary.inOnline + pendingSummary.onlineAmount)}</strong>
@@ -11395,12 +11429,12 @@ function ClosingView({
                         <em>{t("awaitingVerification")} {formatMoney(pendingSummary.onlineAmount)}</em>
                       ) : null}
                     </span>
-                  </div>
+                  </button>
                 </section>
 
                 {!ownerCard ? (
                 <section className={`closing-pending-panel${pendingSummary.totalRecordCount > 0 ? " active" : ""}`}>
-                  <div className="closing-pending-head">
+                  <button type="button" disabled={!canOpenReview} className="closing-pending-head" onClick={() => openReview(summary.profile.id, "pending")}>
                     <span className="closing-pending-icon">
                       <ClipboardList aria-hidden="true" size={18} />
                     </span>
@@ -11409,12 +11443,12 @@ function ClosingView({
                       <small>{pendingSummary.totalRecordCount} {t(pendingSummary.totalRecordCount === 1 ? "record" : "records")}</small>
                     </span>
                     <strong className="closing-pending-amount">{formatMoney(pendingSummary.totalAmount)}</strong>
-                  </div>
+                  </button>
                 </section>
                 ) : null}
                 {owner ? (
                   <div className="closing-staff-actions">
-                    <button className="closing-review-button" type="button" onClick={() => setReviewProfileId(summary.profile.id)}>
+                    <button className="closing-review-button" type="button" onClick={() => openReview(summary.profile.id)}>
                       {t("reviewAndSettle")}
                     </button>
                     {canReceiveFromUser ? (
@@ -11474,10 +11508,14 @@ function ClosingReviewDetail({
   businessTypes,
   canVerifyOnlineCollections,
   reviewActionsEnabled,
+  initialFilter = "all",
+  initialMode = "all",
   close,
   setNotice,
   startTransition,
 }: {
+  initialFilter?: ClosingReviewFilter;
+  initialMode?: ClosingReviewMode;
   summary: UserClosingSummary;
   date: string;
   dateFilterKey: DateFilterKey;
@@ -11495,7 +11533,8 @@ function ClosingReviewDetail({
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
-  const [reviewFilter, setReviewFilter] = useState<"all" | "in" | "out" | "pending">("all");
+  const [reviewFilter, setReviewFilter] = useState<ClosingReviewFilter>(initialFilter);
+  const [reviewMode, setReviewMode] = useState<ClosingReviewMode>(initialMode);
   type ClosingReviewRecord = {
     id: string;
     sourceId: string;
@@ -11759,16 +11798,20 @@ function ClosingReviewDetail({
   ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
   // ALL / IN / OUT stay on the closing date (ALL includes that day's pending records);
   // PENDING carries every record still awaiting approval up to the closing date.
-  const todayRecords = reviewRecords.filter((record) => !record.canReview && record.recordDate === date);
   const pendingRecords = reviewRecords.filter((record) => record.canReview);
-  const allDayRecords = reviewRecords.filter((record) => record.recordDate === date);
-  const inRecords = todayRecords.filter((record) => record.tone === "positive");
-  const outRecords = todayRecords.filter((record) => record.tone === "negative");
+  // Cash / Online narrows every chip (set when a closing card's Cash or Online figure is tapped).
+  const matchesMode = (record: { cashAmount: number; onlineAmount: number }) =>
+    reviewMode === "all" || (reviewMode === "cash" ? record.cashAmount > 0 : record.onlineAmount > 0);
+  const allDayRecords = reviewRecords.filter((record) => record.recordDate === date && matchesMode(record));
+  // IN / OUT include the day's pending records, matching the card's Cash IN / Cash OUT totals.
+  const inRecords = allDayRecords.filter((record) => record.tone === "positive");
+  const outRecords = allDayRecords.filter((record) => record.tone === "negative");
+  const modePendingRecords = pendingRecords.filter(matchesMode);
   const reviewFilterOptions = [
     { value: "all" as const, label: t("all"), records: allDayRecords },
     { value: "in" as const, label: "IN", records: inRecords },
     { value: "out" as const, label: "OUT", records: outRecords },
-    { value: "pending" as const, label: t("pending"), records: pendingRecords },
+    { value: "pending" as const, label: t("pending"), records: modePendingRecords },
   ];
   const visibleReviewRecords = reviewFilterOptions.find((option) => option.value === reviewFilter)?.records ?? allDayRecords;
   const createdTime = (createdAt: string) => formatIndiaTime(createdAt);
@@ -11803,6 +11846,11 @@ function ClosingReviewDetail({
               {option.label} · {option.records.length}
             </button>
           ))}
+          {reviewMode !== "all" ? (
+            <button className="active review-mode-chip" type="button" onClick={() => setReviewMode("all")} aria-label={`${t(reviewMode)} · Clear filter`}>
+              {t(reviewMode)} <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
         {reviewFilter === "pending" && pendingRecords.length > 0 ? <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p> : null}
         <div className="review-transaction-list">

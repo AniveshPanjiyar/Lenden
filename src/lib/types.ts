@@ -552,6 +552,8 @@ export type DashboardSummary = {
   cashSelf: number;
   /** Viewer's cash collected (minus cash spent) that still awaits approval. */
   cashSelfPending?: number;
+  /** First day of the run since the viewer's cash in hand last stood at zero. */
+  cashSelfSince?: string | null;
   cashWithStaff: number;
   collections: { total: number; cash: number; online: number };
   expenses: { total: number; cash: number; online: number };

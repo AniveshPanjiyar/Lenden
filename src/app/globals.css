@@ -11341,3 +11341,18 @@ button.flow-row { width: 100%; font: inherit; color: inherit; text-align: left; 
 .pending-side-sheet > .sheet-header span { color: var(--muted); font-size: 12px; font-weight: 750; }
 .pending-side-sheet .transaction-history-view { padding: 0; background: transparent; }
 .profile-menu-trigger > :not(.profile-unread-dot) { border-radius: 999px; overflow: hidden; }
+
+/* Closing card figures open the review page with matching filters. */
+button.closing-equation-part,
+button.closing-online-summary,
+button.closing-pending-head {
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+button.closing-online-summary { width: 100%; border: 0; padding: 0; }
+button.closing-pending-head { width: 100%; border: 0; padding: 0; background: transparent; }
+button.closing-equation-part:not(:disabled):hover,
+button.closing-online-summary:not(:disabled):hover { filter: brightness(0.97); }
+button.closing-equation-part:disabled,
+button.closing-online-summary:disabled,
+button.closing-pending-head:disabled { cursor: default; opacity: 1; }
+.review-mode-chip { display: inline-flex; align-items: center; gap: 4px; }
