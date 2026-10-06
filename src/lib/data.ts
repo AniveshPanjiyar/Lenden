@@ -837,10 +837,11 @@ export async function getStudentCollectionPage(
       .from("library_students")
       .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
-      .eq("active", true)
       .eq("placeholder", false);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     const result = await query
+      // Active students first; inactive ones stay searchable so they can be renewed.
+      .order("active", { ascending: false })
       .order("subscription_end_date", { ascending: true, nullsFirst: false })
       .order("roll_number")
       .order("id")
@@ -869,10 +870,11 @@ export async function getStudentCollectionPage(
     .from("course_students")
     .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
-    .eq("source_course_id", sourceCourseId)
-    .eq("active", true);
+    .eq("source_course_id", sourceCourseId);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   const result = await query
+    // Active students first; inactive ones stay searchable so they can be renewed.
+    .order("active", { ascending: false })
     .order("subscription_end_date", { ascending: true, nullsFirst: false })
     .order("roll_number")
     .order("id")

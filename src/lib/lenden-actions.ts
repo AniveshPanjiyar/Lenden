@@ -1284,6 +1284,8 @@ async function saveLibraryStudentRecord(
     photoUrl?: string | null;
     aadharPhotoUrl?: string | null;
     aadharBackPhotoUrl?: string | null;
+    /** A saved payment that adds a subscription brings an inactive student back. */
+    reactivate?: boolean;
   },
 ) {
   const payload: Record<string, unknown> = {
@@ -1323,9 +1325,15 @@ async function saveLibraryStudentRecord(
       params.fields.subscriptionStartDate ?? "",
       params.lastPaymentDate ?? "",
     ].join("|");
-    if (currentSubscriptionKey > nextSubscriptionKey) return studentId;
-    // A payment refreshes the subscription snapshot but never changes manual status.
-    payload.active = current.active;
+    if (currentSubscriptionKey > nextSubscriptionKey) {
+      if (params.reactivate && !current.active) {
+        const reactivated = await admin.from("library_students").update({ active: true }).eq("id", studentId);
+        if (reactivated.error) throw new Error(reactivated.error.message);
+      }
+      return studentId;
+    }
+    // A payment refreshes the subscription snapshot; status changes only when a new subscription reactivates it.
+    payload.active = current.active || Boolean(params.reactivate);
   }
 
   const query = studentId
@@ -1413,6 +1421,8 @@ async function upsertCourseStudentRecord(
     paidAmount?: number | null;
     duesAmount?: number | null;
     advanceAmount?: number | null;
+    /** A saved payment that adds a subscription brings an inactive student back. */
+    reactivate?: boolean;
   },
 ) {
   const identityKey = courseStudentIdentityKey(params.rollNumber, params.studentName, params.paymentId);
@@ -1453,7 +1463,7 @@ async function upsertCourseStudentRecord(
   if (params.aadharBackPhotoUrl) payload.aadhar_back_photo_url = params.aadharBackPhotoUrl;
   if (params.paymentId) payload.last_payment_id = params.paymentId;
   if (params.currentSubscriptionKey) payload.current_subscription_key = params.currentSubscriptionKey;
-  if (!current) payload.active = true;
+  if (!current || params.reactivate) payload.active = true;
 
   const result = current
     ? await admin.from("course_students").update(payload).eq("id", current.id).select("*").single()
@@ -1743,7 +1753,6 @@ const handlers = {
           }
           throw new Error(studentResponse.error?.message ?? "Could not load library student.");
         }
-        if (studentRecord.active !== true) return fail("This student is inactive. Reactivate the student before collecting payment.");
 
         const currentFields = fieldsFromLibraryStudentRecord(studentRecord);
         const previousDue = asNumber(formData, "previous_due_amount") ?? currentFields.duesAmount ?? 0;
@@ -1783,7 +1792,6 @@ const handlers = {
           }
           const existingStudent = typedData<{ id: string; active: boolean }>(existingStudentResponse);
           if (!existingStudent) return fail("The selected library student was not found.");
-          if (!existingStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
         }
         const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey);
         if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
@@ -1864,7 +1872,6 @@ const handlers = {
         if (!existingCourseStudent || existingCourseStudent.source_course_id !== sourceCourseId) {
           return fail("The selected course student was not found.");
         }
-        if (!existingCourseStudent.active) return fail("This student is inactive. Reactivate the student before collecting payment.");
       }
 
       if (coursePaymentKind === "dues") {
@@ -2078,6 +2085,7 @@ const handlers = {
           lastPaymentId: payment.id,
           lastPaymentDate: paymentDate,
           currentSubscriptionKey: studentSubscriptionKey,
+          reactivate: libraryPaymentKind !== "dues",
           photoUrl: libraryStudentPhotoUrl,
           aadharPhotoUrl,
           aadharBackPhotoUrl,
@@ -2113,6 +2121,7 @@ const handlers = {
         rollNumber: courseStudent.roll_number,
         studentName: courseStudent.student_name,
         paymentId: payment.id,
+        reactivate: coursePaymentKind !== "dues",
         currentSubscriptionKey: studentSubscriptionKey,
         aadharPhotoUrl,
         aadharBackPhotoUrl,
