@@ -5366,7 +5366,7 @@ function TransactionJourney({
 
   return (
     <div
-      className={`transaction-journey ${lanes.length > 1 ? "has-lanes" : ""} ${tone}`}
+      className={`transaction-journey ${lanes.length > 1 ? "has-lanes" : ""} ${lanes.some((lane) => lane.component) ? "has-component-lanes" : ""} ${tone}`}
       aria-label={t("paymentJourney")}
     >
       <div className="transaction-journey-lanes">

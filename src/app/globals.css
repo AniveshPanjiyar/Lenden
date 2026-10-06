@@ -11374,3 +11374,12 @@ button.closing-pending-head:disabled { cursor: default; opacity: 1; }
 /* Feel like an app in the installed PWA: no sideways drift and no rubber-band bounce. */
 html, body { overflow-x: clip; overscroll-behavior: none; }
 .app-root { max-width: 100vw; overflow-x: clip; }
+
+/* Cash / Online lanes are already boxed: the journey wrapper around them stays frameless,
+   so a payment chain has one box like a cash-transfer chain. */
+.transaction-journey.has-component-lanes {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0;
+}
