@@ -11254,3 +11254,28 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
   .modal-layer { height: 100dvh; }
   .action-sheet { max-height: min(82dvh, 720px); overscroll-behavior: contain; }
 }
+
+/* Transaction card: unit badge plus the student's roll number. */
+.history-card-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.history-roll-badge { color: var(--brand-strong, #2f6f5e); border-color: rgba(47, 111, 94, 0.32); }
+
+/* Transactions search (name / roll number) */
+.transaction-search .input-with-icon {
+  min-height: 46px; padding: 0 14px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--panel-solid, #fffdf8); color: var(--muted);
+}
+.transaction-search input { border: 0; outline: none; background: transparent; min-height: 44px; font: inherit; color: var(--foreground); }
+
+/* Student subscription history: inline edit */
+.student-subscription-edit-button { width: 34px; height: 34px; flex: 0 0 auto; }
+.student-subscription-edit {
+  margin-top: 10px; padding: 12px; border-radius: 14px;
+  border: 1px solid var(--brand, #2f6f5e); background: var(--panel-solid, #fffdf8);
+}
+.student-subscription-edit-transaction {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px;
+  margin: 0; padding: 10px; border: 1px dashed var(--line); border-radius: 12px;
+}
+.student-subscription-edit-transaction legend { padding: 0 4px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.student-subscription-edit-locked { margin: 0; color: var(--muted); font-size: 12px; font-weight: 800; }
+.student-subscription-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }

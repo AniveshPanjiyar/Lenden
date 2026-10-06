@@ -64,6 +64,7 @@ import {
   saveLibraryStudentAction,
   respondPaymentTransferAction,
   setStudentStatusAction,
+  updateSubscriptionAction,
   settleCashAction,
   updateRecordAction,
 } from "@/app/actions";
@@ -512,6 +513,7 @@ const messages: Record<Language, Record<string, string>> = {
     exportCsv: "Export CSV",
     expiryNotSet: "Expiry not set",
     expiresIn: "Expires in",
+    remainingSuffix: "remaining",
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
@@ -586,6 +588,8 @@ const messages: Record<Language, Record<string, string>> = {
     studentProfile: "Student profile",
     subscription: "Subscription",
     subscriptionHistory: "Subscription history",
+    editSubscription: "Edit subscription",
+    amountLockedAfterApproval: "Approved · amount and date locked",
     subscriptionPeriod: "Subscription",
     timing: "Timing",
     logout: "Logout",
@@ -979,6 +983,7 @@ const messages: Record<Language, Record<string, string>> = {
     exportCsv: "CSV निकालें",
     expiryNotSet: "खत्म तारीख नहीं है",
     expiresIn: "इतने दिन में खत्म",
+    remainingSuffix: "बाकी",
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
@@ -1053,6 +1058,8 @@ const messages: Record<Language, Record<string, string>> = {
     studentProfile: "छात्र प्रोफाइल",
     subscription: "सब्सक्रिप्शन",
     subscriptionHistory: "सब्सक्रिप्शन हिसाब",
+    editSubscription: "सब्सक्रिप्शन बदलें",
+    amountLockedAfterApproval: "पक्का हो चुका · रकम और तारीख नहीं बदलेगी",
     subscriptionPeriod: "सब्सक्रिप्शन",
     timing: "समय",
     logout: "लॉग आउट",
@@ -1372,6 +1379,7 @@ const libraryRefreshActions = new Set<ClientAction>([
   saveCourseStudentAction,
   saveLibraryStudentAction,
   setStudentStatusAction,
+  updateSubscriptionAction,
 ]);
 
 const workRefreshActions = new Set<ClientAction>([
@@ -5402,6 +5410,8 @@ function TransactionsView({
     recordKey: string;
   } | null>(null);
   const [transactionActionNotice, setTransactionActionNotice] = useState<ActionResult | null>(null);
+  const [transactionSearch, setTransactionSearch] = useState("");
+  const transactionSearchKey = transactionSearch.trim().toLowerCase();
   useEffect(() => {
     const closeMenuOnOutsideClick = (event: PointerEvent) => {
       const target = event.target;
@@ -5443,6 +5453,7 @@ function TransactionsView({
       remark: string;
       reason: string | null;
       businessLabel?: string;
+      rollNumber?: string;
       icon: ReactNode;
       recordType?: "payment" | "expense";
       editDate?: string;
@@ -5588,6 +5599,9 @@ function TransactionsView({
           businessType: payment.business_type,
           title: paymentDisplayTitle(payment, t),
           businessLabel: transactionBusinessTag(payment.business_type, t),
+          rollNumber: (payment.business_type === "library" || payment.business_type === "course") && payment.roll_number
+            ? payment.roll_number
+            : undefined,
           status: paymentStatus,
           statusTone: paymentStatusTone,
           modeLabel: paymentModeLabel(payment, t),
@@ -6032,6 +6046,11 @@ function TransactionsView({
     setNotice(notice);
   };
   const matchesSecondaryFilters = useCallback((record: (typeof allTransactionRecords)[number]) => {
+    if (
+      transactionSearchKey
+      && !record.title.toLowerCase().includes(transactionSearchKey)
+      && !(record.rollNumber ?? "").toLowerCase().includes(transactionSearchKey)
+    ) return false;
     if (recordTypeFilter !== "all" && record.recordCategory !== recordTypeFilter) return false;
     // Cash handovers between members belong to no business unit, so a unit filter must not hide them.
     const unitlessTransfer = record.recordCategory === "transfer" && !record.businessType;
@@ -6043,7 +6062,7 @@ function TransactionsView({
       if (recordMode !== modeFilter) return false;
     }
     return true;
-  }, [businessTypeFilter, modeFilter, recordTypeFilter]);
+  }, [businessTypeFilter, modeFilter, recordTypeFilter, transactionSearchKey]);
   const transactionRecords = useMemo(() => allTransactionRecords.filter((record) => {
     if (!matchesSecondaryFilters(record)) return false;
     if (transactionFilter === "all") return !record.pendingApproval || pendingInSelectedDates(record);
@@ -6149,6 +6168,19 @@ function TransactionsView({
         </nav>
       ) : null}
 
+      <label className="transaction-search">
+        <span className="input-with-icon">
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            value={transactionSearch}
+            onChange={(event) => setTransactionSearch(event.target.value)}
+            placeholder={`${t("name")} / ${t("rollNumber")}`}
+            aria-label="Search transactions"
+          />
+        </span>
+      </label>
+
       <section className="history-summary-panel">
         <div className="history-summary-context">
           <span>{dateLabel}</span>
@@ -6192,7 +6224,12 @@ function TransactionsView({
                     <div className="history-card-icon">{record.icon}</div>
                     <div className="history-card-main">
                       <strong>{record.title}</strong>
-                      {record.businessLabel ? <span className="history-business-badge">{record.businessLabel}</span> : <p>{record.meta}</p>}
+                      {record.businessLabel ? (
+                        <span className="history-card-badges">
+                          <span className="history-business-badge">{record.businessLabel}</span>
+                          {record.rollNumber ? <span className="history-business-badge history-roll-badge">{t("roll")} {record.rollNumber}</span> : null}
+                        </span>
+                      ) : <p>{record.meta}</p>}
                       {record.transactionDate && record.approvalDate && record.transactionDate !== record.approvalDate ? (
                         <small className="history-date-context">
                           {t("transactionDate")} {record.transactionDate} · {t("approvalDate")} {record.approvalDate}
@@ -6712,7 +6749,7 @@ function subscriptionExpiryStatusLabel(endDate: string | null | undefined, today
   const dayLabel = dayCount === 1 ? t("day") : t("days");
   if (dayDelta < 0) return `${t("expired")} ${dayCount} ${dayLabel} ${t("ago")}`;
   if (dayDelta === 0) return t("expiresToday");
-  return `${t("expiresIn")} ${dayDelta} ${dayLabel}`;
+  return `${dayDelta} ${dayLabel} ${t("remainingSuffix")}`;
 }
 
 function libraryExpiryStatusLabel(student: LibraryStudent, today: string, t: (key: string) => string) {
@@ -7345,6 +7382,9 @@ function SubscriptionHistoryTimeline({
   hasMore,
   loadingMore,
   onLoadOlder,
+  editTarget,
+  setNotice,
+  startTransition,
 }: {
   subscriptions: StudentSubscriptionHistoryItem[];
   totalSubscriptions: number;
@@ -7353,8 +7393,14 @@ function SubscriptionHistoryTimeline({
   hasMore: boolean;
   loadingMore: boolean;
   onLoadOlder: () => void;
+  /** When set, each subscription can be edited (period and timing always; amount and date until approval). */
+  editTarget?: { studentType: "library" | "course"; studentId: string } | null;
+  setNotice?: (notice: ActionResult | null) => void;
+  startTransition?: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const canEdit = Boolean(editTarget && setNotice && startTransition);
 
   return (
     <section className="student-history-panel" aria-label={t("subscriptionHistory")}>
@@ -7377,7 +7423,79 @@ function SubscriptionHistoryTimeline({
               <span className="student-subscription-payment-count">
                 {subscription.transactionCount} {t("paymentTransactions")}
               </span>
+              {canEdit && editingKey !== subscription.subscriptionKey ? (
+                <button
+                  className="icon-button student-subscription-edit-button"
+                  type="button"
+                  aria-label={t("editSubscription")}
+                  title={t("editSubscription")}
+                  onClick={() => setEditingKey(subscription.subscriptionKey)}
+                >
+                  <Pencil size={16} />
+                </button>
+              ) : null}
             </div>
+            {canEdit && editTarget && setNotice && startTransition && editingKey === subscription.subscriptionKey ? (
+              <form
+                className="form-grid student-subscription-edit"
+                onSubmit={(event) => submitAndClose(event, updateSubscriptionAction, setNotice, startTransition, () => setEditingKey(null))}
+              >
+                <input type="hidden" name="student_type" value={editTarget.studentType} />
+                <input type="hidden" name="student_id" value={editTarget.studentId} />
+                <input type="hidden" name="subscription_key" value={subscription.subscriptionKey} />
+                <label>
+                  {t("startDate")}
+                  <input type="date" name="start_date" defaultValue={subscription.startDate ?? ""} required />
+                </label>
+                <label>
+                  {t("endDate")}
+                  <input type="date" name="end_date" defaultValue={subscription.endDate ?? ""} required />
+                </label>
+                <label>
+                  {t("startTime")}
+                  <input type="time" name="start_time" defaultValue={subscription.startTime?.slice(0, 5) ?? ""} required />
+                </label>
+                <label>
+                  {t("endTime")}
+                  <input type="time" name="end_time" defaultValue={subscription.endTime?.slice(0, 5) ?? ""} required />
+                </label>
+                {subscription.transactions.filter((transaction) => transaction.recordStatus === "active").map((transaction) => {
+                  const approved = transaction.approvalStatus === "approved"
+                    || transaction.cashApprovalStatus === "approved"
+                    || transaction.onlineApprovalStatus === "approved";
+                  return approved ? (
+                    <p className="full-span student-subscription-edit-locked" key={transaction.id}>
+                      {formatMoney(transaction.amount)} · {displayDate(transaction.paymentDate)} · {t("amountLockedAfterApproval")}
+                    </p>
+                  ) : (
+                    <fieldset className="full-span student-subscription-edit-transaction" key={transaction.id}>
+                      <legend>{transaction.collectorName} · {labelForMode(transaction.mode, t)}</legend>
+                      <label>
+                        {t("amount")}
+                        <input
+                          type="number"
+                          name={`amount_${transaction.id}`}
+                          defaultValue={transaction.amount}
+                          min="1"
+                          step="0.01"
+                          inputMode="decimal"
+                          disabled={transaction.mode === "mixed"}
+                          required
+                        />
+                      </label>
+                      <label>
+                        {t("transactionDate")}
+                        <input type="date" name={`date_${transaction.id}`} defaultValue={transaction.paymentDate.slice(0, 10)} required />
+                      </label>
+                    </fieldset>
+                  );
+                })}
+                <div className="full-span student-subscription-edit-actions">
+                  <button className="secondary-button" type="button" onClick={() => setEditingKey(null)}>{t("cancel")}</button>
+                  <button className="primary-button" type="submit">{t("save")}</button>
+                </div>
+              </form>
+            ) : null}
             <div className="student-history-money-grid">
               <span>{t("fee")} <strong>{formatMoney(subscription.feeAmount)}</strong></span>
               <span>{t("totalPaid")} <strong>{formatMoney(subscription.totalPaid)}</strong></span>
@@ -8174,6 +8292,11 @@ function LibraryStudentsView({
                   hasMore={drawerHasMoreHistory}
                   loadingMore={drawerLoadingMoreHistory}
                   onLoadOlder={() => void drawerHistoryQuery.fetchNextPage()}
+                  editTarget={drawerKind && (selectedStudent?.id ?? selectedCourseStudent?.id)
+                    ? { studentType: drawerKind, studentId: (selectedStudent?.id ?? selectedCourseStudent?.id) as string }
+                    : null}
+                  setNotice={setNotice}
+                  startTransition={startTransition}
                 />
               ) : null}
 

@@ -2347,6 +2347,180 @@ const handlers = {
     });
   }),
 
+  updateSubscription: withErrors("Could not update subscription.", async (formData, { admin, profile }) => {
+    if (isBusinessSalesAgent(profile.businessRole)) {
+      return fail("Sales agents have read-only incentive access.");
+    }
+    const studentType: "library" | "course" = asString(formData, "student_type") === "course" ? "course" : "library";
+    const studentId = asString(formData, "student_id");
+    const subscriptionKey = asString(formData, "subscription_key");
+    if (!studentId || !subscriptionKey) return fail("Choose a subscription.");
+    if (studentType === "library") {
+      await requireLibraryCollectionAccess(admin, profile);
+    } else if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
+      return fail("You do not have access to course students.");
+    }
+
+    const startDate = asString(formData, "start_date");
+    const endDate = asString(formData, "end_date");
+    if (!startDate || !endDate || !isIsoDate(startDate) || !isIsoDate(endDate) || endDate < startDate) {
+      return fail("Enter a valid subscription period.");
+    }
+    const startTime = normalizeClockTime(asString(formData, "start_time"));
+    const endTime = normalizeClockTime(asString(formData, "end_time"));
+    const slotHours = slotHoursBetween(startTime, endTime);
+    if (!startTime || !endTime || slotHours === null) return fail("Enter a valid time slot.");
+
+    // A subscription is every payment that shares its key ("payment:<id>" when the key was never set).
+    let paymentsQuery = admin
+      .from("payments")
+      .select("*")
+      .eq("business_id", profile.businessId)
+      .eq("business_type", studentType);
+    paymentsQuery = subscriptionKey.startsWith("payment:")
+      ? paymentsQuery.eq("id", subscriptionKey.slice("payment:".length))
+      : paymentsQuery.eq("student_subscription_key", subscriptionKey);
+    const paymentsResponse = await paymentsQuery;
+    if (paymentsResponse.error) throw new Error(paymentsResponse.error.message);
+    const payments = typedDataArray<Record<string, string | number | null>>(paymentsResponse)
+      .sort((a, b) =>
+        String(a.payment_date).localeCompare(String(b.payment_date))
+        || String(a.created_at).localeCompare(String(b.created_at))
+        || String(a.id).localeCompare(String(b.id)));
+    const studentColumn = studentType === "library" ? "library_student_id" : "course_student_id";
+    if (payments.length === 0 || payments.some((payment) => payment[studentColumn] && payment[studentColumn] !== studentId)) {
+      return fail("Subscription was not found for this student.");
+    }
+
+    const updatesById = new Map<string, Record<string, unknown>>();
+    const updatesFor = (id: string) => {
+      const current = updatesById.get(id) ?? {};
+      updatesById.set(id, current);
+      return current;
+    };
+    payments.forEach((payment) => {
+      Object.assign(updatesFor(String(payment.id)), {
+        start_date: startDate,
+        end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        slot_hours: slotHours,
+      });
+    });
+
+    // Amount and transaction date stay editable only until the transaction is approved.
+    const nextAmounts = new Map<string, number>();
+    for (const payment of payments) {
+      const id = String(payment.id);
+      const currentAmount = Number(payment.amount ?? 0);
+      nextAmounts.set(id, payment.record_status === "active" ? currentAmount : 0);
+      if (payment.record_status !== "active") continue;
+      const requestedAmount = asNumber(formData, `amount_${id}`);
+      const requestedDate = asString(formData, `date_${id}`);
+      const amountChanged = requestedAmount !== null && moneyToCents(requestedAmount) !== moneyToCents(currentAmount);
+      const dateChanged = requestedDate !== null && requestedDate !== String(payment.payment_date).slice(0, 10);
+      if (!amountChanged && !dateChanged) continue;
+
+      const locked = (await recordIsEffectivelyApproved(admin, "payment", payment)) || paymentHasApprovedComponent(payment);
+      if (locked) return fail("Approved transactions keep their amount and transaction date.");
+      if (!(await canManageBusinessRecord(admin, profile, studentType, recordOwnerProfileId("payment", payment)))) {
+        return fail("You can edit your own transactions, or Staff transactions when you are a Manager.");
+      }
+      const transferResponse = await admin
+        .from("money_movements")
+        .select("id")
+        .eq("payment_id", id)
+        .eq("type", "transfer")
+        .in("status", ["pending", "accepted"]);
+      if (transferResponse.error) throw new Error(transferResponse.error.message);
+      if (typedDataArray<{ id: string }>(transferResponse).length > 0) {
+        return fail("Transactions with transfer history cannot be edited.");
+      }
+
+      const updates = updatesFor(id);
+      if (dateChanged) {
+        if (!isIsoDate(requestedDate)) return fail("Enter a valid transaction date.");
+        updates.payment_date = requestedDate;
+      }
+      if (amountChanged) {
+        if (requestedAmount === null || requestedAmount <= 0) return fail("Enter a valid amount.");
+        if (payment.mode === "mixed") {
+          return fail("Change a mixed cash + online amount from the transaction itself.");
+        }
+        updates.amount = requestedAmount;
+        updates.cash_collection = payment.mode === "cash" ? requestedAmount : 0;
+        updates.online_collection = payment.mode === "online" ? requestedAmount : 0;
+        nextAmounts.set(id, requestedAmount);
+      }
+    }
+
+    // Keep each payment's paid / dues / advance snapshot in step with the amounts.
+    const fee = Math.max(...payments.map((payment) => Number(payment.fee_amount ?? 0)), 0);
+    let cumulativePaid = 0;
+    let latestSnapshot = { paid: 0, dues: 0, advance: 0 };
+    payments.forEach((payment) => {
+      cumulativePaid += nextAmounts.get(String(payment.id)) ?? 0;
+      const effectiveFee = fee > 0 ? fee : cumulativePaid;
+      latestSnapshot = {
+        paid: cumulativePaid,
+        dues: Math.max(effectiveFee - cumulativePaid, 0),
+        advance: Math.max(cumulativePaid - effectiveFee, 0),
+      };
+      if (payment.record_status !== "active") return;
+      Object.assign(updatesFor(String(payment.id)), {
+        paid_amount: latestSnapshot.paid,
+        dues_amount: latestSnapshot.dues,
+        advance_amount: latestSnapshot.advance,
+      });
+    });
+
+    let changed = false;
+    for (const payment of payments) {
+      const updates = updatesById.get(String(payment.id)) ?? {};
+      if (allUpdatesMatch(payment, updates)) continue;
+      const { error } = await admin.from("payments").update(updates).eq("id", payment.id);
+      if (error) throw new Error(error.message);
+      changed = true;
+    }
+
+    // Refresh the student's current snapshot when this is their current subscription.
+    const studentTable = studentType === "library" ? "library_students" : "course_students";
+    // Payment-derived library students have no stored record (and no uuid) to refresh.
+    const storedStudentId = studentType === "library" ? normalizeLibraryStudentId(studentId) : studentId;
+    const studentResponse = storedStudentId
+      ? await admin
+        .from(studentTable)
+        .select("id,current_subscription_key,last_payment_id")
+        .eq("id", storedStudentId)
+        .maybeSingle()
+      : null;
+    if (studentResponse?.error) throw new Error(studentResponse.error.message);
+    const student = studentResponse
+      ? typedData<{ id: string; current_subscription_key: string | null; last_payment_id: string | null }>(studentResponse)
+      : null;
+    const isCurrentSubscription = Boolean(student) && (
+      student?.current_subscription_key === subscriptionKey
+      || payments.some((payment) => payment.id === student?.last_payment_id)
+    );
+    if (student && isCurrentSubscription) {
+      const studentUpdates = {
+        subscription_start_date: startDate,
+        subscription_end_date: endDate,
+        start_time: startTime,
+        end_time: endTime,
+        slot_hours: slotHours,
+        paid_amount: latestSnapshot.paid,
+        dues_amount: latestSnapshot.dues,
+        advance_amount: latestSnapshot.advance,
+      };
+      const { error } = await admin.from(studentTable).update(studentUpdates).eq("id", student.id);
+      if (error) throw new Error(error.message);
+      changed = true;
+    }
+
+    return ok(changed ? "Subscription updated." : "No changes to save.");
+  }),
+
   saveCourseStudent: withErrors("Could not save course student.", async (formData, { admin, profile, idempotencyKey }) => {
     if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
       return fail("You do not have access to course students.");
