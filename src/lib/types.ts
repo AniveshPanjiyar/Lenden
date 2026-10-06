@@ -560,6 +560,8 @@ export type DashboardSummary = {
   personalCashPending?: number;
   personalCashOutPending?: number;
   personalOnlinePending?: number;
+  personalPending?: { amount: number; count: number };
+  businessPending?: { cashIn: number; onlineIn: number; cashOut: number; onlineOut: number };
   pending: { amount: number; count: number };
   businessUnits: Array<{
     businessType: BusinessType;
@@ -571,6 +573,10 @@ export type DashboardSummary = {
     onlineExpenses: number;
     pendingAmount: number;
     pendingCount: number;
+    pendingCashCollections?: number;
+    pendingOnlineCollections?: number;
+    pendingCashExpenses?: number;
+    pendingOnlineExpenses?: number;
   }>;
 };
 

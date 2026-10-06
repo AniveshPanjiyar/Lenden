@@ -19,12 +19,14 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Building2,
   ClipboardList,
   Copy,
   CreditCard,
   GraduationCap,
   Hotel,
   Landmark,
+  Scale,
   LogOut,
   Mic,
   Minus,
@@ -392,6 +394,12 @@ const messages: Record<Language, Record<string, string>> = {
     cashExpenseReview: "Cash / expense review",
     cashIn: "IN",
     cashInHand: "Cash in hand",
+    asOf: "As of",
+    allUnits: "All units",
+    assignedUnits: "Assigned units",
+    assignedUnit: "Assigned unit",
+    total: "Total",
+    totalCash: "Total cash",
     cashInCollected: "IN",
     cashOut: "OUT",
     cashOutExpenses: "OUT",
@@ -862,6 +870,12 @@ const messages: Record<Language, Record<string, string>> = {
     cashExpenseReview: "नकद / खर्च जांच",
     cashIn: "IN",
     cashInHand: "हाथ में नकद",
+    asOf: "तक",
+    allUnits: "सभी यूनिट",
+    assignedUnits: "दी गई यूनिट",
+    assignedUnit: "दी गई यूनिट",
+    total: "कुल",
+    totalCash: "कुल नकद",
     cashInCollected: "IN",
     cashOut: "OUT",
     cashOutExpenses: "OUT",
@@ -4414,206 +4428,191 @@ function RoleDashboardView({
   ) => void;
 }) {
   const { t } = useLanguage();
+  const [lens, setLens] = useState<TransactionLens>("personal");
   const primaryOwner = summary.role === "primary_owner";
   const staff = summary.role === "staff";
-  const businessScopeLabel = summary.role === "primary_owner"
-    ? "Full business"
-    : summary.role === "co_owner"
-      ? "Assigned units and Staff"
-      : "Assigned unit and team";
-  const dateBasisLabel = dateFilterKey === "transaction" ? "Transaction date" : "Approval date";
+  const dateBasisLabel = dateFilterKey === "transaction" ? t("transactionDate") : t("approvalDate");
 
-  const summaryMetric = (
-    title: string,
-    value: number,
-    note: string,
-    tone: "primary" | "negative" | "pending" = "primary",
-    onClick?: () => void,
-    prefix = "",
-  ) => (
-    <button
-      aria-label={`${title}: ${formatMoney(value)}. ${note}`}
-      className={`dashboard-summary-metric tone-${tone}`}
-      onClick={onClick}
-      type="button"
-    >
-      <span className="dashboard-summary-label">{title}</span>
-      <strong className="dashboard-summary-value">{prefix}{formatMoney(Math.abs(value))}</strong>
-      <small className="dashboard-summary-note">{note}</small>
-      <span aria-hidden="true" className="dashboard-summary-open"><ChevronRight size={14} /></span>
-    </button>
-  );
-
-  const pairedSummary = (first: ReactNode, second?: ReactNode) => (
-    <div className={`dashboard-paired-summary${second ? "" : " single"}`}>
-      <div className="dashboard-paired-cell">{first}</div>
-      {second ? (
-        <>
-          <div aria-hidden="true" className="dashboard-summary-divider" />
-          <div className="dashboard-paired-cell">{second}</div>
-        </>
+  // Cash in hand: staff see their own cash (pending collections included); managers also see their
+  // Staff's cash; the Owner sees cash still with Managers + Staff.
+  const cashSelfPending = summary.cashSelfPending ?? 0;
+  const cashSelfTotal = summary.cashSelf + cashSelfPending;
+  const cashInHandRow = (
+    <div className={`flow-row tone-custody${primaryOwner || staff ? " single" : ""}`}>
+      <span className="flow-row-label"><WalletCards size={16} />{t("cashInHand")}</span>
+      {!primaryOwner ? (
+        <FlowCell
+          className="custody"
+          label={staff ? `${t("cashInHand")} · ${t("self")}` : t("self")}
+          value={formatMoney(cashSelfTotal)}
+          note={cashSelfPending !== 0 ? `${t("awaitingVerification")} ${formatMoney(cashSelfPending)}` : null}
+          onClick={() => openTransactions("personal", "all", { mode: "cash" })}
+        />
+      ) : null}
+      {!staff ? (
+        <FlowCell
+          className="custody"
+          label={t("cashWithStaff")}
+          value={formatMoney(summary.cashWithStaff)}
+          note={`${t("asOf")} ${asOfDate}`}
+          onClick={() => openTransactions("business", "all", { mode: "cash" })}
+        />
       ) : null}
     </div>
   );
 
-  const pendingStrip = (amount: number, count: number, onClick: () => void) => (
-    <button
-      aria-label={`Pending: ${formatMoney(amount)}. ${count} records awaiting review.`}
-      className="dashboard-pending-strip"
-      onClick={onClick}
-      type="button"
-    >
-      <span className="dashboard-pending-icon"><ClipboardList aria-hidden="true" size={18} /></span>
-      <span className="dashboard-pending-copy">
-        <strong>Pending</strong>
-        <small>Awaiting review</small>
-      </span>
-      <span className="dashboard-pending-total">
-        <span className="dashboard-pending-amount">
-          <strong>{formatMoney(amount)}</strong>
-          <ChevronRight aria-hidden="true" size={14} />
-        </span>
-        <small>{count} {count === 1 ? "record" : "records"}</small>
-      </span>
-    </button>
-  );
+  const personalPending = summary.personalPending ?? (staff ? summary.pending : { amount: 0, count: 0 });
 
-  // Staff should see the cash physically with them, including collections still awaiting approval.
-  const cashSelfPending = summary.cashSelfPending ?? 0;
-  const cashSelfTotal = summary.cashSelf + cashSelfPending;
-  const cashSelfMetric = !primaryOwner
-    ? summaryMetric(
-      "Cash in hand — You",
-      cashSelfTotal,
-      cashSelfPending !== 0
-        ? `Approved ${formatMoney(summary.cashSelf)} · Awaiting approval ${formatMoney(cashSelfPending)} · As of ${asOfDate}`
-        : `Cash you currently hold · As of ${asOfDate}`,
-      cashSelfTotal < 0 ? "negative" : "primary",
-      () => openTransactions("personal", "all", { mode: "cash" }),
-    )
-    : null;
-  const cashStaffMetric = !staff
-    ? summaryMetric(
-      "Cash in hand with Staff",
-      summary.cashWithStaff,
-      primaryOwner
-        ? "Managers + Staff · Approved cash only"
-        : "Assigned Staff in your units · Approved cash only",
-      "primary",
-      () => openTransactions("business", "all", { mode: "cash" }),
-    )
-    : null;
+  type BusinessCard = {
+    key: string;
+    title: string;
+    icon: ReactNode;
+    businessType?: BusinessType;
+    cash: number;
+    online: number;
+    cashExpenses: number;
+    onlineExpenses: number;
+    pendingCashIn: number;
+    pendingOnlineIn: number;
+    pendingCashOut: number;
+    pendingAmount: number;
+    pendingCount: number;
+  };
+  const businessPending = summary.businessPending ?? { cashIn: 0, onlineIn: 0, cashOut: 0, onlineOut: 0 };
+  const overallCard: BusinessCard = {
+    key: "all",
+    title: primaryOwner ? t("allUnits") : summary.role === "co_owner" ? t("assignedUnits") : t("assignedUnit"),
+    icon: <Building2 size={16} />,
+    cash: summary.collections.cash,
+    online: summary.collections.online,
+    cashExpenses: summary.expenses.cash,
+    onlineExpenses: summary.expenses.online,
+    pendingCashIn: businessPending.cashIn,
+    pendingOnlineIn: businessPending.onlineIn,
+    pendingCashOut: businessPending.cashOut,
+    pendingAmount: summary.pending.amount,
+    pendingCount: summary.pending.count,
+  };
+  const unitCards: BusinessCard[] = summary.businessUnits
+    .filter((unit) => unit.businessType !== "general"
+      || unit.collections + unit.expenses + unit.pendingAmount > 0)
+    .map((unit) => ({
+      key: unit.businessType,
+      title: labelForBusiness(unit.businessType, t),
+      icon: unit.businessType === "guest_house" ? <Hotel size={16} /> : unit.businessType === "library" ? <BookOpen size={16} /> : unit.businessType === "course" ? <GraduationCap size={16} /> : <WalletCards size={16} />,
+      businessType: unit.businessType,
+      cash: unit.cashCollections,
+      online: unit.onlineCollections,
+      cashExpenses: unit.cashExpenses,
+      onlineExpenses: unit.onlineExpenses,
+      pendingCashIn: unit.pendingCashCollections ?? 0,
+      pendingOnlineIn: unit.pendingOnlineCollections ?? 0,
+      pendingCashOut: unit.pendingCashExpenses ?? 0,
+      pendingAmount: unit.pendingAmount,
+      pendingCount: unit.pendingCount,
+    }));
+  // One unit only: the overall card already says everything.
+  const businessCards = unitCards.length > 1 ? [overallCard, ...unitCards] : [overallCard];
 
-  return (
-    <div className="role-dashboard">
-      <section className="dashboard-metric-group dashboard-summary-section tone-cash-position">
-        <header>
-          <div><p className="eyebrow">Cash position</p><h2>{primaryOwner ? "Approved cash custody" : "Cash custody"}</h2></div>
-          <span>As of {asOfDate}</span>
-        </header>
-        {pairedSummary(
-          primaryOwner ? cashStaffMetric : cashSelfMetric,
-          !primaryOwner && !staff ? cashStaffMetric : undefined,
-        )}
-      </section>
-
-      <section className="dashboard-metric-group dashboard-summary-section tone-business-activity">
-        <header>
-          <div><p className="eyebrow">Business activity</p><h2>{businessScopeLabel}</h2></div>
-          <span>{dateLabel} · {dateBasisLabel}</span>
-        </header>
-        {pairedSummary(
-          summaryMetric(
-            t("collections"),
-            summary.collections.total,
-            `${t("cash")} ${formatMoney(summary.collections.cash)} · ${t("online")} ${formatMoney(summary.collections.online)}`,
-            "primary",
-            () => openTransactions("business", "collections"),
-            "+",
-          ),
-          summaryMetric(
-            t("expenses"),
-            summary.expenses.total,
-            `${t("cash")} ${formatMoney(summary.expenses.cash)} · ${t("online")} ${formatMoney(summary.expenses.online)}`,
-            "negative",
-            () => openTransactions("business", "expenses"),
-            "-",
-          ),
-        )}
-        {pendingStrip(
-          summary.pending.amount,
-          summary.pending.count,
-          () => openTransactions(staff ? "personal" : "business", "pending"),
-        )}
-      </section>
-
-      <section className="dashboard-metric-group dashboard-summary-section tone-user-activity">
-        <header>
-          <div><p className="eyebrow">Your activity</p><h2>Your money movement</h2></div>
-          <span>{dateLabel} · {dateBasisLabel}</span>
-        </header>
+  const businessCard = (card: BusinessCard, index: number) => {
+    const target = card.businessType ? { businessType: card.businessType } : undefined;
+    // Totals are approved figures; pending stays in its own row.
+    const total = card.cash + card.online - card.cashExpenses - card.onlineExpenses;
+    const totalCash = card.cash - card.cashExpenses;
+    const signedMoney = (value: number) => `${value < 0 ? "-" : ""}${formatMoney(Math.abs(value))}`;
+    return (
+      <section className="history-summary-panel dashboard-flow-card" key={card.key}>
+        <div className="history-summary-context">
+          <span className="dashboard-flow-card-title">{card.icon}{card.title}</span>
+          {businessCards.length > 1 ? <strong>{index + 1}/{businessCards.length}</strong> : null}
+        </div>
         <FlowBreakdown
-          inLabel={t("cashIn")}
-          outLabel={t("cashOut")}
-          cashIn={summary.personalIn.cash + (summary.personalCashPending ?? 0)}
-          cashInApproved={summary.personalIn.cash}
-          cashOut={summary.personalOut.cash + (summary.personalCashOutPending ?? 0)}
-          cashOutApproved={summary.personalOut.cash}
-          onlineIn={summary.personalIn.online + (summary.personalOnlinePending ?? 0)}
-          onlineVerified={summary.personalIn.online}
-          onlineOut={summary.personalOut.online}
-          onCashIn={() => openTransactions("personal", "cash_in", { mode: "cash" })}
-          onCashOut={() => openTransactions("personal", "cash_out", { mode: "cash" })}
-          onOnline={() => openTransactions("personal", "cash_in", { mode: "online" })}
+          leadingRows={(
+            <>
+              <div className={`flow-row tone-total single${total < 0 ? " negative" : ""}`}>
+                <span className="flow-row-label"><Scale size={16} />{t("total")}</span>
+                <FlowCell className="total" label={`${t("collections")} − ${t("expenses")}`} value={signedMoney(total)} />
+              </div>
+              <div className={`flow-row tone-total single${totalCash < 0 ? " negative" : ""}`}>
+                <span className="flow-row-label"><Banknote size={16} />{t("totalCash")}</span>
+                <FlowCell className="total" label={`${t("cash")} ${t("collections")} − ${t("expenses")}`} value={signedMoney(totalCash)} />
+              </div>
+            </>
+          )}
+          inLabel={t("collections")}
+          outLabel={t("expenses")}
+          cashIn={card.cash + card.pendingCashIn}
+          cashInApproved={card.cash}
+          cashOut={card.cashExpenses + card.pendingCashOut}
+          cashOutApproved={card.cashExpenses}
+          onlineIn={card.online + card.pendingOnlineIn}
+          onlineVerified={card.online}
+          onlineOut={card.onlineExpenses}
+          onCashIn={() => openTransactions("business", "collections", { ...target, mode: "cash" })}
+          onCashOut={() => openTransactions("business", "expenses", target)}
+          onOnline={() => openTransactions("business", "collections", { ...target, mode: "online" })}
+          trailingRows={(
+            <FlowPendingRow
+              amount={card.pendingAmount}
+              count={card.pendingCount}
+              onClick={() => openTransactions(staff ? "personal" : "business", "pending", target)}
+            />
+          )}
         />
       </section>
+    );
+  };
 
-      <section className="business-status-panel">
-        <div className="business-status-heading">
-          <div><h3>{t("businessStatus")}</h3><p>Approved Collections and Expenses by business unit.</p></div>
+  return (
+    <div className={`view-stack mobile-clean transaction-history-view dashboard-flow-view lens-${lens}`}>
+      <nav className="transaction-primary-filters">
+        <div className="transaction-lens-tabs" role="tablist" aria-label="Dashboard view">
+          <button aria-selected={lens === "personal"} className={lens === "personal" ? "active" : ""} onClick={() => setLens("personal")} role="tab" type="button">
+            My activity
+          </button>
+          <button aria-selected={lens === "business"} className={lens === "business" ? "active" : ""} onClick={() => setLens("business")} role="tab" type="button">
+            Business
+          </button>
         </div>
-        <div className="business-status-grid role-business-status-grid">
-          {summary.businessUnits.map((unit) => (
-            <article className={`business-unit-activity-card tone-${unit.businessType}`} key={unit.businessType}>
-              <header className="business-unit-activity-heading">
-                <div>
-                  <span className="business-unit-activity-icon">
-                    {unit.businessType === "guest_house" ? <Hotel size={20} /> : unit.businessType === "library" ? <BookOpen size={20} /> : unit.businessType === "course" ? <GraduationCap size={20} /> : <WalletCards size={20} />}
-                  </span>
-                  <span>
-                    <small>Business activity</small>
-                    <h3>{labelForBusiness(unit.businessType, t)}</h3>
-                  </span>
-                </div>
-                <small>{dateLabel} · {dateBasisLabel}</small>
-              </header>
-              {pairedSummary(
-                summaryMetric(
-                  t("collections"),
-                  unit.collections,
-                  `${t("cash")} ${formatMoney(unit.cashCollections)} · ${t("online")} ${formatMoney(unit.onlineCollections)}`,
-                  "primary",
-                  () => openTransactions("business", "collections", { businessType: unit.businessType }),
-                  "+",
-                ),
-                summaryMetric(
-                  t("expenses"),
-                  unit.expenses,
-                  `${t("cash")} ${formatMoney(unit.cashExpenses)} · ${t("online")} ${formatMoney(unit.onlineExpenses)}`,
-                  "negative",
-                  () => openTransactions("business", "expenses", { businessType: unit.businessType }),
-                  "-",
-                ),
-              )}
-              {pendingStrip(
-                unit.pendingAmount,
-                unit.pendingCount,
-                () => openTransactions("business", "pending", { businessType: unit.businessType }),
-              )}
-            </article>
-          ))}
-        </div>
-      </section>
+      </nav>
+
+      {lens === "personal" ? (
+        <section className="history-summary-panel dashboard-flow-card">
+          <div className="history-summary-context">
+            <span>{dateLabel}</span>
+            <strong>{dateBasisLabel}</strong>
+          </div>
+          <FlowBreakdown
+            leadingRows={cashInHandRow}
+            inLabel={t("cashIn")}
+            outLabel={t("cashOut")}
+            cashIn={summary.personalIn.cash + (summary.personalCashPending ?? 0)}
+            cashInApproved={summary.personalIn.cash}
+            cashOut={summary.personalOut.cash + (summary.personalCashOutPending ?? 0)}
+            cashOutApproved={summary.personalOut.cash}
+            onlineIn={summary.personalIn.online + (summary.personalOnlinePending ?? 0)}
+            onlineVerified={summary.personalIn.online}
+            onlineOut={summary.personalOut.online}
+            onCashIn={() => openTransactions("personal", "cash_in", { mode: "cash" })}
+            onCashOut={() => openTransactions("personal", "cash_out", { mode: "cash" })}
+            onOnline={() => openTransactions("personal", "cash_in", { mode: "online" })}
+            trailingRows={(
+              <FlowPendingRow
+                amount={personalPending.amount}
+                count={personalPending.count}
+                onClick={() => openTransactions("personal", "pending")}
+              />
+            )}
+          />
+        </section>
+      ) : (
+        <>
+          <p className="dashboard-flow-range">{dateLabel} · {dateBasisLabel}</p>
+          <div className="dashboard-business-cards">
+            {businessCards.map(businessCard)}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -6079,23 +6078,6 @@ function TransactionsView({
     .filter((record) => numberValue(record.amount) > 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const positiveTotal = inCashTotal + inOnlineTotal;
-  const outCashTotal = totalTransactionRecords
-    .filter((record) => numberValue(record.amount) < 0)
-    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const outOnlineTotal = totalTransactionRecords
-    .filter((record) => numberValue(record.amount) < 0)
-    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
-  const pendingInSelectedRange = allTransactionRecords
-    .filter((record) => record.pendingApproval && pendingInSelectedDates(record) && matchesSecondaryFilters(record));
-  const pendingCashInTotal = pendingInSelectedRange
-    .filter((record) => numberValue(record.amount) > 0)
-    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const pendingCashOutTotal = pendingInSelectedRange
-    .filter((record) => numberValue(record.amount) < 0)
-    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
-  const pendingOnlineInTotal = allTransactionRecords
-    .filter((record) => record.pendingApproval && pendingInSelectedDates(record) && numberValue(record.amount) > 0 && matchesSecondaryFilters(record))
-    .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
   const groupedRecords = transactionRecords.reduce<{ date: string; records: typeof transactionRecords }[]>((groups, record) => {
     const lastGroup = groups.at(-1);
     if (lastGroup?.date === record.date) {
@@ -6118,8 +6100,6 @@ function TransactionsView({
         { value: "cash_out", label: "OUT" },
         { value: "pending", label: t("pending") },
       ];
-  const positiveLabel = transactionLens === "business" ? t("collections") : "IN";
-  const negativeLabel = transactionLens === "business" ? t("expenses") : "OUT";
 
   return (
     <div className={`view-stack mobile-clean transaction-history-view lens-${transactionLens} activity-${transactionFilter}`}>
@@ -6181,34 +6161,20 @@ function TransactionsView({
         </span>
       </label>
 
-      <section className="history-summary-panel">
-        <div className="history-summary-context">
-          <span>{dateLabel}</span>
-          <strong>{transactionRecords.length} {t("transactions")}</strong>
-        </div>
-        {!currentUserIsSalesAgent ? (
-          <FlowBreakdown
-            inLabel={positiveLabel}
-            outLabel={negativeLabel}
-            cashIn={inCashTotal + pendingCashInTotal}
-            cashInApproved={inCashTotal}
-            cashOut={outCashTotal + pendingCashOutTotal}
-            cashOutApproved={outCashTotal}
-            onlineIn={inOnlineTotal + pendingOnlineInTotal}
-            onlineVerified={inOnlineTotal}
-            onlineOut={outOnlineTotal}
-          />
-        ) : (
+      {/* Totals live on the Dashboard; Sales agents keep their incentive total here. */}
+      {currentUserIsSalesAgent ? (
+        <section className="history-summary-panel">
+          <div className="history-summary-context">
+            <span>{dateLabel}</span>
+            <strong>{transactionRecords.length} {t("transactions")}</strong>
+          </div>
           <div className="agent-history-total">
             <span>{t("cashIn")}</span>
             <strong>{formatMoney(positiveTotal)}</strong>
             <small className="history-total-breakdown">{t("cash")} {formatMoney(inCashTotal)} · {t("online")} {formatMoney(inOnlineTotal)}</small>
           </div>
-        )}
-        {allTransactionRecords.some((record) => record.pendingApproval) ? (
-          <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       <section className="history-list-section">
         {groupedRecords.length > 0 ? (
@@ -10069,7 +10035,11 @@ function FlowBreakdown({
   onCashIn,
   onCashOut,
   onOnline,
+  leadingRows,
+  trailingRows,
 }: {
+  leadingRows?: ReactNode;
+  trailingRows?: ReactNode;
   inLabel: string;
   outLabel: string;
   /** Totals include records still awaiting approval; the *Approved values exclude them. */
@@ -10092,6 +10062,7 @@ function FlowBreakdown({
   const approvedLabel = labelForStatus("approved", t);
   return (
     <div className="flow-breakdown">
+      {leadingRows}
       <div className="flow-row tone-cash">
         <span className="flow-row-label"><Banknote size={16} />{t("cash")}</span>
         <FlowCell className="in" label={inLabel} value={`+${formatMoney(cashIn)}`} onClick={onCashIn} />
@@ -10126,7 +10097,21 @@ function FlowBreakdown({
         />
       </div>
       {onlineOut > 0 ? <p className="flow-note">{t("online")} {outLabel}: -{formatMoney(onlineOut)}</p> : null}
+      {trailingRows}
     </div>
+  );
+}
+
+function FlowPendingRow({ amount, count, onClick }: { amount: number; count: number; onClick?: () => void }) {
+  const { t } = useLanguage();
+  return (
+    <button className="flow-row tone-pending single" type="button" onClick={onClick}>
+      <span className="flow-row-label"><ClipboardList size={16} />{t("pending")}</span>
+      <span className="flow-cell">
+        <small>{count} {t(count === 1 ? "record" : "records")}</small>
+        <strong>{formatMoney(amount)}</strong>
+      </span>
+    </button>
   );
 }
 

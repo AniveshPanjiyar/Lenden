@@ -11279,3 +11279,38 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
 .student-subscription-edit-transaction legend { padding: 0 4px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .student-subscription-edit-locked { margin: 0; color: var(--muted); font-size: 12px; font-weight: 800; }
 .student-subscription-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Dashboard: My activity / Business tabs with the Transactions-style flow cards. */
+.dashboard-flow-view { padding: 0; background: transparent; }
+.dashboard-flow-card { display: grid; gap: 10px; }
+.dashboard-flow-card-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 900; color: var(--history-text); }
+.dashboard-flow-range { margin: 0; color: var(--history-muted); font-size: 12px; font-weight: 800; }
+.dashboard-business-cards {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 100%; gap: 12px;
+  overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  scrollbar-width: none; padding-bottom: 2px;
+}
+.dashboard-business-cards::-webkit-scrollbar { display: none; }
+.dashboard-business-cards > .dashboard-flow-card { scroll-snap-align: start; }
+@media (min-width: 900px) {
+  .dashboard-business-cards { grid-auto-columns: minmax(420px, calc(50% - 6px)); }
+}
+
+/* Single-value rows (cash in hand for owner/staff, totals, pending) span both value columns. */
+.flow-row.single > .flow-cell { grid-column: 2 / -1; }
+.flow-row.tone-custody { border-color: rgba(47, 111, 94, 0.32); background: rgba(47, 111, 94, 0.1); }
+.flow-row.tone-custody .flow-row-label { color: #1f5a4a; }
+.flow-row.tone-custody .flow-cell strong { color: #1f5a4a; }
+.flow-row.tone-custody .flow-cell em { color: #8a5a00; }
+.flow-row.tone-total { border-color: rgba(46, 50, 48, 0.18); background: rgba(46, 50, 48, 0.05); }
+.flow-row.tone-total .flow-row-label { color: var(--history-text, #2e3230); }
+.flow-row.tone-total .flow-cell strong { color: var(--history-text, #2e3230); }
+.flow-row.tone-total.negative .flow-cell strong { color: var(--bad); }
+button.flow-row { width: 100%; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.flow-row.tone-pending { border-color: rgba(176, 125, 30, 0.34); background: rgba(248, 224, 168, 0.42); }
+.flow-row.tone-pending .flow-row-label { color: #8a5a00; }
+.flow-row.tone-pending .flow-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.flow-row.tone-pending .flow-cell strong { color: #8a5a00; }
+@media (max-width: 380px) {
+  .flow-row.single > .flow-cell { grid-column: 1 / -1; }
+}

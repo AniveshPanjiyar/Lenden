@@ -515,6 +515,10 @@ async function loadDashboard(
     online_expenses: number | string | null;
     pending_amount: number | string | null;
     pending_count: number | string | null;
+    pending_cash_collections?: number | string | null;
+    pending_online_collections?: number | string | null;
+    pending_cash_expenses?: number | string | null;
+    pending_online_expenses?: number | string | null;
   }>).map((unit) => ({
     businessType: unit.business_type,
     collections: Number(unit.collections ?? 0),
@@ -525,6 +529,10 @@ async function loadDashboard(
     onlineExpenses: Number(unit.online_expenses ?? 0),
     pendingAmount: Number(unit.pending_amount ?? 0),
     pendingCount: Number(unit.pending_count ?? 0),
+    pendingCashCollections: Number(unit.pending_cash_collections ?? 0),
+    pendingOnlineCollections: Number(unit.pending_online_collections ?? 0),
+    pendingCashExpenses: Number(unit.pending_cash_expenses ?? 0),
+    pendingOnlineExpenses: Number(unit.pending_online_expenses ?? 0),
   }));
   const baseDashboardSummary = dashboardSummaryResult.data
     ? {
