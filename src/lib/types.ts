@@ -733,7 +733,7 @@ export type ClosingOverviewPayload = {
 export type StudentRosterPayload = {
   page: "students";
   sourceId: string;
-  status: "active" | "live" | "inactive";
+  status: "active" | "live" | "inactive" | "all";
   result: PageResult<LibraryStudent | CourseStudent>;
   libraryStudents: LibraryStudent[];
   courseStudents: CourseStudent[];

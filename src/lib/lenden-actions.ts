@@ -2085,7 +2085,9 @@ const handlers = {
           lastPaymentId: payment.id,
           lastPaymentDate: paymentDate,
           currentSubscriptionKey: studentSubscriptionKey,
-          reactivate: libraryPaymentKind !== "dues",
+          // A subscription still running today (or starting later) brings an inactive student back.
+          reactivate: libraryPaymentKind !== "dues"
+            && (libraryStudentFields.subscriptionEndDate ?? "") >= dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
           photoUrl: libraryStudentPhotoUrl,
           aadharPhotoUrl,
           aadharBackPhotoUrl,
@@ -2121,7 +2123,8 @@ const handlers = {
         rollNumber: courseStudent.roll_number,
         studentName: courseStudent.student_name,
         paymentId: payment.id,
-        reactivate: coursePaymentKind !== "dues",
+        reactivate: coursePaymentKind !== "dues"
+          && String(payment.end_date ?? "") >= dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
         currentSubscriptionKey: studentSubscriptionKey,
         aadharPhotoUrl,
         aadharBackPhotoUrl,

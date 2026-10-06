@@ -932,9 +932,10 @@ export async function getStudentRosterPage(
       .from("library_students")
       .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
-      .eq("active", active)
       .eq("placeholder", false);
+    if (status !== "all") query = query.eq("active", active);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
+    if (status === "all") query = query.order("active", { ascending: false });
     const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
     const rawItems = (result.data ?? []) as LibraryStudent[];
@@ -960,9 +961,10 @@ export async function getStudentRosterPage(
     .from("course_students")
     .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
-    .eq("source_course_id", sourceCourseId)
-    .eq("active", active);
+    .eq("source_course_id", sourceCourseId);
+  if (status !== "all") query = query.eq("active", active);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
+  if (status === "all") query = query.order("active", { ascending: false });
   const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
   const rawItems = (result.data ?? []) as CourseStudent[];

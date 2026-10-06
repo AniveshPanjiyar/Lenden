@@ -9,7 +9,8 @@ export type TransactionFilter = "all" | "collections" | "expenses" | "cash_in" |
 export type TransactionRecordType = "all" | "payment" | "expense" | "transfer" | "agent_payout";
 export type TransactionModeFilter = "all" | PaymentMode;
 export type BusinessTypeFilter = "all" | BusinessType;
-export type StudentStatusFilter = "active" | "live" | "inactive";
+// "all" (active first, then inactive) is used by the payment form's existing-member picker.
+export type StudentStatusFilter = "active" | "live" | "inactive" | "all";
 
 export type DateRangeState = {
   preset: DateRangePreset;
@@ -62,7 +63,7 @@ const transactionFilters = ["all", "collections", "expenses", "cash_in", "cash_o
 const transactionRecordTypes = ["all", "payment", "expense", "transfer", "agent_payout"] as const;
 const transactionModes = ["all", "cash", "online", "mixed"] as const;
 const businessTypes = ["all", "guest_house", "library", "course", "general"] as const;
-const studentStatuses = ["active", "live", "inactive"] as const;
+const studentStatuses = ["active", "live", "inactive", "all"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 const studentSourcePattern = /^(library|course:[0-9a-f-]{36})$/i;
 

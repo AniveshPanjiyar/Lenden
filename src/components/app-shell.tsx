@@ -117,7 +117,7 @@ type MutationRefreshDetail = {
 type SettlementDirection = "received_from_user" | "sent_to_user";
 type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
 type LibraryMemberMode = "new" | "existing";
-type LibraryStudentListMode = "active" | "live" | "inactive";
+type LibraryStudentListMode = "active" | "live" | "inactive" | "all";
 type StudentDrawerView = "details" | "history" | "subscription";
 type StudentRecordSource =
   | { id: "library"; type: "library"; label: string }
@@ -592,6 +592,7 @@ const messages: Record<Language, Record<string, string>> = {
     days: "days",
     liveStudents: "LIVE students",
     inactiveStudents: "Inactive students",
+    inactiveTag: "Inactive",
     expiredSubscription: "Expired subscription",
     expiresOn: "Expires on",
     lastPayment: "Last payment",
@@ -1074,6 +1075,7 @@ const messages: Record<Language, Record<string, string>> = {
     days: "दिन",
     liveStudents: "LIVE छात्र",
     inactiveStudents: "बंद छात्र",
+    inactiveTag: "बंद",
     expiredSubscription: "सब्सक्रिप्शन खत्म",
     expiresOn: "खत्म तारीख",
     lastPayment: "आखिरी भुगतान",
@@ -7845,8 +7847,12 @@ function LibraryStudentsView({
   const liveCourseStudents = activeCourseStudents.filter((record) => isTimeRangeLiveNow(record.startTime, record.endTime, currentMinute));
   const inactiveCourseStudents = courseStudents.filter((record) => !record.active);
   const expired = (student: LibraryStudent) => isExpiredLibraryStudent(student, today);
-  const sourceStudents = listMode === "live" ? liveStudents : listMode === "active" ? activeStudents : inactiveStudents;
-  const sourceCourseStudents = listMode === "live" ? liveCourseStudents : listMode === "active" ? activeCourseStudents : inactiveCourseStudents;
+  const sourceStudents = listMode === "all"
+    ? [...activeStudents, ...inactiveStudents]
+    : listMode === "live" ? liveStudents : listMode === "active" ? activeStudents : inactiveStudents;
+  const sourceCourseStudents = listMode === "all"
+    ? [...activeCourseStudents, ...inactiveCourseStudents]
+    : listMode === "live" ? liveCourseStudents : listMode === "active" ? activeCourseStudents : inactiveCourseStudents;
   const normalizedQuery = query.trim().toLowerCase();
   const visibleStudents = showingLibraryStudents ? sourceStudents
     .filter((student) => {
@@ -8087,7 +8093,9 @@ function LibraryStudentsView({
               );
             }
 
-            const expiryLabel = libraryExpiryStatusLabel(student, today, t);
+            const expiryLabel = student.active
+              ? libraryExpiryStatusLabel(student, today, t)
+              : `${t("inactiveTag")} · ${libraryExpiryStatusLabel(student, today, t)}`;
             const displayName = studentDisplayName(student, t);
             const rollNumber = studentDisplayRollNumber(student);
             const slotTime = displayTimeRange(student.start_time, student.end_time);
@@ -8113,7 +8121,7 @@ function LibraryStudentsView({
           {visibleCourseStudents.map((record) => {
             const displayName = courseStudentDisplayName(record, t);
             const courseExpired = Boolean(record.subscriptionEndDate && record.subscriptionEndDate < today);
-            const expiryLabel = record.active ? subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t) : t("inactiveStudents");
+            const expiryLabel = record.active ? subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t) : t("inactiveTag");
             const timeRange = displayTimeRange(record.startTime, record.endTime);
             const meta = [
               record.courseName,
@@ -8167,7 +8175,7 @@ function LibraryStudentsView({
               <p className="text-sm text-on-surface-variant">{t("noRecords")}</p>
               {query.trim() ? (
                 <button className="secondary-button" type="button" onClick={() => setQuery("")}>{t("clearSearch")}</button>
-              ) : listMode !== "active" ? (
+              ) : listMode !== "active" && listMode !== "all" ? (
                 <button className="secondary-button" type="button" onClick={() => setListMode("active")}>{t("showActiveStudents")}</button>
               ) : null}
             </div>
@@ -8585,7 +8593,8 @@ function StudentCollectionFlow({
           studentSources={studentSources}
           selectedSourceId={selectedSourceId}
           setSelectedSourceId={setSelectedSourceId}
-          listMode="active"
+          // Inactive students stay findable here; a new subscription reactivates them.
+          listMode="all"
           setListMode={() => undefined}
           setNotice={setNotice}
           startTransition={startTransition}
