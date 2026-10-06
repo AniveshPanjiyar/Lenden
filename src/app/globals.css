@@ -11331,15 +11331,29 @@ button.flow-row { width: 100%; font: inherit; color: inherit; text-align: left; 
   margin-left: auto; min-width: 20px; padding: 1px 7px; border-radius: 999px;
   background: var(--bad, #b83230); color: #fff; font-size: 11px; font-weight: 900; text-align: center;
 }
-.pending-sheet-layer { justify-items: end; align-items: stretch; }
-.pending-side-sheet {
-  position: relative; width: min(560px, 100vw); height: 100dvh; overflow-y: auto; overscroll-behavior: contain;
-  display: grid; align-content: start; gap: 12px; padding: 16px 14px calc(16px + env(safe-area-inset-bottom));
-  background: var(--surface, #fffdf8); box-shadow: -18px 0 50px rgba(0, 0, 0, 0.25);
+/* Pending approvals: a full page that slides in from the right, closed by the back button. */
+.pending-page {
+  position: fixed; inset: 0; z-index: 70;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--surface, #fffdf8);
+  animation: pending-page-in 220ms ease-out;
 }
-.pending-side-sheet > .sheet-header { position: sticky; top: -16px; z-index: 2; margin: -16px -14px 0; padding: 16px 14px 10px; background: inherit; }
-.pending-side-sheet > .sheet-header span { color: var(--muted); font-size: 12px; font-weight: 750; }
-.pending-side-sheet .transaction-history-view { padding: 0; background: transparent; }
+@keyframes pending-page-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.pending-page-body {
+  width: min(760px, 100%); margin: 0 auto; min-width: 0;
+  display: grid; align-content: start; gap: 12px;
+  padding: calc(12px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+.pending-page-header {
+  grid-template-columns: 42px minmax(0, 1fr);
+  position: sticky; top: calc(-12px - env(safe-area-inset-top)); z-index: 2;
+  margin: calc(-12px - env(safe-area-inset-top)) -16px 0;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 10px;
+  background: var(--surface, #fffdf8);
+}
+.pending-page-header .eyebrow { margin: 0; }
+.pending-page-header small { color: var(--muted); font-size: 12px; font-weight: 750; }
+.pending-page .transaction-history-view { padding: 0; background: transparent; min-width: 0; }
 .profile-menu-trigger > :not(.profile-unread-dot) { border-radius: 999px; overflow: hidden; }
 
 /* Closing card figures open the review page with matching filters. */
@@ -11356,3 +11370,7 @@ button.closing-equation-part:disabled,
 button.closing-online-summary:disabled,
 button.closing-pending-head:disabled { cursor: default; opacity: 1; }
 .review-mode-chip { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Feel like an app in the installed PWA: no sideways drift and no rubber-band bounce. */
+html, body { overflow-x: clip; overscroll-behavior: none; }
+.app-root { max-width: 100vw; overflow-x: clip; }

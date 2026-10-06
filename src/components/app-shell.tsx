@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
-import { useFormStatus } from "react-dom";
+import { createPortal, useFormStatus } from "react-dom";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -3696,19 +3696,18 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
               />
             ) : null}
 
-            {pendingSheetOpen ? (
-              <div className="modal-layer pending-sheet-layer" role="dialog" aria-modal="true" aria-label={t("pending")}>
-                <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setPendingSheetOpen(false)} />
-                <section className="pending-side-sheet">
-                  <header className="sheet-header">
+            {pendingSheetOpen && typeof document !== "undefined" ? createPortal(
+              <div className="pending-page" role="dialog" aria-modal="true" aria-label={t("pending")}>
+                <section className="pending-page-body">
+                  <header className="closing-review-header pending-page-header">
+                    <button className="icon-button" type="button" aria-label={t("back")} onClick={() => setPendingSheetOpen(false)}>
+                      <ArrowLeft size={18} />
+                    </button>
                     <div>
                       <p className="eyebrow">{pendingApprover ? t("awaitingYourApproval") : t("awaitingApproval")}</p>
                       <h2>{t("pending")} · {pendingApprovalCount}</h2>
-                      <span>{t("pendingAllDates")}</span>
+                      <small>{t("pendingAllDates")}</small>
                     </div>
-                    <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={() => setPendingSheetOpen(false)}>
-                      <X size={18} />
-                    </button>
                   </header>
                   {pendingApprovalsQuery.isPending ? (
                     <div className="student-picker-loading" role="status" aria-label={t("loading")}><span /><span /><span /></div>
@@ -3751,7 +3750,8 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                     />
                   )}
                 </section>
-              </div>
+              </div>,
+              document.body,
             ) : null}
 
             <ToastStack toasts={toasts} pending={false} savingLabel={busyMessage ?? t("saving")} dismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
