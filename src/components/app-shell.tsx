@@ -10830,7 +10830,6 @@ function MoneySettlementForm({
       onSubmit={(event) => submitAndClose(event, settleCashAction, setNotice, startTransition, onSuccess)}
     >
       <input type="hidden" name="settlement_direction" value={direction} />
-      <input type="hidden" name="settlement_date" value={settlementDate} />
       <SearchableProfileSelect
         label={t("user")}
         name="profile_id"
@@ -10853,7 +10852,7 @@ function MoneySettlementForm({
       </label>
       <label>
         {t("transferDate")}
-        <input value={settlementDate} readOnly />
+        <input name="settlement_date" type="date" defaultValue={settlementDate} max={todayIso()} required />
       </label>
       <label className="full-span">
         {t("note")}

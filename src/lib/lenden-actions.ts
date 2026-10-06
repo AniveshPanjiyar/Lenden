@@ -3815,6 +3815,9 @@ const handlers = {
     }
     if (counterpartyProfileId === profile.id) return fail("Choose another user.");
     if (!isIsoDate(settlementDate)) return fail("Choose a valid settlement date.");
+    if (settlementDate > dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined)) {
+      return fail("A cash transfer cannot be dated in the future.");
+    }
     if (direction !== "received_from_user" && direction !== "sent_to_user") {
       return fail("Choose whether money was received or sent.");
     }
