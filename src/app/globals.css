@@ -11248,3 +11248,9 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
 .closing-cash-equation.owner-day-flow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .closing-equation-part.full-row { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .closing-equation-part.approved { background: color-mix(in srgb, var(--closing-card) 55%, transparent); border-style: dashed; }
+
+/* Phone sheets: size to the visible viewport (keyboard aware) and scroll inside. */
+@media (max-width: 720px) {
+  .modal-layer { height: 100dvh; }
+  .action-sheet { max-height: min(82dvh, 720px); overscroll-behavior: contain; }
+}

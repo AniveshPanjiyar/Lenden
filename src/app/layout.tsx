@@ -26,6 +26,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  // Let the on-screen keyboard shrink the layout so bottom sheets stay above it.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

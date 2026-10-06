@@ -6489,7 +6489,7 @@ function TransactionsView({
                 <input type="hidden" name="id" value={selectedTransactionSourceId} />
                 <label className="full-span">
                   {t("reasonRequired")}
-                  <input name="reason" placeholder={t("reasonRequired")} required autoFocus />
+                  <input name="reason" placeholder={t("reasonRequired")} required />
                 </label>
                 <button className="primary-button danger full-span" type="submit">{t("deleteTransaction")}</button>
               </form>
