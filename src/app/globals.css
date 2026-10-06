@@ -11239,3 +11239,12 @@ button.flow-cell:hover { background: rgba(255, 255, 255, 0.95); }
   letter-spacing: .06em;
   text-align: center;
 }
+
+/* Cash rows: total vs approved; the awaiting note uses the pending amber. */
+.flow-row.tone-cash .flow-cell em { color: #8a5a00; }
+
+/* Closing card cash box: opening on its own row, then CASH IN | Approved and CASH OUT | Approved. */
+.closing-cash-equation,
+.closing-cash-equation.owner-day-flow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.closing-equation-part.full-row { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.closing-equation-part.approved { background: color-mix(in srgb, var(--closing-card) 55%, transparent); border-style: dashed; }

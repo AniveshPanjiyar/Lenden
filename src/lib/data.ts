@@ -534,12 +534,14 @@ async function loadDashboard(
     : null;
   const dashboardCashPosition = dashboardCashPositionResult.data as {
     cashSelf?: number | string | null;
+    cashSelfPending?: number | string | null;
     cashWithStaff?: number | string | null;
   } | null;
   const dashboardSummary = baseDashboardSummary && dashboardCashPosition
     ? {
         ...baseDashboardSummary,
         cashSelf: Number(dashboardCashPosition.cashSelf ?? 0),
+        cashSelfPending: Number(dashboardCashPosition.cashSelfPending ?? 0),
         cashWithStaff: Number(dashboardCashPosition.cashWithStaff ?? 0),
       }
     : baseDashboardSummary;

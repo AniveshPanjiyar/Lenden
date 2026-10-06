@@ -550,11 +550,15 @@ export type CashBalanceSummary = {
 export type DashboardSummary = {
   role: BusinessRole;
   cashSelf: number;
+  /** Viewer's cash collected (minus cash spent) that still awaits approval. */
+  cashSelfPending?: number;
   cashWithStaff: number;
   collections: { total: number; cash: number; online: number };
   expenses: { total: number; cash: number; online: number };
   personalIn: { total: number; cash: number; online: number };
   personalOut: { total: number; cash: number; online: number };
+  personalCashPending?: number;
+  personalCashOutPending?: number;
   personalOnlinePending?: number;
   pending: { amount: number; count: number };
   businessUnits: Array<{

@@ -180,6 +180,9 @@ type ClosingPendingBreakdown = {
   totalAmount: number;
   totalRecordCount: number;
   onlineAmount: number;
+  /** Cash collected / spent on the closing date that still awaits approval. */
+  dayCashIn: number;
+  dayCashOut: number;
 };
 
 type ClosingCardViewModel = {
@@ -4467,12 +4470,17 @@ function RoleDashboardView({
     </button>
   );
 
+  // Staff should see the cash physically with them, including collections still awaiting approval.
+  const cashSelfPending = summary.cashSelfPending ?? 0;
+  const cashSelfTotal = summary.cashSelf + cashSelfPending;
   const cashSelfMetric = !primaryOwner
     ? summaryMetric(
       "Cash in hand — You",
-      summary.cashSelf,
-      `Approved cash you currently hold · As of ${asOfDate}`,
-      summary.cashSelf < 0 ? "negative" : "primary",
+      cashSelfTotal,
+      cashSelfPending !== 0
+        ? `Approved ${formatMoney(summary.cashSelf)} · Awaiting approval ${formatMoney(cashSelfPending)} · As of ${asOfDate}`
+        : `Cash you currently hold · As of ${asOfDate}`,
+      cashSelfTotal < 0 ? "negative" : "primary",
       () => openTransactions("personal", "all", { mode: "cash" }),
     )
     : null;
@@ -4492,7 +4500,7 @@ function RoleDashboardView({
     <div className="role-dashboard">
       <section className="dashboard-metric-group dashboard-summary-section tone-cash-position">
         <header>
-          <div><p className="eyebrow">Cash position</p><h2>Approved cash custody</h2></div>
+          <div><p className="eyebrow">Cash position</p><h2>{primaryOwner ? "Approved cash custody" : "Cash custody"}</h2></div>
           <span>As of {asOfDate}</span>
         </header>
         {pairedSummary(
@@ -4539,8 +4547,10 @@ function RoleDashboardView({
         <FlowBreakdown
           inLabel={t("cashIn")}
           outLabel={t("cashOut")}
-          cashIn={summary.personalIn.cash}
-          cashOut={summary.personalOut.cash}
+          cashIn={summary.personalIn.cash + (summary.personalCashPending ?? 0)}
+          cashInApproved={summary.personalIn.cash}
+          cashOut={summary.personalOut.cash + (summary.personalCashOutPending ?? 0)}
+          cashOutApproved={summary.personalOut.cash}
           onlineIn={summary.personalIn.online + (summary.personalOnlinePending ?? 0)}
           onlineVerified={summary.personalIn.online}
           onlineOut={summary.personalOut.online}
@@ -6056,6 +6066,14 @@ function TransactionsView({
   const outOnlineTotal = totalTransactionRecords
     .filter((record) => numberValue(record.amount) < 0)
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
+  const pendingInSelectedRange = allTransactionRecords
+    .filter((record) => record.pendingApproval && pendingInSelectedDates(record) && matchesSecondaryFilters(record));
+  const pendingCashInTotal = pendingInSelectedRange
+    .filter((record) => numberValue(record.amount) > 0)
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
+  const pendingCashOutTotal = pendingInSelectedRange
+    .filter((record) => numberValue(record.amount) < 0)
+    .reduce((sum, record) => sum + numberValue(record.cashAmount), 0);
   const pendingOnlineInTotal = allTransactionRecords
     .filter((record) => record.pendingApproval && pendingInSelectedDates(record) && numberValue(record.amount) > 0 && matchesSecondaryFilters(record))
     .reduce((sum, record) => sum + numberValue(record.onlineAmount), 0);
@@ -6140,8 +6158,10 @@ function TransactionsView({
           <FlowBreakdown
             inLabel={positiveLabel}
             outLabel={negativeLabel}
-            cashIn={inCashTotal}
-            cashOut={outCashTotal}
+            cashIn={inCashTotal + pendingCashInTotal}
+            cashInApproved={inCashTotal}
+            cashOut={outCashTotal + pendingCashOutTotal}
+            cashOutApproved={outCashTotal}
             onlineIn={inOnlineTotal + pendingOnlineInTotal}
             onlineVerified={inOnlineTotal}
             onlineOut={outOnlineTotal}
@@ -9314,6 +9334,7 @@ function PaymentForm({
                     previewLabel={t("photoPreview")}
                     displayName={studentName}
                     variant="student"
+                    capture
                   />
                   <CompressedImageInput
                     inputName="aadhar_photo"
@@ -9616,6 +9637,7 @@ function PaymentForm({
                         previewLabel={t("photoPreview")}
                         displayName={studentName}
                         variant="student"
+                        capture
                       />
                       <CompressedImageInput
                         inputName="aadhar_photo"
@@ -9915,7 +9937,9 @@ function FlowBreakdown({
   inLabel,
   outLabel,
   cashIn,
+  cashInApproved,
   cashOut,
+  cashOutApproved,
   onlineIn,
   onlineVerified,
   onlineOut = 0,
@@ -9925,8 +9949,11 @@ function FlowBreakdown({
 }: {
   inLabel: string;
   outLabel: string;
+  /** Totals include records still awaiting approval; the *Approved values exclude them. */
   cashIn: number;
+  cashInApproved: number;
   cashOut: number;
+  cashOutApproved: number;
   onlineIn: number;
   onlineVerified: number;
   onlineOut?: number;
@@ -9935,13 +9962,34 @@ function FlowBreakdown({
   onOnline?: () => void;
 }) {
   const { t } = useLanguage();
-  const awaiting = Math.max(onlineIn - onlineVerified, 0);
+  const awaitingNote = (total: number, approved: number) => {
+    const awaiting = Math.max(total - approved, 0);
+    return awaiting > 0 ? `${t("awaitingVerification")} ${formatMoney(awaiting)}` : null;
+  };
+  const approvedLabel = labelForStatus("approved", t);
   return (
     <div className="flow-breakdown">
       <div className="flow-row tone-cash">
         <span className="flow-row-label"><Banknote size={16} />{t("cash")}</span>
         <FlowCell className="in" label={inLabel} value={`+${formatMoney(cashIn)}`} onClick={onCashIn} />
+        <FlowCell
+          className="in approved"
+          label={approvedLabel}
+          value={formatMoney(cashInApproved)}
+          note={awaitingNote(cashIn, cashInApproved)}
+          onClick={onCashIn}
+        />
+      </div>
+      <div className="flow-row tone-cash">
+        <span className="flow-row-label"><Banknote size={16} />{t("cash")}</span>
         <FlowCell className="out" label={outLabel} value={`-${formatMoney(cashOut)}`} onClick={onCashOut} />
+        <FlowCell
+          className="out approved"
+          label={approvedLabel}
+          value={`-${formatMoney(cashOutApproved)}`}
+          note={awaitingNote(cashOut, cashOutApproved)}
+          onClick={onCashOut}
+        />
       </div>
       <div className="flow-row tone-online">
         <span className="flow-row-label"><CreditCard size={16} />{t("online")}</span>
@@ -9950,7 +9998,7 @@ function FlowBreakdown({
           className="verified"
           label={t("verifiedOnline")}
           value={formatMoney(onlineVerified)}
-          note={awaiting > 0 ? `${t("awaitingVerification")} ${formatMoney(awaiting)}` : null}
+          note={awaitingNote(onlineIn, onlineVerified)}
           onClick={onOnline}
         />
       </div>
@@ -10930,6 +10978,7 @@ function ClosingView({
       .map((payment) => ({
         cash: paymentPendingCashAmount(payment),
         online: paymentComponentStatus(payment, "online") === "approved" ? 0 : paymentOnlineAmount(payment),
+        onClosingDate: payment.payment_date.slice(0, 10) === date,
       }))
       .filter((breakdown) => breakdown.cash > 0 || breakdown.online > 0);
     const pendingExpenses = expenses.filter(
@@ -10948,6 +10997,12 @@ function ClosingView({
       totalAmount: cashPaymentAmount + onlinePaymentAmount + expenseAmount,
       totalRecordCount: paymentBreakdowns.length + pendingExpenses.length,
       onlineAmount: onlinePaymentAmount,
+      dayCashIn: paymentBreakdowns
+        .filter((breakdown) => breakdown.onClosingDate)
+        .reduce((sum, breakdown) => sum + breakdown.cash, 0),
+      dayCashOut: pendingExpenses
+        .filter((expense) => expense.mode !== "online" && expense.expense_date.slice(0, 10) === date)
+        .reduce((sum, expense) => sum + numberValue(expense.amount), 0),
     };
   };
   const closingCards: ClosingCardViewModel[] = visibleSummaries.map((summary) => ({
@@ -11047,21 +11102,29 @@ function ClosingView({
                       : `${t("openingCash")} ${formatMoney(summary.opening)}, ${t("cashIn")} ${formatMoney(custodyCashIn)}, ${t("cashOut")} ${formatMoney(custodyCashOut)}, ${t("closingCashInHand")} ${formatMoney(summary.closing)}`}
                   >
                     {!ownerCard ? (
-                      <span className="closing-equation-part">
+                      <span className="closing-equation-part full-row">
                         <small>{t("openingCash")}</small>
                         <strong>{formatMoney(summary.opening)}</strong>
                       </span>
                     ) : null}
                     <span className="closing-equation-part positive">
-                      <small>+ {t("cashIn")}</small>
+                      <small>+ {t("cash")} {t("cashIn")}</small>
+                      <strong>{formatMoney(custodyCashIn + pendingSummary.dayCashIn)}</strong>
+                    </span>
+                    <span className="closing-equation-part positive approved">
+                      <small>{labelForStatus("approved", t)}</small>
                       <strong>{formatMoney(custodyCashIn)}</strong>
                     </span>
                     <span className="closing-equation-part negative">
-                      <small>− {t("cashOut")}</small>
+                      <small>− {t("cash")} {t("cashOut")}</small>
+                      <strong>{formatMoney(custodyCashOut + pendingSummary.dayCashOut)}</strong>
+                    </span>
+                    <span className="closing-equation-part negative approved">
+                      <small>{labelForStatus("approved", t)}</small>
                       <strong>{formatMoney(custodyCashOut)}</strong>
                     </span>
                     {summary.adjustments !== 0 ? (
-                      <span className={`closing-equation-part${summary.adjustments < 0 ? " negative" : " positive"}`}>
+                      <span className={`closing-equation-part full-row${summary.adjustments < 0 ? " negative" : " positive"}`}>
                         <small>{summary.adjustments < 0 ? "−" : "+"} {t("adjustments")}</small>
                         <strong>{formatMoney(Math.abs(summary.adjustments))}</strong>
                       </span>
