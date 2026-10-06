@@ -76,7 +76,7 @@ import { clearPersistedQueryCache, QueryProvider } from "@/components/query-prov
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -394,6 +394,11 @@ const messages: Record<Language, Record<string, string>> = {
     cashExpenseReview: "Cash / expense review",
     cashIn: "IN",
     cashInHand: "Cash in hand",
+    awaitingYourApproval: "Awaiting your approval",
+    awaitingApproval: "Awaiting approval",
+    pending: "Pending",
+    pendingAllDates: "All dates · not yet approved",
+    retry: "Retry",
     asOf: "As of",
     allUnits: "All units",
     assignedUnits: "Assigned units",
@@ -870,6 +875,11 @@ const messages: Record<Language, Record<string, string>> = {
     cashExpenseReview: "नकद / खर्च जांच",
     cashIn: "IN",
     cashInHand: "हाथ में नकद",
+    awaitingYourApproval: "आपकी मंजूरी बाकी",
+    awaitingApproval: "मंजूरी बाकी",
+    pending: "बाकी",
+    pendingAllDates: "सभी तारीखें · अभी मंजूर नहीं",
+    retry: "फिर कोशिश करें",
     asOf: "तक",
     allUnits: "सभी यूनिट",
     assignedUnits: "दी गई यूनिट",
@@ -2532,6 +2542,26 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const primaryOwner = appData.profile.membership_role === "primary_owner";
   const manager = appData.profile.membership_role === "co_owner";
   const supportMode = appData.businessContext.accessMode === "support";
+  // Header pending badge: every record awaiting approval, independent of page filters.
+  const pendingApprover = owner || supportMode;
+  const [pendingSheetOpen, setPendingSheetOpen] = useState(false);
+  const pendingApprovalsQuery = useQuery({
+    queryKey: ["pending-approvals", cacheScope],
+    queryFn: ({ signal }) => fetchJson<PendingApprovalsPayload>(`/api/businesses/${businessId}/pending-approvals`, signal),
+    enabled: !currentUserIsSalesAgent,
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  });
+  const pendingApprovals = useMemo(() => {
+    const payload = pendingApprovalsQuery.data ?? { payments: [], expenses: [] };
+    // Staff see only their own pending records; approvers see everything they can review.
+    if (pendingApprover) return payload;
+    return {
+      payments: payload.payments.filter((payment) => payment.collected_by === appData.profile.id),
+      expenses: payload.expenses.filter((expense) => expense.spent_by === appData.profile.id),
+    };
+  }, [appData.profile.id, pendingApprovalsQuery.data, pendingApprover]);
+  const pendingApprovalCount = pendingApprovals.payments.length + pendingApprovals.expenses.length;
   const enabledModules = useMemo(() => new Set(appData.businessContext.enabledModules), [appData.businessContext.enabledModules]);
   const permissions = useMemo(() => activePermissions(appData.profile.role, appData.permissions).filter((permission) => {
     const moduleType = (Object.keys(businessPermissions) as BusinessType[]).find((key) => businessPermissions[key] === permission);
@@ -2757,6 +2787,8 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
         scope: "none",
         savingMessageKey: "savingChanges",
       };
+      // Approvals, new payments and edits all change what is pending.
+      void queryClient.invalidateQueries({ queryKey: ["pending-approvals", cacheScope] });
       if (detail.patch && applyPatchToCachedRanges(detail.patch)) {
         if (detail.patch.type === "student" || detail.scope === "dashboard-library") {
           void refreshStudentCaches().then(endBusy, endBusy);
@@ -3437,6 +3469,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
             onClick={() => setSidebarOpen(true)}
           >
             <SafeAvatarImage alt="" className="w-full h-full object-cover" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
+            {!currentUserIsSalesAgent && unreadNotifications > 0 ? <span className="profile-unread-dot" aria-hidden="true" /> : null}
           </button>
           <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
           <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
@@ -3477,17 +3510,35 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
               ) : null}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="header-icon-button notification-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 relative cursor-pointer"
-            onClick={openNotificationsPage}
-            aria-label={t("notifications")}
-          >
-            {unreadNotifications > 0 ? <BellRing size={22} /> : <Bell size={22} />}
-            {unreadNotifications > 0 ? (
-              <span className="absolute top-2 right-2.5 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
-            ) : null}
-          </button>
+          {currentUserIsSalesAgent ? (
+            <button
+              type="button"
+              className="header-icon-button notification-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 relative cursor-pointer"
+              onClick={openNotificationsPage}
+              aria-label={t("notifications")}
+            >
+              {unreadNotifications > 0 ? <BellRing size={22} /> : <Bell size={22} />}
+              {unreadNotifications > 0 ? (
+                <span className="absolute top-2 right-2.5 w-2 h-2 bg-error rounded-full border-2 border-surface"></span>
+              ) : null}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="header-icon-button pending-trigger text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-full p-2 relative cursor-pointer"
+              onClick={() => {
+                setPendingSheetOpen(true);
+                void pendingApprovalsQuery.refetch();
+              }}
+              aria-label={`${t("pending")}: ${pendingApprovalCount}`}
+              title={t("pending")}
+            >
+              <ClipboardList size={22} />
+              {pendingApprovalCount > 0 ? (
+                <span className="header-pending-count">{pendingApprovalCount > 99 ? "99+" : pendingApprovalCount}</span>
+              ) : null}
+            </button>
+          )}
         </div>
       </header> : null}
 
@@ -3554,6 +3605,19 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
               </button>
             ))}
           </nav>
+          {!currentUserIsSalesAgent ? (
+            <div className="px-4">
+              <button
+                type="button"
+                onClick={openNotificationsPage}
+                className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg w-full text-left cursor-pointer border-0 text-on-surface-variant hover:bg-surface-variant/50"
+              >
+                {unreadNotifications > 0 ? <BellRing size={20} /> : <Bell size={20} />}
+                <span>{t("notifications")}</span>
+                {unreadNotifications > 0 ? <span className="sidebar-unread-count">{unreadNotifications}</span> : null}
+              </button>
+            </div>
+          ) : null}
           <div className="px-4">
             <Link className="app-sidebar-button flex items-center gap-3 px-4 py-3 m-2 rounded-lg text-on-surface-variant hover:bg-surface-variant/50" href={settingsHref}>
               <UserCheck size={20} />
@@ -3623,6 +3687,64 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 onPositive={() => openAction("positive")}
                 onNegative={() => openAction("negative")}
               />
+            ) : null}
+
+            {pendingSheetOpen ? (
+              <div className="modal-layer pending-sheet-layer" role="dialog" aria-modal="true" aria-label={t("pending")}>
+                <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setPendingSheetOpen(false)} />
+                <section className="pending-side-sheet">
+                  <header className="sheet-header">
+                    <div>
+                      <p className="eyebrow">{pendingApprover ? t("awaitingYourApproval") : t("awaitingApproval")}</p>
+                      <h2>{t("pending")} · {pendingApprovalCount}</h2>
+                      <span>{t("pendingAllDates")}</span>
+                    </div>
+                    <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={() => setPendingSheetOpen(false)}>
+                      <X size={18} />
+                    </button>
+                  </header>
+                  {pendingApprovalsQuery.isPending ? (
+                    <div className="student-picker-loading" role="status" aria-label={t("loading")}><span /><span /><span /></div>
+                  ) : pendingApprovalsQuery.isError ? (
+                    <button className="secondary-button" type="button" onClick={() => void pendingApprovalsQuery.refetch()}>{t("retry")}</button>
+                  ) : (
+                    <TransactionsView
+                      pendingOnly
+                      businessId={businessId}
+                      cacheScope={cacheScope}
+                      dateLabel={t("pendingAllDates")}
+                      dateRange={{ from: "2000-01-01", to: "9999-12-31" }}
+                      dateFilterKey="transaction"
+                      transactionLens={pendingApprover ? "business" : "personal"}
+                      transactionFilter="pending"
+                      transactionProfileId={pendingApprover ? "all" : appData.profile.id}
+                      recordTypeFilter="all"
+                      modeFilter="all"
+                      businessTypeFilter="all"
+                      onSelectLens={() => undefined}
+                      onSelectActivity={() => undefined}
+                      payments={pendingApprovals.payments}
+                      expenses={pendingApprovals.expenses}
+                      movements={appData.movements}
+                      ledger={[]}
+                      agentSettlements={[]}
+                      financialActivity={[]}
+                      postingEvents={[]}
+                      profiles={appData.profiles}
+                      profile={appData.profile}
+                      owner={owner}
+                      canVerifyOnlineCollections={primaryOwner || supportMode}
+                      sharedBusinessHistory={canViewSharedBusinessHistory}
+                      agentIncentiveSummary={agentIncentiveSummary}
+                      agentReferralCodes={agentReferralCodes}
+                      permissionsByProfile={permissionsByProfile}
+                      staffUnitAssignments={appData.staffUnitAssignments}
+                      setNotice={pushNotice}
+                      startTransition={startTransition}
+                    />
+                  )}
+                </section>
+              </div>
             ) : null}
 
             <ToastStack toasts={toasts} pending={false} savingLabel={busyMessage ?? t("saving")} dismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
@@ -5370,7 +5492,10 @@ function TransactionsView({
   staffUnitAssignments,
   setNotice,
   startTransition,
+  pendingOnly = false,
 }: {
+  /** Pending approvals side page: hides the lens tabs and activity chips. */
+  pendingOnly?: boolean;
   businessId: string;
   cacheScope: string;
   dateLabel: string;
@@ -6110,7 +6235,7 @@ function TransactionsView({
         </>
       ) : null}
 
-      {!currentUserIsSalesAgent ? (
+      {!currentUserIsSalesAgent && !pendingOnly ? (
         <nav className="transaction-primary-filters" aria-label="Transaction classification">
           <div className="transaction-lens-tabs" role="tablist" aria-label="Transaction lens">
             <button

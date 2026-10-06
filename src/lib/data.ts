@@ -10,6 +10,7 @@ import type {
   BootstrapPayload,
   BusinessType,
   BusinessContext,
+  PendingApprovalsPayload,
   BusinessMembership,
   BusinessRole,
   CashBalanceSummary,
@@ -1108,5 +1109,40 @@ export async function getWorkPage(businessContext: BusinessContext, requestedDat
       photo_url: photo_path ? signed.get(photo_path) ?? null : null,
       voice_url: voice_path ? signed.get(voice_path) ?? null : null,
     })),
+  };
+}
+
+/**
+ * Every payment / expense still awaiting approval, regardless of dashboard or transaction filters.
+ * Row-level security limits it to what the viewer may see; the client narrows Staff to their own.
+ */
+export async function getPendingApprovals(businessContext: BusinessContext): Promise<PendingApprovalsPayload> {
+  if (isBusinessSalesAgent(businessContext.membership?.role)) return { payments: [], expenses: [] };
+  const supabase = await createClient({ businessId: businessContext.business.id });
+  const [paymentsResult, expensesResult] = await Promise.all([
+    supabase
+      .from("payments")
+      .select("*")
+      .eq("business_id", businessContext.business.id)
+      .eq("record_status", "active")
+      .in("approval_status", pendingReviewStatuses)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("expenses")
+      .select("*")
+      .eq("business_id", businessContext.business.id)
+      .eq("record_status", "active")
+      .in("approval_status", pendingReviewStatuses)
+      .order("expense_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+  if (paymentsResult.error) throw new Error(paymentsResult.error.message);
+  if (expensesResult.error) throw new Error(expensesResult.error.message);
+  return {
+    payments: (paymentsResult.data ?? []) as Payment[],
+    expenses: (expensesResult.data ?? []) as Expense[],
   };
 }

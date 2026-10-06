@@ -806,3 +806,8 @@ export type WorkPage = {
   tasks: WorkTask[];
   updates: WorkUpdate[];
 };
+
+export type PendingApprovalsPayload = {
+  payments: Payment[];
+  expenses: Expense[];
+};
