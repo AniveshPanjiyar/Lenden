@@ -11383,3 +11383,9 @@ html, body { overflow-x: clip; overscroll-behavior: none; }
   box-shadow: none !important;
   padding: 0;
 }
+
+/* Image fields: Camera and Gallery side by side (Android needs an explicit camera input). */
+.image-source-field { display: grid; gap: 7px; min-width: 0; }
+.image-source-label { color: var(--muted); font-size: 13px; font-weight: 700; }
+.image-source-buttons label.camera-field { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; font-weight: 800; }
+.image-source-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

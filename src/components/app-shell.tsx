@@ -25,6 +25,7 @@ import {
   CreditCard,
   GraduationCap,
   Hotel,
+  Images,
   Landmark,
   Scale,
   LogOut,
@@ -357,6 +358,8 @@ const messages: Record<Language, Record<string, string>> = {
     addExpense: "Add expense",
     addExpenseOrSettlement: "Add expense or settlement",
     addImage: "Add image",
+    camera: "Camera",
+    gallery: "Gallery",
     addReferral: "Add referral",
     addRoom: "Add room",
     addStaff: "Add staff or sales agent",
@@ -840,6 +843,8 @@ const messages: Record<Language, Record<string, string>> = {
     addExpense: "खर्च जोड़ें",
     addExpenseOrSettlement: "खर्च या जमा जोड़ें",
     addImage: "फोटो जोड़ें",
+    camera: "कैमरा",
+    gallery: "गैलरी",
     addReferral: "रेफरल जोड़ें",
     addRoom: "कमरा जोड़ें",
     addStaff: "स्टाफ या एजेंट जोड़ें",
@@ -7049,7 +7054,6 @@ function CompressedImageInput({
   displayName = "",
   initialImageUrl,
   variant,
-  capture = false,
 }: {
   inputName: "student_photo" | "aadhar_photo" | "aadhar_back_photo" | "photo";
   label: string;
@@ -7057,9 +7061,10 @@ function CompressedImageInput({
   displayName?: string;
   initialImageUrl?: string | null;
   variant: "student" | "document";
-  capture?: boolean;
 }) {
   const { t } = useLanguage();
+  // The named input is the one submitted (Gallery). Android opens only the gallery for a plain
+  // file input, so a separate capture input takes the photo and hands it over to the named one.
   const inputRef = useRef<HTMLInputElement>(null);
   const objectUrlRef = useRef<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState(initialImageUrl ?? null);
@@ -7095,6 +7100,21 @@ function CompressedImageInput({
       releaseObjectUrl();
     };
   }, [initialImageUrl]);
+
+  function handleCameraPhoto(cameraInput: HTMLInputElement) {
+    const file = cameraInput.files?.[0];
+    const input = inputRef.current;
+    if (!file || !input) return;
+    try {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+    } catch {
+      return;
+    }
+    cameraInput.value = "";
+    handlePhotoChange(input);
+  }
 
   function handlePhotoChange(input: HTMLInputElement) {
     const file = input.files?.[0];
@@ -7151,21 +7171,34 @@ function CompressedImageInput({
           </div>
         </div>
       ) : null}
-      <label>
-        {label}
-        <span className="camera-field">
-          <Camera size={16} />
-          {t("addImage")}
-          <input
-            ref={inputRef}
-            name={inputName}
-            type="file"
-            accept="image/*"
-            capture={capture ? "environment" : undefined}
-            onChange={(event) => handlePhotoChange(event.currentTarget)}
-          />
-        </span>
-      </label>
+      <div className="image-source-field">
+        <span className="image-source-label">{label}</span>
+        <div className="image-source-buttons">
+          <label className="camera-field">
+            <Camera size={16} />
+            {t("camera")}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              aria-label={`${label} · ${t("camera")}`}
+              onChange={(event) => handleCameraPhoto(event.currentTarget)}
+            />
+          </label>
+          <label className="camera-field">
+            <Images size={16} />
+            {t("gallery")}
+            <input
+              ref={inputRef}
+              name={inputName}
+              type="file"
+              accept="image/*"
+              aria-label={`${label} · ${t("gallery")}`}
+              onChange={(event) => handlePhotoChange(event.currentTarget)}
+            />
+          </label>
+        </div>
+      </div>
     </div>
   );
 }
@@ -9584,21 +9617,18 @@ function PaymentForm({
                     previewLabel={t("photoPreview")}
                     displayName={studentName}
                     variant="student"
-                    capture
                   />
                   <CompressedImageInput
                     inputName="aadhar_photo"
                     label={t("aadharFront")}
                     previewLabel={t("aadharFrontPreview")}
                     variant="document"
-                    capture
                   />
                   <CompressedImageInput
                     inputName="aadhar_back_photo"
                     label={t("aadharBack")}
                     previewLabel={t("aadharBackPreview")}
                     variant="document"
-                    capture
                   />
                 </>
               ) : null}
@@ -9887,21 +9917,18 @@ function PaymentForm({
                         previewLabel={t("photoPreview")}
                         displayName={studentName}
                         variant="student"
-                        capture
                       />
                       <CompressedImageInput
                         inputName="aadhar_photo"
                         label={t("aadharFront")}
                         previewLabel={t("aadharFrontPreview")}
                         variant="document"
-                        capture
                       />
                       <CompressedImageInput
                         inputName="aadhar_back_photo"
                         label={t("aadharBack")}
                         previewLabel={t("aadharBackPreview")}
                         variant="document"
-                        capture
                       />
                     </>
                   ) : null}
@@ -10124,7 +10151,6 @@ function PaymentForm({
             label={t("addImage")}
             previewLabel={t("photoPreview")}
             variant="document"
-            capture
           />
           <label className="full-span">
             {t("remark")}
