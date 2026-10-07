@@ -21,6 +21,7 @@ import {
   ClipboardCheck,
   Building2,
   ClipboardList,
+  Crop,
   Copy,
   CreditCard,
   GraduationCap,
@@ -28,6 +29,7 @@ import {
   Images,
   Landmark,
   MessageCircle,
+  RotateCw,
   Scale,
   LogOut,
   Mic,
@@ -361,6 +363,9 @@ const messages: Record<Language, Record<string, string>> = {
     addImage: "Add image",
     camera: "Camera",
     gallery: "Gallery",
+    cropPhoto: "Crop photo",
+    rotate: "Rotate",
+    fullPhoto: "Full photo",
     addReferral: "Add referral",
     addRoom: "Add room",
     addStaff: "Add staff or sales agent",
@@ -846,6 +851,9 @@ const messages: Record<Language, Record<string, string>> = {
     addImage: "फोटो जोड़ें",
     camera: "कैमरा",
     gallery: "गैलरी",
+    cropPhoto: "फोटो काटें",
+    rotate: "घुमाएँ",
+    fullPhoto: "पूरी फोटो",
     addReferral: "रेफरल जोड़ें",
     addRoom: "कमरा जोड़ें",
     addStaff: "स्टाफ या एजेंट जोड़ें",
@@ -7061,6 +7069,227 @@ async function compressUploadImage(file: File) {
   }
 }
 
+type CropRect = { x: number; y: number; w: number; h: number };
+type CropDrag = { mode: "move" | "nw" | "ne" | "sw" | "se"; startX: number; startY: number; start: CropRect };
+
+function loadImageElement(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not read the photo."));
+    image.src = url;
+  });
+}
+
+function canvasToFile(canvas: HTMLCanvasElement, name: string) {
+  return new Promise<File | null>((resolve) => {
+    canvas.toBlob(
+      (blob) => resolve(blob ? new File([blob], name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" }) : null),
+      "image/jpeg",
+      0.92,
+    );
+  });
+}
+
+/** Crop (and rotate) a freshly taken or picked photo before it is compressed and uploaded. */
+function ImageCropDialog({
+  file,
+  square,
+  onCancel,
+  onConfirm,
+}: {
+  file: File;
+  square: boolean;
+  onCancel: () => void;
+  onConfirm: (file: File) => void;
+}) {
+  const { t } = useLanguage();
+  // The object URL is released when the photo is replaced or the dialog closes (not in an
+  // effect: a development remount would revoke it before the image loads).
+  const [source, setSource] = useState(() => ({ file, url: URL.createObjectURL(file) }));
+  const sourceFile = source.file;
+  const sourceUrl = source.url;
+
+  const [rect, setRect] = useState<CropRect>({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 });
+  const [busy, setBusy] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<CropDrag | null>(null);
+
+  const close = (result: File | null) => {
+    URL.revokeObjectURL(sourceUrl);
+    if (result) onConfirm(result);
+    else onCancel();
+  };
+
+  function startFrame(image: HTMLImageElement) {
+    // Student photos start as a centred square; documents start at nearly the whole image.
+    if (!square) {
+      setRect({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 });
+      return;
+    }
+    const aspect = image.naturalWidth / Math.max(image.naturalHeight, 1);
+    const w = aspect >= 1 ? 0.9 / aspect : 0.9;
+    const h = aspect >= 1 ? 0.9 : 0.9 * aspect;
+    setRect({ x: (1 - w) / 2, y: (1 - h) / 2, w, h });
+  }
+
+  function beginDrag(mode: CropDrag["mode"], event: React.PointerEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    dragRef.current = { mode, startX: event.clientX, startY: event.clientY, start: rect };
+  }
+
+  function moveDrag(event: React.PointerEvent<HTMLElement>) {
+    const drag = dragRef.current;
+    const frame = frameRef.current;
+    if (!drag || !frame) return;
+    const bounds = frame.getBoundingClientRect();
+    const dx = (event.clientX - drag.startX) / Math.max(bounds.width, 1);
+    const dy = (event.clientY - drag.startY) / Math.max(bounds.height, 1);
+    const minSize = 0.08;
+    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+    const start = drag.start;
+    if (drag.mode === "move") {
+      setRect({ ...start, x: clamp(start.x + dx, 0, 1 - start.w), y: clamp(start.y + dy, 0, 1 - start.h) });
+      return;
+    }
+    let { x, y, w, h } = start;
+    if (drag.mode.includes("w")) {
+      const nextX = clamp(start.x + dx, 0, start.x + start.w - minSize);
+      w = start.w + (start.x - nextX);
+      x = nextX;
+    } else {
+      w = clamp(start.w + dx, minSize, 1 - start.x);
+    }
+    if (drag.mode.includes("n")) {
+      const nextY = clamp(start.y + dy, 0, start.y + start.h - minSize);
+      h = start.h + (start.y - nextY);
+      y = nextY;
+    } else {
+      h = clamp(start.h + dy, minSize, 1 - start.y);
+    }
+    if (square) {
+      // Keep the frame square on screen: follow the larger change, within the image.
+      const pxW = w * bounds.width;
+      const pxH = h * bounds.height;
+      const side = Math.min(Math.max(pxW, pxH), drag.mode.includes("w") ? (start.x + start.w) * bounds.width : (1 - start.x) * bounds.width,
+        drag.mode.includes("n") ? (start.y + start.h) * bounds.height : (1 - start.y) * bounds.height);
+      w = side / bounds.width;
+      h = side / bounds.height;
+      if (drag.mode.includes("w")) x = start.x + start.w - w;
+      if (drag.mode.includes("n")) y = start.y + start.h - h;
+    }
+    setRect({ x, y, w, h });
+  }
+
+  function endDrag() {
+    dragRef.current = null;
+  }
+
+  async function rotate() {
+    if (!sourceUrl || busy) return;
+    setBusy(true);
+    try {
+      const image = await loadImageElement(sourceUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalHeight;
+      canvas.height = image.naturalWidth;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.translate(canvas.width, 0);
+      context.rotate(Math.PI / 2);
+      context.drawImage(image, 0, 0);
+      const rotated = await canvasToFile(canvas, sourceFile.name);
+      if (rotated) {
+        URL.revokeObjectURL(sourceUrl);
+        setSource({ file: rotated, url: URL.createObjectURL(rotated) });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm() {
+    if (!sourceUrl || busy) return;
+    setBusy(true);
+    try {
+      const fullFrame = rect.x <= 0.001 && rect.y <= 0.001 && rect.w >= 0.999 && rect.h >= 0.999;
+      if (fullFrame) {
+        close(sourceFile);
+        return;
+      }
+      const image = await loadImageElement(sourceUrl);
+      const sx = Math.round(rect.x * image.naturalWidth);
+      const sy = Math.round(rect.y * image.naturalHeight);
+      const sw = Math.max(1, Math.round(rect.w * image.naturalWidth));
+      const sh = Math.max(1, Math.round(rect.h * image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = sw;
+      canvas.height = sh;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        close(sourceFile);
+        return;
+      }
+      context.drawImage(image, sx, sy, sw, sh, 0, 0, sw, sh);
+      const cropped = await canvasToFile(canvas, sourceFile.name);
+      close(cropped ?? sourceFile);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="image-crop-layer" role="dialog" aria-modal="true" aria-label={t("cropPhoto")}>
+      <header className="image-crop-header">
+        <button className="image-crop-text-button" type="button" onClick={() => close(null)}>{t("cancel")}</button>
+        <strong>{t("cropPhoto")}</strong>
+        <button className="image-crop-text-button primary" type="button" onClick={() => void confirm()} disabled={busy || !sourceUrl}>
+          {t("done")}
+        </button>
+      </header>
+      <div className="image-crop-stage">
+        {sourceUrl ? (
+          <div
+            className="image-crop-frame"
+            ref={frameRef}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={sourceUrl} alt="" draggable={false} onLoad={(event) => startFrame(event.currentTarget)} />
+            <div
+              className="image-crop-rect"
+              style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}
+              onPointerDown={(event) => beginDrag("move", event)}
+            >
+              {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+                <span
+                  key={corner}
+                  className={`image-crop-handle ${corner}`}
+                  onPointerDown={(event) => beginDrag(corner, event)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <footer className="image-crop-footer">
+        <button className="image-crop-tool" type="button" onClick={() => void rotate()} disabled={busy}>
+          <RotateCw size={18} /> {t("rotate")}
+        </button>
+        <button className="image-crop-tool" type="button" onClick={() => setRect({ x: 0, y: 0, w: 1, h: 1 })} disabled={busy}>
+          <Crop size={18} /> {t("fullPhoto")}
+        </button>
+      </footer>
+    </div>,
+    document.body,
+  );
+}
+
 function CompressedImageInput({
   inputName,
   label,
@@ -7084,6 +7313,7 @@ function CompressedImageInput({
   const [previewUrl, setPreviewUrl] = useState(initialImageUrl ?? null);
   const [preparing, setPreparing] = useState(false);
   const [hasSelectedPhoto, setHasSelectedPhoto] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
 
   function releaseObjectUrl() {
     if (!objectUrlRef.current) return;
@@ -7115,10 +7345,26 @@ function CompressedImageInput({
     };
   }, [initialImageUrl]);
 
+  // Every new photo (camera or gallery) goes through the crop step first.
   function handleCameraPhoto(cameraInput: HTMLInputElement) {
     const file = cameraInput.files?.[0];
+    cameraInput.value = "";
+    if (file) setCropFile(file);
+  }
+
+  function handleGalleryPhoto(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file) {
+      handlePhotoChange(input);
+      return;
+    }
+    setCropFile(file);
+  }
+
+  function useCroppedPhoto(file: File) {
+    setCropFile(null);
     const input = inputRef.current;
-    if (!file || !input) return;
+    if (!input) return;
     try {
       const transfer = new DataTransfer();
       transfer.items.add(file);
@@ -7126,8 +7372,14 @@ function CompressedImageInput({
     } catch {
       return;
     }
-    cameraInput.value = "";
     handlePhotoChange(input);
+  }
+
+  function cancelCrop() {
+    setCropFile(null);
+    const input = inputRef.current;
+    // Keep any photo chosen earlier; drop only the one that was being cropped.
+    if (input && !hasSelectedPhoto) input.value = "";
   }
 
   function handlePhotoChange(input: HTMLInputElement) {
@@ -7208,11 +7460,20 @@ function CompressedImageInput({
               type="file"
               accept="image/*"
               aria-label={`${label} · ${t("gallery")}`}
-              onChange={(event) => handlePhotoChange(event.currentTarget)}
+              onChange={(event) => handleGalleryPhoto(event.currentTarget)}
             />
           </label>
         </div>
       </div>
+      {cropFile ? (
+        <ImageCropDialog
+          key={`${cropFile.name}-${cropFile.lastModified}-${cropFile.size}`}
+          file={cropFile}
+          square={variant === "student"}
+          onCancel={cancelCrop}
+          onConfirm={useCroppedPhoto}
+        />
+      ) : null}
     </div>
   );
 }
