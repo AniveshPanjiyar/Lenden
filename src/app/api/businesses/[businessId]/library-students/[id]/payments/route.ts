@@ -76,9 +76,29 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      studentSubscriptionHistoryPage((historyResult.data ?? []) as StudentSubscriptionHistoryRow[], page, pageSize),
-    );
+    const historyPage = studentSubscriptionHistoryPage((historyResult.data ?? []) as StudentSubscriptionHistoryRow[], page, pageSize);
+
+    // Extra daily slots live in each payment's metadata; attach them to their subscription.
+    const paymentIds = historyPage.items.flatMap((item) => item.transactions.map((transaction) => transaction.id));
+    if (paymentIds.length > 0) {
+      const slotsResult = await supabase.from("payments").select("id,metadata,record_status").in("id", paymentIds);
+      if (!slotsResult.error) {
+        const slotsByPayment = new Map(
+          ((slotsResult.data ?? []) as Array<{ id: string; metadata: { extra_time_slots?: { start: string; end: string }[] } | null; record_status: string }>)
+            .filter((row) => row.record_status === "active" && Array.isArray(row.metadata?.extra_time_slots))
+            .map((row) => [row.id, row.metadata?.extra_time_slots ?? []]),
+        );
+        historyPage.items = historyPage.items.map((item) => {
+          // The latest payment of the subscription carries its current slots.
+          const withSlots = [...item.transactions]
+            .filter((transaction) => slotsByPayment.has(transaction.id))
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+          return withSlots ? { ...item, extraSlots: slotsByPayment.get(withSlots.id) } : item;
+        });
+      }
+    }
+
+    return NextResponse.json(historyPage);
   } catch (error) {
     if (error instanceof BusinessAccessError) {
       return NextResponse.json({ message: error.message }, { status: error.status });

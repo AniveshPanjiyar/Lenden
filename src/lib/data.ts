@@ -987,6 +987,11 @@ function parseStudentRosterFlags(value: string | null | undefined): StudentRoste
   return studentRosterFlags.filter((flag) => requested.has(flag));
 }
 
+function minutesOfClock(value: string) {
+  const [hours, minutes] = value.slice(0, 5).split(":").map(Number);
+  return (Number.isFinite(hours) ? hours : 0) * 60 + (Number.isFinite(minutes) ? minutes : 0);
+}
+
 function timeOfDayInZone(timeZone: string | undefined) {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
 }
@@ -1052,11 +1057,46 @@ export async function getStudentRosterPage(
     };
     const [activeCount, liveCount, inactiveCount] = await Promise.all([
       runCount((query) => query.eq("active", true)),
-      runCount((query) => query.eq("active", true).lte("start_time", nowTime).gt("end_time", nowTime)),
+      countLiveStudents(table, source, scope === libraryScope ? ["placeholder", false] : ["source_course_id", scopeCourseId]),
       runCount((query) => query.eq("active", false)),
     ]);
     return { active: activeCount, live: liveCount, inactive: inactiveCount };
   };
+  // Live = an active student with any of their slots (first slot or extra slots) running now.
+  const nowMinutes = minutesOfClock(nowTime);
+  const slotIsLive = (start: string | null | undefined, end: string | null | undefined) => {
+    if (!start || !end) return false;
+    const from = minutesOfClock(start);
+    const to = minutesOfClock(end);
+    if (from === to) return false;
+    return from < to ? nowMinutes >= from && nowMinutes < to : nowMinutes >= from || nowMinutes < to;
+  };
+  async function countLiveStudents(table: "library_students" | "course_students", source: "library" | "course", scopeFilter: [string, unknown]) {
+    // A plain builder type keeps TypeScript from expanding the generated query types too deeply.
+    type LooseRosterQuery = {
+      eq: (column: string, value: unknown) => LooseRosterQuery;
+      neq: (column: string, value: unknown) => LooseRosterQuery;
+      not: (column: string, operator: string, value: unknown) => LooseRosterQuery;
+      gte: (column: string, value: unknown) => LooseRosterQuery;
+      lte: (column: string, value: unknown) => LooseRosterQuery;
+      limit: (count: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    };
+    const base = (table === "library_students"
+      ? supabase.from("library_students").select("start_time,end_time,extra_time_slots")
+      : supabase.from("course_students").select("start_time,end_time")) as unknown as LooseRosterQuery;
+    const result = await applyStudentRosterFlags(
+      base.eq("business_id", businessContext.business.id).eq("active", true).eq(scopeFilter[0], scopeFilter[1]),
+      flags,
+      source,
+      today,
+    ).limit(5000);
+    if (result.error) return 0;
+    return ((result.data ?? []) as unknown as Array<{ start_time: string | null; end_time: string | null; extra_time_slots?: { start: string; end: string }[] | null }>)
+      .filter((row) => slotIsLive(row.start_time, row.end_time) || (row.extra_time_slots ?? []).some((slot) => slotIsLive(slot.start, slot.end)))
+      .length;
+  }
+  let scopeCourseId: string | null = null;
+  const libraryScope = (countBase: ReturnType<typeof countQuery>) => countBase.eq("placeholder", false);
   function countQuery(table: "library_students" | "course_students") {
     return supabase.from(table).select("id", { count: "exact", head: true }).eq("business_id", businessContext.business.id);
   }
@@ -1102,7 +1142,7 @@ export async function getStudentRosterPage(
     }));
     const total = searchPage ? searchPage.total : result.count ?? items.length;
     const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
-    const counts = await rosterCounts("library_students", "library", (countBase) => countBase.eq("placeholder", false));
+    const counts = await rosterCounts("library_students", "library", libraryScope);
     return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: items, courseStudents: [], payments: [], notifications: [] };
   }
 
@@ -1145,6 +1185,7 @@ export async function getStudentRosterPage(
   }));
   const total = searchPage ? searchPage.total : result.count ?? items.length;
   const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
+  scopeCourseId = sourceCourseId;
   const counts = await rosterCounts("course_students", "course", (countBase) => countBase.eq("source_course_id", sourceCourseId));
   return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: [], courseStudents: items, payments: [], notifications: [] };
 }

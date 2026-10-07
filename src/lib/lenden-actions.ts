@@ -2487,8 +2487,14 @@ const handlers = {
     }
     const startTime = normalizeClockTime(asString(formData, "start_time"));
     const endTime = normalizeClockTime(asString(formData, "end_time"));
-    const slotHours = slotHoursBetween(startTime, endTime);
-    if (!startTime || !endTime || slotHours === null) return fail("Enter a valid time slot.");
+    if (!startTime || !endTime || slotHoursBetween(startTime, endTime) === null) return fail("Enter a valid time slot.");
+    // Library subscriptions may have extra daily slots; together they must not overlap.
+    const extraSlots = studentType === "library" && formData.has("extra_time_slots")
+      ? readExtraTimeSlots(asString(formData, "extra_time_slots"))
+      : undefined;
+    if (extraSlots === null) return fail("Enter valid times for every extra slot.");
+    const slotHours = totalSlotHours([{ start: startTime, end: endTime }, ...(extraSlots ?? [])]);
+    if (slotHours === null) return fail("Time slots must not overlap, and each must end after it starts.");
 
     // A subscription is every payment that shares its key ("payment:<id>" when the key was never set).
     let paymentsQuery = admin
@@ -2517,14 +2523,24 @@ const handlers = {
       updatesById.set(id, current);
       return current;
     };
+    // Slots live in payment metadata, which the "no change" check cannot compare: track it here.
+    const slotsChangedPayments = new Set<string>();
     payments.forEach((payment) => {
-      Object.assign(updatesFor(String(payment.id)), {
+      const updates = updatesFor(String(payment.id));
+      Object.assign(updates, {
         start_date: startDate,
         end_date: endDate,
         start_time: startTime,
         end_time: endTime,
         slot_hours: slotHours,
       });
+      if (extraSlots !== undefined) {
+        const metadata = (payment.metadata as unknown as Record<string, unknown> | null) ?? {};
+        if (JSON.stringify(metadata.extra_time_slots ?? []) !== JSON.stringify(extraSlots)) {
+          updates.metadata = { ...metadata, extra_time_slots: extraSlots };
+          slotsChangedPayments.add(String(payment.id));
+        }
+      }
     });
 
     // Amount and transaction date stay editable only until the transaction is approved.
@@ -2596,7 +2612,7 @@ const handlers = {
     let changed = false;
     for (const payment of payments) {
       const updates = updatesById.get(String(payment.id)) ?? {};
-      if (allUpdatesMatch(payment, updates)) continue;
+      if (!slotsChangedPayments.has(String(payment.id)) && allUpdatesMatch(payment, updates)) continue;
       const { error } = await admin.from("payments").update(updates).eq("id", payment.id);
       if (error) throw new Error(error.message);
       changed = true;
@@ -2622,7 +2638,7 @@ const handlers = {
       || payments.some((payment) => payment.id === student?.last_payment_id)
     );
     if (student && isCurrentSubscription) {
-      const studentUpdates = {
+      const studentUpdates: Record<string, unknown> = {
         subscription_start_date: startDate,
         subscription_end_date: endDate,
         start_time: startTime,
@@ -2632,6 +2648,7 @@ const handlers = {
         dues_amount: latestSnapshot.dues,
         advance_amount: latestSnapshot.advance,
       };
+      if (extraSlots !== undefined && studentType === "library") studentUpdates.extra_time_slots = extraSlots;
       const { error } = await admin.from(studentTable).update(studentUpdates).eq("id", student.id);
       if (error) throw new Error(error.message);
       changed = true;

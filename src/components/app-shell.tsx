@@ -7579,6 +7579,75 @@ function displayTimeSlots(startTime: string | null | undefined, endTime: string 
     .join(", ") || "-";
 }
 
+/** Subscription edit: first slot plus (library) extra slots, kept free of overlaps. */
+function SubscriptionSlotsFields({
+  startTime: initialStart,
+  endTime: initialEnd,
+  extraSlots: initialExtras,
+}: {
+  startTime: string;
+  endTime: string;
+  /** null = course (single slot only). */
+  extraSlots: TimeSlotValue[] | null;
+}) {
+  const { t } = useLanguage();
+  const [startTime, setStartTime] = useState(initialStart);
+  const [endTime, setEndTime] = useState(initialEnd);
+  const [extras, setExtras] = useState<TimeSlotValue[]>(
+    (initialExtras ?? []).map((slot) => ({ start: slot.start.slice(0, 5), end: slot.end.slice(0, 5) })),
+  );
+  const problem = timeSlotsProblem([{ start: startTime, end: endTime }, ...extras], t);
+  const validityRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    validityRef.current?.setCustomValidity(problem ?? "");
+  }, [problem]);
+  const updateExtra = (index: number, key: "start" | "end", value: string) =>
+    setExtras((current) => current.map((slot, slotIndex) => slotIndex === index ? { ...slot, [key]: value } : slot));
+
+  return (
+    <>
+      <label>
+        {t("startTime")}
+        <input type="time" name="start_time" value={startTime} onChange={(event) => setStartTime(event.target.value)} required />
+      </label>
+      <label>
+        {t("endTime")}
+        <input type="time" name="end_time" value={endTime} onChange={(event) => setEndTime(event.target.value)} required />
+      </label>
+      {initialExtras !== null ? (
+        <div className="extra-slots full-span">
+          {extras.map((slot, index) => (
+            <div className="extra-slot-row" key={index}>
+              <label>
+                {t("startTime")} {index + 2}
+                <input type="time" value={slot.start} onChange={(event) => updateExtra(index, "start", event.target.value)} required />
+              </label>
+              <label>
+                {t("endTime")} {index + 2}
+                <input type="time" value={slot.end} onChange={(event) => updateExtra(index, "end", event.target.value)} required />
+              </label>
+              <button
+                className="icon-button extra-slot-remove"
+                type="button"
+                aria-label={t("removeSlot")}
+                onClick={() => setExtras((current) => current.filter((_, slotIndex) => slotIndex !== index))}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ))}
+          <button className="secondary-button extra-slot-add" type="button" onClick={() => setExtras((current) => [...current, nextFreeSlot([{ start: startTime, end: endTime }, ...current])])}>
+            <Plus size={16} /> {t("addSlot")}
+          </button>
+          {problem ? <p className="form-error">{problem}</p> : null}
+          <input type="hidden" name="extra_time_slots" value={JSON.stringify(extras)} />
+          <input ref={validityRef} className="slot-validity" tabIndex={-1} aria-hidden="true" value={problem ? "" : "ok"} onChange={() => undefined} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 const libraryFullTimeStart = "07:00";
 const libraryFullTimeEnd = "22:00";
 
@@ -8269,7 +8338,7 @@ function SubscriptionHistoryTimeline({
             <div className="student-history-entry-title">
               <div>
                 <strong>{displayDateRange(subscription.startDate, subscription.endDate, t)}</strong>
-                <p>{t("timing")} {displayTimeRange(subscription.startTime, subscription.endTime)}</p>
+                <p>{t("timing")} {displayTimeSlots(subscription.startTime, subscription.endTime, subscription.extraSlots)}</p>
               </div>
               <span className="student-subscription-payment-count">
                 {subscription.transactionCount} {t("paymentTransactions")}
@@ -8302,14 +8371,11 @@ function SubscriptionHistoryTimeline({
                   {t("endDate")}
                   <input type="date" name="end_date" defaultValue={subscription.endDate ?? ""} required />
                 </label>
-                <label>
-                  {t("startTime")}
-                  <input type="time" name="start_time" defaultValue={subscription.startTime?.slice(0, 5) ?? ""} required />
-                </label>
-                <label>
-                  {t("endTime")}
-                  <input type="time" name="end_time" defaultValue={subscription.endTime?.slice(0, 5) ?? ""} required />
-                </label>
+                <SubscriptionSlotsFields
+                  startTime={subscription.startTime?.slice(0, 5) ?? ""}
+                  endTime={subscription.endTime?.slice(0, 5) ?? ""}
+                  extraSlots={editTarget.studentType === "library" ? subscription.extraSlots ?? [] : null}
+                />
                 {subscription.transactions.filter((transaction) => transaction.recordStatus === "active").map((transaction) => {
                   const approved = transaction.approvalStatus === "approved"
                     || transaction.cashApprovalStatus === "approved"

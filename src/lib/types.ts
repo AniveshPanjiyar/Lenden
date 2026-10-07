@@ -387,6 +387,8 @@ export type StudentSubscriptionHistoryItem = {
   startTime: string | null;
   endTime: string | null;
   slotHours: number | null;
+  /** Daily slots after the first (library), from the subscription's payments. */
+  extraSlots?: { start: string; end: string }[];
   feeAmount: number;
   totalPaid: number;
   duesAmount: number;
