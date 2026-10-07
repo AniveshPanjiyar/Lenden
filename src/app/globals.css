@@ -11450,3 +11450,11 @@ html, body { overflow-x: clip; overscroll-behavior: none; }
 .image-crop-handle.ne { right: -13px; top: -13px; cursor: nesw-resize; }
 .image-crop-handle.sw { left: -13px; bottom: -13px; cursor: nesw-resize; }
 .image-crop-handle.se { right: -13px; bottom: -13px; cursor: nwse-resize; }
+
+/* Student card: bold timing; seat badge (like the roll badge) only when a seat is assigned. */
+.library-list-timing { color: var(--foreground); font-weight: 850; }
+.library-list-info .library-list-seat-badge {
+  width: fit-content; display: inline-flex; align-items: center;
+  border-radius: 8px; background: #c89b3c; color: #fff;
+  font-size: 11px; font-weight: 850; line-height: 1.15; padding: 3px 8px; white-space: nowrap;
+}

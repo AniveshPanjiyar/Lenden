@@ -159,6 +159,10 @@ type StudentRosterCardViewModel = {
   imageUrl: string | null;
   phoneNumber: string | null;
   meta: string;
+  /** Shown bold after the meta line. */
+  timing?: string | null;
+  /** Shown as a "Seat: …" badge only when a seat is assigned. */
+  seatNumber?: string | null;
   expiryLabel: string;
   expired: boolean;
 };
@@ -7694,6 +7698,7 @@ function StudentRosterCard({
 }) {
   const { t } = useLanguage();
   const callHref = showCallAction ? studentPhoneHref(student.phoneNumber) : null;
+  const seat = student.seatNumber?.trim() && student.seatNumber.trim() !== "-" ? student.seatNumber.trim() : null;
   const whatsappHref = showCallAction ? studentWhatsAppHref(student.phoneNumber, libraryRenewalReminderMessage) : null;
 
   return (
@@ -7707,7 +7712,14 @@ function StudentRosterCard({
         type="button"
         onClick={onOpen}
         className={`library-student-list-main ${callHref ? "" : "without-call"}`}
-        aria-label={`${student.displayName}, ${t("rollNumber")} ${student.rollNumber}, ${student.meta}, ${student.expiryLabel}`}
+        aria-label={[
+          student.displayName,
+          `${t("rollNumber")} ${student.rollNumber}`,
+          student.meta,
+          student.timing,
+          seat ? `${t("seat")} ${seat}` : null,
+          student.expiryLabel,
+        ].filter(Boolean).join(", ")}
       >
         <div className="library-list-avatar-wrap">
           <StudentAvatar displayName={student.displayName} imageUrl={student.imageUrl} className="list" />
@@ -7715,7 +7727,11 @@ function StudentRosterCard({
         </div>
         <div className="library-list-info">
           <strong>{student.displayName}</strong>
-          <span>{student.meta}</span>
+          <span>
+            {student.meta}
+            {student.timing ? <> · <b className="library-list-timing">{student.timing}</b></> : null}
+          </span>
+          {seat ? <span className="library-list-seat-badge">{t("seat")}: {seat}</span> : null}
         </div>
       </button>
       {whatsappHref ? (
@@ -8445,7 +8461,9 @@ function LibraryStudentsView({
                   rollNumber,
                   imageUrl: student.photo_url,
                   phoneNumber: student.phone_number,
-                  meta: `${student.phone_number ?? t("unknown")} · ${t("seat")} ${student.seat_number ?? "-"} · ${slotTime}`,
+                  meta: student.phone_number ?? t("unknown"),
+                  timing: slotTime !== "-" ? slotTime : null,
+                  seatNumber: student.seat_number,
                   expiryLabel,
                   expired: expired(student),
                 }}
@@ -8462,7 +8480,6 @@ function LibraryStudentsView({
             const timeRange = displayTimeRange(record.startTime, record.endTime);
             const meta = [
               record.courseName,
-              timeRange !== "-" ? timeRange : null,
               `${t("lastPayment")} ${displayDate(record.lastPaymentDate)}`,
             ].filter(Boolean).join(" · ");
 
@@ -8476,6 +8493,8 @@ function LibraryStudentsView({
                   imageUrl: record.photoUrl,
                   phoneNumber: record.phoneNumber,
                   meta,
+                  timing: timeRange !== "-" ? timeRange : null,
+                  seatNumber: record.seatNumber,
                   expiryLabel,
                   expired: courseExpired,
                 }}
