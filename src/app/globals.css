@@ -11389,3 +11389,21 @@ html, body { overflow-x: clip; overscroll-behavior: none; }
 .image-source-label { color: var(--muted); font-size: 13px; font-weight: 700; }
 .image-source-buttons label.camera-field { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; font-weight: 800; }
 .image-source-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Student card: WhatsApp renewal reminder sits left of the call button. */
+.library-list-whatsapp-button {
+  position: absolute; top: 50%; right: 78px;
+  display: inline-flex; width: 48px; height: 48px; align-items: center; justify-content: center;
+  border-radius: 999px; background: #25d366; color: #fff;
+  box-shadow: 0 8px 18px rgba(37, 211, 102, 0.22);
+  transform: translateY(-50%);
+  transition: background 160ms ease, transform 160ms ease;
+}
+.library-list-whatsapp-button:hover { background: #1ebe5a; transform: translateY(-50%) scale(1.03); }
+.library-list-whatsapp-button:focus-visible { outline: 2px solid rgba(37, 211, 102, 0.6); outline-offset: 4px; }
+.library-student-list-card.with-whatsapp { padding-right: 142px; }
+@media (max-width: 720px) {
+  .library-list-call-button { right: 14px; width: 40px; height: 40px; }
+  .library-list-whatsapp-button { right: 60px; width: 40px; height: 40px; }
+  .library-student-list-card.with-whatsapp { padding-right: 108px; }
+}

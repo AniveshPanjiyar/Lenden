@@ -27,6 +27,7 @@ import {
   Hotel,
   Images,
   Landmark,
+  MessageCircle,
   Scale,
   LogOut,
   Mic,
@@ -6902,6 +6903,19 @@ function displayTextValue(value: string | number | null | undefined) {
   return text || "-";
 }
 
+const libraryRenewalReminderMessage =
+  "आपका लाइब्रेरी का सब्सक्रिप्शन समाप्त हो गया है। लाइब्रेरी जारी रखने के लिए अपना सब्सक्रिप्शन रिन्यू करवाएँ। "
+  + "या सब्सक्रिप्शन पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
+
+/** Opens the student's WhatsApp chat with the renewal reminder prefilled (Indian numbers get +91). */
+function studentWhatsAppHref(phoneNumber: string | null | undefined, message: string) {
+  let digits = phoneNumber?.replace(/\D/g, "") ?? "";
+  if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  if (digits.length < 11) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+}
+
 function studentPhoneHref(phoneNumber: string | null | undefined) {
   const normalized = phoneNumber?.trim().replace(/[^\d+]/g, "");
   return normalized ? `tel:${normalized}` : null;
@@ -7408,10 +7422,11 @@ function StudentRosterCard({
 }) {
   const { t } = useLanguage();
   const callHref = showCallAction ? studentPhoneHref(student.phoneNumber) : null;
+  const whatsappHref = showCallAction ? studentWhatsAppHref(student.phoneNumber, libraryRenewalReminderMessage) : null;
 
   return (
     <article
-      className={`library-student-list-card ${selected ? "selected" : ""} ${student.expired ? "expired" : ""} ${callHref ? "" : "without-call"}`}
+      className={`library-student-list-card ${selected ? "selected" : ""} ${student.expired ? "expired" : ""} ${callHref ? "" : "without-call"} ${whatsappHref ? "with-whatsapp" : ""}`}
     >
       <span className={`library-expiry-chip library-list-expiry ${student.expired ? "expired" : ""}`}>
         {student.expiryLabel}
@@ -7431,6 +7446,18 @@ function StudentRosterCard({
           <span>{student.meta}</span>
         </div>
       </button>
+      {whatsappHref ? (
+        <a
+          className="library-list-whatsapp-button"
+          href={whatsappHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`WhatsApp: ${student.displayName}`}
+          title="WhatsApp"
+        >
+          <MessageCircle size={22} />
+        </a>
+      ) : null}
       {callHref ? (
         <a
           className="library-list-call-button"
