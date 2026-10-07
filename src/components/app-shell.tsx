@@ -71,6 +71,7 @@ import {
   respondPaymentTransferAction,
   setStudentStatusAction,
   updateSubscriptionAction,
+  refundStudentAdvanceAction,
   settleCashAction,
   updateRecordAction,
 } from "@/app/actions";
@@ -80,7 +81,7 @@ import { clearPersistedQueryCache, QueryProvider } from "@/components/query-prov
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, StudentRosterFlag, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
@@ -122,7 +123,7 @@ type SettlementDirection = "received_from_user" | "sent_to_user";
 type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive" | "all";
-type StudentDrawerView = "details" | "history" | "subscription";
+type StudentDrawerView = "details" | "history" | "subscription" | "refund";
 type StudentRecordSource =
   | { id: "library"; type: "library"; label: string }
   | { id: string; type: "course"; label: string; course: Course };
@@ -367,6 +368,15 @@ const messages: Record<Language, Record<string, string>> = {
     addImage: "Add image",
     camera: "Camera",
     gallery: "Gallery",
+    fullTime: "Full time",
+    returnAdvance: "Return advance",
+    seatAssigned: "Seat assigned",
+    lockerAssigned: "Locker assigned",
+    expiringSoon: "Expiring soon",
+    expiringSoonHelp: "Expiring soon = subscription ends within the next 7 days.",
+    clearFilters: "Clear",
+    students: "Students",
+    returnAdvanceHelp: "Recorded as an expense of this unit and taken off the student's advance.",
     cropPhoto: "Crop photo",
     rotate: "Rotate",
     fullPhoto: "Full photo",
@@ -855,6 +865,15 @@ const messages: Record<Language, Record<string, string>> = {
     addImage: "फोटो जोड़ें",
     camera: "कैमरा",
     gallery: "गैलरी",
+    fullTime: "पूरा समय",
+    returnAdvance: "एडवांस लौटाएँ",
+    seatAssigned: "सीट मिली",
+    lockerAssigned: "लॉकर मिला",
+    expiringSoon: "जल्द खत्म",
+    expiringSoonHelp: "जल्द खत्म = अगले 7 दिनों में सब्सक्रिप्शन खत्म।",
+    clearFilters: "हटाएँ",
+    students: "छात्र",
+    returnAdvanceHelp: "यह यूनिट के खर्च में दर्ज होगा और छात्र के एडवांस से घटेगा।",
     cropPhoto: "फोटो काटें",
     rotate: "घुमाएँ",
     fullPhoto: "पूरी फोटो",
@@ -1429,6 +1448,7 @@ const libraryRefreshActions = new Set<ClientAction>([
   saveLibraryStudentAction,
   setStudentStatusAction,
   updateSubscriptionAction,
+  refundStudentAdvanceAction,
 ]);
 
 const workRefreshActions = new Set<ClientAction>([
@@ -7305,6 +7325,74 @@ function ImageCropDialog({
   );
 }
 
+const rosterExpiringSoonDays = 7;
+
+function rosterFlagLabel(flag: StudentRosterFlag, t: (key: string) => string) {
+  if (flag === "full_time") return t("fullTime");
+  if (flag === "seat") return t("seatAssigned");
+  if (flag === "locker") return t("lockerAssigned");
+  return t("expiringSoon");
+}
+
+function StudentRosterFilterSheet({
+  flags,
+  library,
+  onApply,
+  onClose,
+}: {
+  flags: StudentRosterFlag[];
+  library: boolean;
+  onApply: (flags: StudentRosterFlag[]) => void;
+  onClose: () => void;
+}) {
+  const { t } = useLanguage();
+  const [draft, setDraft] = useState<StudentRosterFlag[]>(flags);
+  // Seats and lockers exist only for library students.
+  const options: StudentRosterFlag[] = library ? ["full_time", "seat", "locker", "expiring"] : ["full_time", "expiring"];
+  const toggle = (flag: StudentRosterFlag) =>
+    setDraft((current) => current.includes(flag) ? current.filter((item) => item !== flag) : [...current, flag]);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("filters")}>
+      <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={onClose} />
+      <section className="action-sheet student-filter-sheet">
+        <header className="sheet-header">
+          <div>
+            <p className="eyebrow">{t("students")}</p>
+            <h2>{t("filters")}</h2>
+          </div>
+          <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <div className="student-filter-chips">
+          {options.map((flag) => (
+            <button
+              key={flag}
+              type="button"
+              aria-pressed={draft.includes(flag)}
+              className={`filter-chip ${draft.includes(flag) ? "active" : ""}`}
+              onClick={() => toggle(flag)}
+            >
+              {draft.includes(flag) ? <Check size={14} aria-hidden="true" /> : null}
+              {rosterFlagLabel(flag, t)}
+            </button>
+          ))}
+        </div>
+        <p className="date-filter-note">{t("expiringSoonHelp")}</p>
+        <div className="student-subscription-edit-actions">
+          <button className="secondary-button" type="button" onClick={() => setDraft([])}>{t("clearFilters")}</button>
+          <button className="primary-button" type="button" onClick={() => onApply(draft)}>{t("applyFilters")}</button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+const libraryFullTimeStart = "07:00";
+const libraryFullTimeEnd = "22:00";
+
 function CompressedImageInput({
   inputName,
   label,
@@ -8136,8 +8224,12 @@ function LibraryStudentsView({
     return () => window.clearTimeout(timeout);
   }, [query]);
   const rosterPageSize = variant === "collection" ? 15 : 100;
+  // Students page filter chips (server-side, plus the same check on locally merged rows).
+  const [rosterFlags, setRosterFlags] = useState<StudentRosterFlag[]>([]);
+  const [rosterFilterOpen, setRosterFilterOpen] = useState(false);
+  const rosterFlagKey = [...rosterFlags].sort().join(",");
   const rosterQuery = useInfiniteQuery({
-    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize],
+    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize, rosterFlagKey],
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({
         tab: "library_students",
@@ -8147,12 +8239,14 @@ function LibraryStudentsView({
         limit: String(rosterPageSize),
       });
       if (debouncedQuery) params.set("studentSearch", debouncedQuery);
+      if (rosterFlagKey) params.set("studentFlags", rosterFlagKey);
       return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
     },
     initialPageParam: "0",
     getNextPageParam: (lastPage) => lastPage.result.nextCursor ?? undefined,
     staleTime: 300_000,
   });
+  const rosterCounts = rosterQuery.data?.pages[0]?.counts ?? null;
   const fetchNextRosterPage = rosterQuery.fetchNextPage;
   const rosterHasNextPage = rosterQuery.hasNextPage;
   const rosterIsFetchingNextPage = rosterQuery.isFetchingNextPage;
@@ -8204,7 +8298,22 @@ function LibraryStudentsView({
     ? [...activeCourseStudents, ...inactiveCourseStudents]
     : listMode === "live" ? liveCourseStudents : listMode === "active" ? activeCourseStudents : inactiveCourseStudents;
   const normalizedQuery = query.trim().toLowerCase();
+  const expiringUntil = addDaysIsoDate(today, rosterExpiringSoonDays) ?? today;
+  const matchesRosterFlags = (record: { startTime: string | null | undefined; endTime: string | null | undefined; seat: string | null | undefined; locker: string | null | undefined; endDate: string | null | undefined }) =>
+    rosterFlags.every((flag) => {
+      if (flag === "full_time") return record.startTime?.slice(0, 5) === libraryFullTimeStart && record.endTime?.slice(0, 5) === libraryFullTimeEnd;
+      if (flag === "seat") return Boolean(record.seat?.trim() && record.seat.trim() !== "-");
+      if (flag === "locker") return Boolean(record.locker?.trim() && record.locker.trim() !== "-");
+      return Boolean(record.endDate && record.endDate >= today && record.endDate <= expiringUntil);
+    });
   const visibleStudents = showingLibraryStudents ? sourceStudents
+    .filter((student) => matchesRosterFlags({
+      startTime: student.start_time,
+      endTime: student.end_time,
+      seat: student.seat_number,
+      locker: student.locker_number,
+      endDate: student.subscription_end_date,
+    }))
     .filter((student) => {
       if (!normalizedQuery) return true;
       return [studentDisplayRollNumber(student), studentDisplayName(student, t), student.phone_number, student.seat_number, student.locker_number]
@@ -8217,6 +8326,13 @@ function LibraryStudentsView({
       || (listMode === "all" ? Number(b.active) - Number(a.active) : 0)
       || compareLibraryStudentsByExpiry(a, b, t)) : [];
   const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
+    .filter((record) => matchesRosterFlags({
+      startTime: record.startTime,
+      endTime: record.endTime,
+      seat: rosterFlags.includes("seat") ? null : "",
+      locker: rosterFlags.includes("locker") ? null : "",
+      endDate: record.subscriptionEndDate,
+    }))
     .filter((record) => {
       if (!normalizedQuery) return true;
       return [record.rollNumber, courseStudentDisplayName(record, t), record.phoneNumber, record.courseName, record.seatNumber, displayTimeRange(record.startTime, record.endTime)]
@@ -8409,6 +8525,7 @@ function LibraryStudentsView({
                   onClick={() => setListMode(status)}
                 >
                   {status === "live" ? "LIVE" : status === "inactive" ? t("inactive") : t("active")}
+                  {rosterCounts ? <span className="filter-chip-count">{rosterCounts[status as "active" | "live" | "inactive"]}</span> : null}
                 </button>
               ))}
             </div>
@@ -8418,11 +8535,47 @@ function LibraryStudentsView({
       <section className="library-student-list-panel">
         <label className="form-grid block">
           <span className="mb-2 block text-sm font-bold text-on-surface-variant">{t("studentSearch")}</span>
-          <span className="input-with-icon">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`${t("rollNumber")} / ${t("name")}`} />
+          <span className="student-search-row">
+            <span className="input-with-icon">
+              <Search size={16} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`${t("rollNumber")} / ${t("name")}`} />
+            </span>
+            {variant !== "collection" ? (
+              <button
+                className={`student-filter-button${rosterFlags.length > 0 ? " active" : ""}`}
+                type="button"
+                aria-label={`${t("filters")}${rosterFlags.length ? `: ${rosterFlags.length}` : ""}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setRosterFilterOpen(true);
+                }}
+              >
+                <SlidersHorizontal size={18} />
+                {rosterFlags.length > 0 ? <span className="header-filter-count">{rosterFlags.length}</span> : null}
+              </button>
+            ) : null}
           </span>
         </label>
+        {rosterFlags.length > 0 ? (
+          <div className="student-active-filters" aria-label={t("filters")}>
+            {rosterFlags.map((flag) => (
+              <button key={flag} type="button" className="filter-chip active" onClick={() => setRosterFlags((current) => current.filter((item) => item !== flag))}>
+                {rosterFlagLabel(flag, t)} <X size={12} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {rosterFilterOpen ? (
+          <StudentRosterFilterSheet
+            flags={rosterFlags}
+            library={showingLibraryStudents}
+            onApply={(next) => {
+              setRosterFlags(next);
+              setRosterFilterOpen(false);
+            }}
+            onClose={() => setRosterFilterOpen(false)}
+          />
+        ) : null}
         <div className={`library-student-list-scroll ${listMode === "live" && showingLibraryStudents ? "library-live-student-grid" : "space-y-4"}`}>
           {visibleStudents.map((student) => {
             if (listMode === "live") {
@@ -8784,6 +8937,48 @@ function LibraryStudentsView({
                 />
               ) : null}
 
+              {!editingStudent && drawerView === "refund" && drawerKind && Number(drawerAdvance ?? 0) > 0 ? (
+                <section className="student-subscription-step">
+                  <div className="student-subscription-step-intro">
+                    <ArrowUp size={18} />
+                    <div><h3>{t("returnAdvance")}</h3><p>#{drawerRollNumber} · {drawerName} · {t("advance")} {displayMoneyValue(drawerAdvance)}</p></div>
+                  </div>
+                  <form
+                    className="form-grid two"
+                    onSubmit={(event) => submitAndClose(event, refundStudentAdvanceAction, setNotice, startTransition, () => setDrawerView("details"))}
+                  >
+                    <input type="hidden" name="student_type" value={drawerKind} />
+                    <input type="hidden" name="student_id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                    <div className="form-pair full-span">
+                      <label>
+                        {t("amount")}
+                        <input name="amount" type="number" min="1" step="1" max={Number(drawerAdvance ?? 0)} defaultValue={Number(drawerAdvance ?? 0)} required />
+                      </label>
+                      <label>
+                        {t("mode")}
+                        <select name="mode" defaultValue="cash">
+                          <option value="cash">{t("cash")}</option>
+                          <option value="online">{t("online")}</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label className="full-span">
+                      {t("date")}
+                      <input name="refund_date" type="date" defaultValue={todayIso()} max={todayIso()} required />
+                    </label>
+                    <label className="full-span">
+                      {t("note")}
+                      <input name="note" placeholder={t("optional")} />
+                    </label>
+                    <p className="date-filter-note full-span">{t("returnAdvanceHelp")}</p>
+                    <div className="full-span student-subscription-edit-actions">
+                      <button className="secondary-button" type="button" onClick={() => setDrawerView("details")}>{t("cancel")}</button>
+                      <button className="primary-button" type="submit">{t("returnAdvance")}</button>
+                    </div>
+                  </form>
+                </section>
+              ) : null}
+
               {!editingStudent && drawerView === "subscription" && selectedStudent ? (
                 <section className="student-subscription-step">
                   <div className="student-subscription-step-intro">
@@ -8834,8 +9029,21 @@ function LibraryStudentsView({
               ) : null}
             </div>
 
-            {!editingStudent && drawerView !== "subscription" ? (
-              <footer className="student-drawer-footer">
+            {!editingStudent && drawerView !== "subscription" && drawerView !== "refund" ? (
+              <footer className={`student-drawer-footer${Number(drawerAdvance ?? 0) > 0 ? " with-refund" : ""}`}>
+                {Number(drawerAdvance ?? 0) > 0 ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setConfirmingStatus(false);
+                      setDrawerView("refund");
+                    }}
+                  >
+                    <ArrowUp size={18} />
+                    {t("returnAdvance")}
+                  </button>
+                ) : null}
                 <button
                   className="primary-button"
                   type="button"
@@ -9226,6 +9434,28 @@ function PaymentForm({
   const [onlineCollection, setOnlineCollection] = useState("");
   const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? initialCoursePrefill?.startTime ?? "06:00");
   const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? initialCoursePrefill?.endTime ?? "07:00");
+  // Library "Full time" = the whole opening day (7 AM - 10 PM); while ticked the times are locked.
+  const libraryFullTime = startTime === libraryFullTimeStart && endTime === libraryFullTimeEnd;
+  const timesBeforeFullTimeRef = useRef<{ start: string; end: string } | null>(null);
+  const toggleLibraryFullTime = (checked: boolean) => {
+    if (checked) {
+      timesBeforeFullTimeRef.current = { start: startTime, end: endTime };
+      setStartTime(libraryFullTimeStart);
+      setEndTime(libraryFullTimeEnd);
+      return;
+    }
+    const previous = timesBeforeFullTimeRef.current;
+    const restorable = previous && !(previous.start === libraryFullTimeStart && previous.end === libraryFullTimeEnd);
+    setStartTime(restorable ? previous.start : "06:00");
+    setEndTime(restorable ? previous.end : "07:00");
+  };
+  const libraryFullTimeToggle = (
+    <label className="full-time-toggle full-span">
+      <input type="checkbox" checked={libraryFullTime} onChange={(event) => toggleLibraryFullTime(event.target.checked)} />
+      <span>{t("fullTime")}</span>
+      <small>7:00 AM – 10:00 PM</small>
+    </label>
+  );
   const [selectedCourseId, setSelectedCourseId] = useState(initialCourse?.id ?? "");
   const [courseMemberMode, setCourseMemberMode] = useState<LibraryMemberMode | null>(initialCoursePrefill ? "existing" : initialMemberMode ?? null);
   const [courseSearch, setCourseSearch] = useState(initialCoursePrefill?.searchLabel ?? "");
@@ -9753,6 +9983,7 @@ function PaymentForm({
                   required
                 />
               </label>
+              {libraryFullTimeToggle}
               <label>
                 {t("startTime")}
                 <input
@@ -9763,6 +9994,7 @@ function PaymentForm({
                   step="3600"
                   value={startTime}
                   onChange={(event) => setStartTime(event.target.value)}
+                  readOnly={libraryFullTime}
                   required
                 />
               </label>
@@ -9776,6 +10008,7 @@ function PaymentForm({
                   step="3600"
                   value={endTime}
                   onChange={(event) => setEndTime(event.target.value)}
+                  readOnly={libraryFullTime}
                   required
                 />
               </label>
@@ -10014,6 +10247,7 @@ function PaymentForm({
                       </label>
                     </>
                   ) : null}
+                  {libraryFullTimeToggle}
                   <label>
                     {t("startTime")}
                     <input
@@ -10024,6 +10258,7 @@ function PaymentForm({
                       step="3600"
                       value={startTime}
                       onChange={(event) => setStartTime(event.target.value)}
+                      readOnly={libraryFullTime}
                       required
                     />
                   </label>
@@ -10037,6 +10272,7 @@ function PaymentForm({
                       step="3600"
                       value={endTime}
                       onChange={(event) => setEndTime(event.target.value)}
+                      readOnly={libraryFullTime}
                       required
                     />
                   </label>
@@ -10367,48 +10603,54 @@ function PaymentForm({
               />
             </label>
           )}
-          <label>
-            {t("dues")}
-            <input value={dues} readOnly />
-          </label>
-          <label>
-            {t("advance")}
-            <input value={advance} readOnly />
-          </label>
+          <div className="form-pair full-span">
+            <label>
+              {t("dues")}
+              <input value={dues} readOnly />
+            </label>
+            <label>
+              {t("advance")}
+              <input value={advance} readOnly />
+            </label>
+          </div>
         </>
       ) : null}
 
       {(type === "course" && coursePaymentFieldsReady && !collectingCourseDues)
         || (type === "library" && libraryPaymentFieldsReady && !collectingLibraryDues) ? (
         <>
-          <label>
-            {t("fee")}
-            <input name="fee_amount" type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />
-          </label>
-          {mode === "mixed" ? (
-            <input type="hidden" name="paid_amount" value={splitCollectionNumber} />
-          ) : (
+          <div className="form-pair full-span">
             <label>
-              {t("paid")}
-              <input
-                name="paid_amount"
-                type="number"
-                min="0"
-                step="1"
-                value={paid}
-                onChange={(event) => setPaid(event.target.value)}
-                required
-              />
+              {t("fee")}
+              <input name="fee_amount" type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />
             </label>
-          )}
-          <label>
-            {t("dues")}
-            <input value={dues} readOnly />
-          </label>
-          <label>
-            {t("advance")}
-            <input value={advance} readOnly />
-          </label>
+            {mode === "mixed" ? (
+              <input type="hidden" name="paid_amount" value={splitCollectionNumber} />
+            ) : (
+              <label>
+                {t("paid")}
+                <input
+                  name="paid_amount"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={paid}
+                  onChange={(event) => setPaid(event.target.value)}
+                  required
+                />
+              </label>
+            )}
+          </div>
+          <div className="form-pair full-span">
+            <label>
+              {t("dues")}
+              <input value={dues} readOnly />
+            </label>
+            <label>
+              {t("advance")}
+              <input value={advance} readOnly />
+            </label>
+          </div>
         </>
       ) : null}
 

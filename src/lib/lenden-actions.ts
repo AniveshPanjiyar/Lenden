@@ -2789,6 +2789,126 @@ const handlers = {
     return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
   }),
 
+  refundStudentAdvance: withErrors("Could not return the advance.", async (formData, { admin, profile, idempotencyKey }) => {
+    if (isBusinessSalesAgent(profile.businessRole)) {
+      return fail("Sales agents have read-only incentive access.");
+    }
+    const studentType: "library" | "course" = asString(formData, "student_type") === "course" ? "course" : "library";
+    const studentId = studentType === "library"
+      ? normalizeLibraryStudentId(asString(formData, "student_id"))
+      : asString(formData, "student_id");
+    const amount = asNumber(formData, "amount") ?? 0;
+    const mode: PaymentMode = asString(formData, "mode") === "online" ? "online" : "cash";
+    const refundDate = asString(formData, "refund_date") ?? dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const ownerCreated = isBusinessOwner(profile.businessRole);
+    if (!studentId) return fail("Open the student again before returning the advance.");
+    if (amount <= 0) return fail("Enter the amount to return.");
+    if (!isIsoDate(refundDate)) return fail("Choose a valid date.");
+    if (refundDate > dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined)) {
+      return fail("A return cannot be dated in the future.");
+    }
+    if (studentType === "library") {
+      await requireLibraryCollectionAccess(admin, profile);
+    } else if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
+      return fail("You do not have access to course students.");
+    }
+
+    const studentTable = studentType === "library" ? "library_students" : "course_students";
+    const studentResponse = await admin
+      .from(studentTable)
+      .select("id,roll_number,student_name,advance_amount,paid_amount")
+      .eq("id", studentId)
+      .eq("business_id", profile.businessId)
+      .maybeSingle();
+    if (studentResponse.error) throw new Error(studentResponse.error.message);
+    const student = typedData<{
+      id: string;
+      roll_number: string | null;
+      student_name: string | null;
+      advance_amount: number | string | null;
+      paid_amount: number | string | null;
+    }>(studentResponse);
+    if (!student) return fail("Student was not found.");
+
+    const existingExpense = await existingByClientRequest<{ id: string }>(
+      admin,
+      "expenses",
+      "spent_by",
+      profile.id,
+      requestKey,
+      "id",
+    );
+    if (existingExpense) return ok(ownerCreated ? "Advance returned." : "Advance return saved as pending approval.");
+
+    const advance = Math.max(Number(student.advance_amount ?? 0), 0);
+    if (moneyToCents(amount) > moneyToCents(advance)) {
+      return fail(`You can return at most ${advance}.`);
+    }
+
+    // The refund is money going out of the unit: record it as an expense for the usual approval / custody flow.
+    const description = `Advance returned · Roll ${student.roll_number ?? "-"} · ${student.student_name ?? ""}`.trim();
+    const expenseResult = await admin
+      .from("expenses")
+      .insert({
+        business_type: studentType,
+        mode,
+        amount,
+        expense_date: refundDate,
+        description,
+        remark: asString(formData, "note"),
+        spent_by: profile.id,
+        approval_status: ownerCreated ? "approved" : "pending",
+        posted_on: ownerCreated ? refundDate : null,
+        approved_at: ownerCreated ? new Date().toISOString() : null,
+        approved_by: ownerCreated ? profile.id : null,
+        client_request_id: requestKey,
+      })
+      .select("id")
+      .single();
+    const expense = typedData<{ id: string }>(expenseResult);
+    if (expenseResult.error || !expense) {
+      throw new Error(expenseResult.error?.message ?? "Could not record the returned advance.");
+    }
+
+    if (ownerCreated && mode === "cash") {
+      await ensureLedgerEntry(admin, {
+        accountProfileId: profile.id,
+        businessType: studentType,
+        amount: -amount,
+        entryDate: refundDate,
+        sourceType: "expense",
+        sourceId: expense.id,
+        description: `Expense: ${description}`,
+        createdBy: profile.id,
+      });
+    }
+
+    const studentUpdate = await admin
+      .from(studentTable)
+      .update({
+        advance_amount: Math.max(advance - amount, 0),
+        paid_amount: Math.max(Number(student.paid_amount ?? 0) - amount, 0),
+      })
+      .eq("id", student.id);
+    if (studentUpdate.error) throw new Error(studentUpdate.error.message);
+
+    if (!ownerCreated) {
+      await createNotifications(admin, {
+        recipientIds: await ownerRecipientIds(admin, profile.businessId, profile.id, studentType, profile.id),
+        actorId: profile.id,
+        title: "Advance returned",
+        body: `${profile.full_name} returned ${amount} advance: ${description}.`,
+        category: "expense",
+        tone: "warning",
+        eventKey: `advance-returned:${expense.id}`,
+        metadata: { expense_id: expense.id, amount },
+      });
+    }
+
+    return ok(ownerCreated ? "Advance returned." : "Advance return saved as pending approval.");
+  }),
+
   approveRecord: withErrors("Approval failed.", async (formData, { admin, profile }) => {
     requireBusinessOwner(profile.businessRole);
     const recordType = asString(formData, "record_type");

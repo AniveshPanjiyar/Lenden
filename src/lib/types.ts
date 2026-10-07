@@ -735,6 +735,8 @@ export type StudentRosterPayload = {
   sourceId: string;
   status: "active" | "live" | "inactive" | "all";
   result: PageResult<LibraryStudent | CourseStudent>;
+  /** Tab badges: totals per status with the active filter flags applied (search ignored). */
+  counts?: { active: number; live: number; inactive: number };
   libraryStudents: LibraryStudent[];
   courseStudents: CourseStudent[];
   payments: Payment[];
@@ -813,3 +815,5 @@ export type PendingApprovalsPayload = {
   payments: Payment[];
   expenses: Expense[];
 };
+
+export type StudentRosterFlag = "full_time" | "seat" | "locker" | "expiring";

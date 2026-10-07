@@ -37,6 +37,7 @@ export async function GET(
       ? await getStudentRosterPage(context, viewState, {
           cursor: url.searchParams.get("cursor"),
           search: url.searchParams.get("studentSearch"),
+          flags: url.searchParams.get("studentFlags"),
           limit: Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100,
         })
       : operationalPagePayload(tab, await getDashboardData(context, identity, viewState));

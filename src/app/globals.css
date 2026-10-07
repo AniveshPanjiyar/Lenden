@@ -11483,3 +11483,41 @@ html, body { overflow-x: clip; overscroll-behavior: none; }
 @media (max-width: 720px) {
   .library-student-list-card.with-whatsapp { min-height: 124px; }
 }
+
+/* Payment form: Fee | Paid and Dues | Advance stay side by side, even on phones. */
+.form-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.form-pair > label { min-width: 0; }
+
+/* Library "Full time" (7 AM - 10 PM) toggle above the time fields. */
+.full-time-toggle {
+  display: flex !important; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(47, 111, 94, 0.06); cursor: pointer; font-weight: 800;
+}
+.full-time-toggle input { width: 20px; height: 20px; min-height: 0; accent-color: var(--brand, #2f6f5e); }
+.full-time-toggle small { color: var(--muted); font-weight: 700; }
+input[readonly][type="time"] { opacity: 0.75; }
+
+/* Students page: search + filter button, active filter chips, tab counts. */
+.student-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.student-filter-button {
+  position: relative; display: inline-grid; place-items: center; width: 46px; height: 46px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-solid, #fffdf8);
+  color: var(--foreground); cursor: pointer;
+}
+.student-filter-button.active { border-color: var(--brand, #2f6f5e); color: var(--brand, #2f6f5e); }
+.student-filter-button .header-filter-count { position: absolute; top: -6px; right: -6px; }
+.student-active-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.student-active-filters .filter-chip { display: inline-flex; align-items: center; gap: 4px; }
+.student-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.student-filter-chips .filter-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; }
+.filter-chip-count {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-left: 6px; padding: 0 6px;
+  border-radius: 999px; background: rgba(46, 50, 48, 0.1); font-size: 11px; font-weight: 900; line-height: 1;
+}
+.filter-chip.active .filter-chip-count { background: rgba(255, 255, 255, 0.25); }
+
+/* Student profile footer: Return advance next to Add subscription / Collect due. */
+.student-drawer-footer.with-refund { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.student-drawer-footer.with-refund > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.form-pair input, .form-pair select { width: 100%; min-width: 0; }

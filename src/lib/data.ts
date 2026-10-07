@@ -11,6 +11,7 @@ import type {
   BusinessType,
   BusinessContext,
   PendingApprovalsPayload,
+  StudentRosterFlag,
   BusinessMembership,
   BusinessRole,
   CashBalanceSummary,
@@ -948,10 +949,48 @@ export async function getStudentCollectionPage(
   };
 }
 
+const studentRosterFlags = ["full_time", "seat", "locker", "expiring"] as const satisfies StudentRosterFlag[];
+const expiringSoonDays = 7;
+
+function parseStudentRosterFlags(value: string | null | undefined): StudentRosterFlag[] {
+  const requested = new Set((value ?? "").split(",").map((flag) => flag.trim()));
+  return studentRosterFlags.filter((flag) => requested.has(flag));
+}
+
+function timeOfDayInZone(timeZone: string | undefined) {
+  return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
+}
+
+function addDaysIsoDate(isoDate: string, days: number) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Apply the Students page filter chips to a library / course roster query. */
+function applyStudentRosterFlags<Q extends {
+  eq: (column: string, value: unknown) => Q;
+  neq: (column: string, value: unknown) => Q;
+  not: (column: string, operator: string, value: unknown) => Q;
+  gte: (column: string, value: unknown) => Q;
+  lte: (column: string, value: unknown) => Q;
+}>(query: Q, flags: StudentRosterFlag[], source: "library" | "course", today: string) {
+  let next = query;
+  if (flags.includes("full_time")) next = next.eq("start_time", "07:00").eq("end_time", "22:00");
+  if (flags.includes("expiring")) {
+    next = next.gte("subscription_end_date", today).lte("subscription_end_date", addDaysIsoDate(today, expiringSoonDays));
+  }
+  if (source === "library") {
+    if (flags.includes("seat")) next = next.not("seat_number", "is", null).neq("seat_number", "");
+    if (flags.includes("locker")) next = next.not("locker_number", "is", null).neq("locker_number", "");
+  }
+  return next;
+}
+
 export async function getStudentRosterPage(
   businessContext: BusinessContext,
   viewState: AppViewState,
-  options: { cursor?: string | null; search?: string | null; limit?: number } = {},
+  options: { cursor?: string | null; search?: string | null; limit?: number; flags?: string | null } = {},
 ): Promise<StudentRosterPayload> {
   const sourceId = viewState.studentFilters.sourceId;
   const status = viewState.studentFilters.status;
@@ -962,7 +1001,28 @@ export async function getStudentRosterPage(
   const limit = Math.min(Math.max(options.limit ?? 100, 15), 200);
   const search = rosterSearchTerm(options.search ?? null);
   const active = status !== "inactive";
+  const flags = parseStudentRosterFlags(options.flags);
+  const timeZone = businessContext.business.timezone || undefined;
+  const today = dateIsoInTimeZone(new Date(), timeZone);
+  const nowTime = timeOfDayInZone(timeZone);
   const supabase = await createClient({ businessId: businessContext.business.id });
+
+  // Tab badges: Active / Live (inside today's time slot now) / Inactive, honouring the filter chips.
+  const rosterCounts = async (table: "library_students" | "course_students", source: "library" | "course", scope: (query: ReturnType<typeof countQuery>) => ReturnType<typeof countQuery>) => {
+    const runCount = async (build: (query: ReturnType<typeof countQuery>) => ReturnType<typeof countQuery>) => {
+      const result = await build(scope(applyStudentRosterFlags(countQuery(table), flags, source, today)));
+      return result.count ?? 0;
+    };
+    const [activeCount, liveCount, inactiveCount] = await Promise.all([
+      runCount((query) => query.eq("active", true)),
+      runCount((query) => query.eq("active", true).lte("start_time", nowTime).gt("end_time", nowTime)),
+      runCount((query) => query.eq("active", false)),
+    ]);
+    return { active: activeCount, live: liveCount, inactive: inactiveCount };
+  };
+  function countQuery(table: "library_students" | "course_students") {
+    return supabase.from(table).select("id", { count: "exact", head: true }).eq("business_id", businessContext.business.id);
+  }
 
   if (sourceId === "library") {
     if (isBusinessSalesAgent(role) || (!ownerish && !accessible.has("library")) || !businessContext.enabledModules.includes("library")) {
@@ -973,6 +1033,7 @@ export async function getStudentRosterPage(
       .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
       .eq("placeholder", false);
+    query = applyStudentRosterFlags(query, flags, "library", today);
     if (status !== "all") query = query.eq("active", active);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     if (status === "all") query = query.order("active", { ascending: false });
@@ -997,7 +1058,8 @@ export async function getStudentRosterPage(
     }));
     const total = searchPage ? searchPage.total : result.count ?? items.length;
     const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
-    return { page: "students", sourceId, status, result: { items, nextCursor, total }, libraryStudents: items, courseStudents: [], payments: [], notifications: [] };
+    const counts = await rosterCounts("library_students", "library", (countBase) => countBase.eq("placeholder", false));
+    return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: items, courseStudents: [], payments: [], notifications: [] };
   }
 
   const [, sourceCourseId] = sourceId.split(":", 2);
@@ -1009,6 +1071,7 @@ export async function getStudentRosterPage(
     .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
     .eq("source_course_id", sourceCourseId);
+  query = applyStudentRosterFlags(query, flags, "course", today);
   if (status !== "all") query = query.eq("active", active);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   if (status === "all") query = query.order("active", { ascending: false });
@@ -1031,7 +1094,8 @@ export async function getStudentRosterPage(
   }));
   const total = searchPage ? searchPage.total : result.count ?? items.length;
   const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
-  return { page: "students", sourceId, status, result: { items, nextCursor, total }, libraryStudents: [], courseStudents: items, payments: [], notifications: [] };
+  const counts = await rosterCounts("course_students", "course", (countBase) => countBase.eq("source_course_id", sourceCourseId));
+  return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: [], courseStudents: items, payments: [], notifications: [] };
 }
 
 export async function getAppData(

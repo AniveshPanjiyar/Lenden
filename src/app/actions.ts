@@ -28,6 +28,7 @@ const financialActions = new Set<LendenActionName>([
   "saveLibraryStudent",
   "setStudentStatus",
   "updateSubscription",
+  "refundStudentAdvance",
   "saveCourseStudent",
   "createExpense",
   "approveRecord",
@@ -343,6 +344,10 @@ export async function setStudentStatusAction(formData: FormData): Promise<Action
 
 export async function updateSubscriptionAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("updateSubscription", formData);
+}
+
+export async function refundStudentAdvanceAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("refundStudentAdvance", formData);
 }
 
 export async function saveCourseStudentAction(formData: FormData): Promise<ActionResult> {
