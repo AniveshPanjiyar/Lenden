@@ -757,6 +757,38 @@ export async function getStudentDetail(
     : { source, student: signedStudent as CourseStudent };
 }
 
+/** Search is mostly by roll number: exact roll, then roll prefix, then roll contains, then the rest. */
+function rollSearchRank(rollNumber: string | null | undefined, search: string) {
+  const roll = (rollNumber ?? "").trim().replace(/\.0+$/, "").toLowerCase();
+  const term = search.trim().toLowerCase();
+  if (!term || !roll) return 3;
+  if (roll === term) return 0;
+  if (roll.startsWith(term)) return 1;
+  if (roll.includes(term)) return 2;
+  return 3;
+}
+
+const rosterSearchCap = 300;
+
+/** Rank a search's matches (roll number first) and page them in memory. */
+function rankedSearchPage<T>(
+  rows: T[],
+  search: string,
+  rollOf: (row: T) => string | null | undefined,
+  offset: number,
+  limit: number,
+  activeFirst: ((row: T) => boolean) | null,
+) {
+  const ranked = rows
+    .map((row, index) => ({ row, index, rank: rollSearchRank(rollOf(row), search) }))
+    .sort((a, b) =>
+      a.rank - b.rank
+      || (activeFirst ? Number(activeFirst(b.row)) - Number(activeFirst(a.row)) : 0)
+      || a.index - b.index)
+    .map((entry) => entry.row);
+  return { items: ranked.slice(offset, offset + limit), total: ranked.length };
+}
+
 function rosterSearchTerm(value: string | null) {
   return value?.trim().replace(/[%_,().]/g, " ").replace(/\s+/g, " ").slice(0, 80) ?? "";
 }
@@ -856,9 +888,13 @@ export async function getStudentCollectionPage(
       .order("subscription_end_date", { ascending: true, nullsFirst: false })
       .order("roll_number")
       .order("id")
-      .range(offset, offset + limit - 1);
+      .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
-    const rawStudents = (result.data ?? []) as LibraryStudent[];
+    const fetchedStudents = (result.data ?? []) as LibraryStudent[];
+    const searchPage = search
+      ? rankedSearchPage(fetchedStudents, search, collectionDisplayRollNumber, offset, limit, (student) => student.active)
+      : null;
+    const rawStudents = searchPage ? searchPage.items : fetchedStudents;
     const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawStudents.map((student) => student.photo_url));
     const students = rawStudents.map((student) => ({
       ...student,
@@ -868,7 +904,7 @@ export async function getStudentCollectionPage(
       status_note: null,
       metadata: {},
     }));
-    const total = result.count ?? students.length;
+    const total = searchPage ? searchPage.total : result.count ?? students.length;
     return {
       items: students.map((student) => ({ source: "library" as const, student })),
       nextCursor: offset + students.length < total ? String(offset + students.length) : null,
@@ -889,9 +925,13 @@ export async function getStudentCollectionPage(
     .order("subscription_end_date", { ascending: true, nullsFirst: false })
     .order("roll_number")
     .order("id")
-    .range(offset, offset + limit - 1);
+    .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
-  const rawStudents = (result.data ?? []) as CourseStudent[];
+  const fetchedStudents = (result.data ?? []) as CourseStudent[];
+  const searchPage = search
+    ? rankedSearchPage(fetchedStudents, search, (student) => student.roll_number, offset, limit, (student) => student.active)
+    : null;
+  const rawStudents = searchPage ? searchPage.items : fetchedStudents;
   const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawStudents.map((student) => student.photo_url));
   const students = rawStudents.map((student) => ({
     ...student,
@@ -899,7 +939,7 @@ export async function getStudentCollectionPage(
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
   }));
-  const total = result.count ?? students.length;
+  const total = searchPage ? searchPage.total : result.count ?? students.length;
   return {
     items: students.map((student) => ({ source: "course" as const, student })),
     nextCursor: offset + students.length < total ? String(offset + students.length) : null,
@@ -936,9 +976,16 @@ export async function getStudentRosterPage(
     if (status !== "all") query = query.eq("active", active);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     if (status === "all") query = query.order("active", { ascending: false });
-    const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
+    const result = await query
+      .order("subscription_end_date")
+      .order("roll_number")
+      .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
-    const rawItems = (result.data ?? []) as LibraryStudent[];
+    const fetchedItems = (result.data ?? []) as LibraryStudent[];
+    const searchPage = search
+      ? rankedSearchPage(fetchedItems, search, collectionDisplayRollNumber, offset, limit, status === "all" ? (student) => student.active : null)
+      : null;
+    const rawItems = searchPage ? searchPage.items : fetchedItems;
     const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawItems.map((student) => student.photo_url));
     const items = rawItems.map((student) => ({
       ...student,
@@ -948,7 +995,7 @@ export async function getStudentRosterPage(
       status_note: null,
       metadata: {},
     }));
-    const total = result.count ?? items.length;
+    const total = searchPage ? searchPage.total : result.count ?? items.length;
     const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
     return { page: "students", sourceId, status, result: { items, nextCursor, total }, libraryStudents: items, courseStudents: [], payments: [], notifications: [] };
   }
@@ -965,9 +1012,16 @@ export async function getStudentRosterPage(
   if (status !== "all") query = query.eq("active", active);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   if (status === "all") query = query.order("active", { ascending: false });
-  const result = await query.order("subscription_end_date").order("roll_number").range(offset, offset + limit - 1);
+  const result = await query
+    .order("subscription_end_date")
+    .order("roll_number")
+    .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
-  const rawItems = (result.data ?? []) as CourseStudent[];
+  const fetchedItems = (result.data ?? []) as CourseStudent[];
+  const searchPage = search
+    ? rankedSearchPage(fetchedItems, search, (student) => student.roll_number, offset, limit, status === "all" ? (student) => student.active : null)
+    : null;
+  const rawItems = searchPage ? searchPage.items : fetchedItems;
   const photoUrls = await signedStorageUrlMap(supabase, "library-student-photos", rawItems.map((student) => student.photo_url));
   const items = rawItems.map((student) => ({
     ...student,
@@ -975,7 +1029,7 @@ export async function getStudentRosterPage(
     aadhar_photo_url: null,
     aadhar_back_photo_url: null,
   }));
-  const total = result.count ?? items.length;
+  const total = searchPage ? searchPage.total : result.count ?? items.length;
   const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
   return { page: "students", sourceId, status, result: { items, nextCursor, total }, libraryStudents: [], courseStudents: items, payments: [], notifications: [] };
 }

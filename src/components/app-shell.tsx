@@ -6924,6 +6924,17 @@ function studentWhatsAppHref(phoneNumber: string | null | undefined, message: st
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
 
+/** Search is mostly by roll number: exact roll, then roll prefix, then roll contains, then the rest. */
+function rollSearchRank(rollNumber: string | null | undefined, search: string) {
+  const roll = (rollNumber ?? "").trim().replace(/\.0+$/, "").toLowerCase();
+  const term = search.trim().toLowerCase();
+  if (!term || !roll) return 3;
+  if (roll === term) return 0;
+  if (roll.startsWith(term)) return 1;
+  if (roll.includes(term)) return 2;
+  return 3;
+}
+
 function studentPhoneHref(phoneNumber: string | null | undefined) {
   const normalized = phoneNumber?.trim().replace(/[^\d+]/g, "");
   return normalized ? `tel:${normalized}` : null;
@@ -8182,9 +8193,11 @@ function LibraryStudentsView({
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(normalizedQuery));
     })
-    .sort((a, b) => {
-      return compareLibraryStudentsByExpiry(a, b, t);
-    }) : [];
+    .sort((a, b) =>
+      // Searches are mostly by roll number: roll matches first, then the usual expiry order.
+      (normalizedQuery ? rollSearchRank(studentDisplayRollNumber(a), normalizedQuery) - rollSearchRank(studentDisplayRollNumber(b), normalizedQuery) : 0)
+      || (listMode === "all" ? Number(b.active) - Number(a.active) : 0)
+      || compareLibraryStudentsByExpiry(a, b, t)) : [];
   const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
     .filter((record) => {
       if (!normalizedQuery) return true;
@@ -8192,7 +8205,10 @@ function LibraryStudentsView({
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(normalizedQuery));
     })
-    .sort((a, b) => compareCourseStudentRecordsByExpiry(a, b, t));
+    .sort((a, b) =>
+      (normalizedQuery ? rollSearchRank(a.rollNumber, normalizedQuery) - rollSearchRank(b.rollNumber, normalizedQuery) : 0)
+      || (listMode === "all" ? Number(b.active) - Number(a.active) : 0)
+      || compareCourseStudentRecordsByExpiry(a, b, t));
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
