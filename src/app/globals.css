@@ -11521,3 +11521,11 @@ input[readonly][type="time"] { opacity: 0.75; }
 .student-drawer-footer.with-refund { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .student-drawer-footer.with-refund > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .form-pair input, .form-pair select { width: 100%; min-width: 0; }
+
+/* Photo fields: save status and remove. */
+.image-upload-preview-card .image-save-ok { color: var(--good, #2f6f5e); font-weight: 800; }
+.image-upload-preview-card .image-save-error { color: var(--bad, #b83230); font-weight: 800; }
+.image-remove-button {
+  width: fit-content; margin-top: 4px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--bad, #b83230); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+}

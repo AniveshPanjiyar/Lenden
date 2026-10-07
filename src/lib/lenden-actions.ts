@@ -2241,6 +2241,48 @@ const handlers = {
     });
   }),
 
+  saveStudentPhoto: withErrors("Could not save the photo.", async (formData, { admin, profile, idempotencyKey }) => {
+    // Photos chosen in a student's profile are saved right away, before the rest of the form.
+    const studentType: "library" | "course" = asString(formData, "student_type") === "course" ? "course" : "library";
+    const field = asString(formData, "field");
+    if (field !== "student_photo" && field !== "aadhar_photo" && field !== "aadhar_back_photo") {
+      return fail("Choose which photo to save.");
+    }
+    const studentId = studentType === "library"
+      ? normalizeLibraryStudentId(asString(formData, "student_id"))
+      : asString(formData, "student_id");
+    if (!studentId) return fail("Save the student first, then add photos.");
+    if (studentType === "library") {
+      await requireLibraryCollectionAccess(admin, profile);
+    } else if (!(await hasBusinessCollectionAccess(admin, profile, "course"))) {
+      return fail("You do not have access to course students.");
+    }
+
+    const table = studentType === "library" ? "library_students" : "course_students";
+    const existing = await admin.from(table).select("id").eq("id", studentId).eq("business_id", profile.businessId).maybeSingle();
+    if (existing.error) throw new Error(existing.error.message);
+    if (!existing.data) return fail("Student was not found.");
+
+    const requestKey = idempotencyKey ?? crypto.randomUUID();
+    const file = formData.get("photo");
+    const uploaded = field === "student_photo"
+      ? await uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, file, requestKey)
+      : await uploadLibraryStudentAadharPhoto(admin, profile.businessId, profile.id, file, requestKey, field === "aadhar_photo" ? "front" : "back");
+    if (uploaded && typeof uploaded === "object" && "ok" in uploaded && !uploaded.ok) return uploaded;
+    if (typeof uploaded !== "string") return fail("Choose a photo to save.");
+
+    const column = field === "student_photo" ? "photo_url" : field === "aadhar_photo" ? "aadhar_photo_url" : "aadhar_back_photo_url";
+    const updated = await admin.from(table).update({ [column]: uploaded }).eq("id", studentId).select("*").single();
+    if (updated.error) throw new Error(updated.error.message);
+
+    if (studentType === "library") {
+      const student = await signedLibraryStudentPatch(admin, updated.data as LibraryStudent);
+      return ok("Photo saved.", { type: "student", studentType: "library", student });
+    }
+    const student = await signedCourseStudentPatch(admin, updated.data as CourseStudent);
+    return ok("Photo saved.", { type: "student", studentType: "course", student });
+  }),
+
   setStudentStatus: withErrors("Could not update student status.", async (formData, { admin, profile, idempotencyKey }) => {
     const studentType = asString(formData, "student_type") === "course" ? "course" : "library";
     let id = asString(formData, "id");

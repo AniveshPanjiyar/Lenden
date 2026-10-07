@@ -72,6 +72,7 @@ import {
   setStudentStatusAction,
   updateSubscriptionAction,
   refundStudentAdvanceAction,
+  saveStudentPhotoAction,
   settleCashAction,
   updateRecordAction,
 } from "@/app/actions";
@@ -369,6 +370,11 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "Camera",
     gallery: "Gallery",
     fullTime: "Full time",
+    savingPhoto: "Saving photo…",
+    photoSaved: "Photo saved",
+    photoSaveFailed: "Could not save the photo. It will be saved with the form.",
+    photoRestored: "Photo restored from last time",
+    remove: "Remove",
     returnAdvance: "Return advance",
     seatAssigned: "Seat assigned",
     lockerAssigned: "Locker assigned",
@@ -866,6 +872,11 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "कैमरा",
     gallery: "गैलरी",
     fullTime: "पूरा समय",
+    savingPhoto: "फोटो सेव हो रही है…",
+    photoSaved: "फोटो सेव हो गई",
+    photoSaveFailed: "फोटो सेव नहीं हुई। फॉर्म के साथ सेव होगी।",
+    photoRestored: "पिछली बार की फोटो वापस लाई गई",
+    remove: "हटाएँ",
     returnAdvance: "एडवांस लौटाएँ",
     seatAssigned: "सीट मिली",
     lockerAssigned: "लॉकर मिला",
@@ -1449,6 +1460,7 @@ const libraryRefreshActions = new Set<ClientAction>([
   setStudentStatusAction,
   updateSubscriptionAction,
   refundStudentAdvanceAction,
+  saveStudentPhotoAction,
 ]);
 
 const workRefreshActions = new Set<ClientAction>([
@@ -7390,6 +7402,58 @@ function StudentRosterFilterSheet({
   );
 }
 
+// New-student photos are kept on the device until the student is saved, so closing the app
+// does not lose them. Drafts expire after a day so an old photo never lands on a new student.
+const photoDraftDbName = "lenden-photo-drafts";
+const photoDraftMaxAgeMs = 24 * 60 * 60 * 1000;
+
+function openPhotoDraftDb() {
+  return new Promise<IDBDatabase | null>((resolve) => {
+    try {
+      const request = indexedDB.open(photoDraftDbName, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("drafts");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function photoDraftRequest<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>) {
+  const db = await openPhotoDraftDb();
+  if (!db) return null;
+  return new Promise<T | null>((resolve) => {
+    try {
+      const request = run(db.transaction("drafts", mode).objectStore("drafts"));
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  }).finally(() => db.close());
+}
+
+function savePhotoDraft(key: string, file: File) {
+  return photoDraftRequest("readwrite", (store) => store.put({ file, name: file.name, type: file.type, savedAt: Date.now() }, key));
+}
+
+async function loadPhotoDraft(key: string) {
+  const draft = await photoDraftRequest<{ file: Blob; name: string; type: string; savedAt: number }>("readonly", (store) => store.get(key));
+  if (!draft) return null;
+  if (Date.now() - draft.savedAt > photoDraftMaxAgeMs) {
+    void deletePhotoDraft(key);
+    return null;
+  }
+  return new File([draft.file], draft.name || "photo.jpg", { type: draft.type || "image/jpeg" });
+}
+
+function deletePhotoDraft(key: string) {
+  return photoDraftRequest("readwrite", (store) => store.delete(key));
+}
+
+const studentRecordIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const libraryFullTimeStart = "07:00";
 const libraryFullTimeEnd = "22:00";
 
@@ -7400,6 +7464,8 @@ function CompressedImageInput({
   displayName = "",
   initialImageUrl,
   variant,
+  autoSave = null,
+  draftKey,
 }: {
   inputName: "student_photo" | "aadhar_photo" | "aadhar_back_photo" | "photo";
   label: string;
@@ -7407,8 +7473,16 @@ function CompressedImageInput({
   displayName?: string;
   initialImageUrl?: string | null;
   variant: "student" | "document";
+  /** Existing student: save each chosen photo to their record straight away. */
+  autoSave?: { studentType: "library" | "course"; studentId: string } | null;
+  /** New-student forms: keep the chosen photo on the device until the form is submitted. */
+  draftKey?: string;
 }) {
   const { t } = useLanguage();
+  const autoSaveTarget = autoSave && studentRecordIdPattern.test(autoSave.studentId) ? autoSave : null;
+  const draftStorageKey = draftKey ? `${draftKey}:${inputName}` : null;
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "restored" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
   // The named input is the one submitted (Gallery). Android opens only the gallery for a plain
   // file input, so a separate capture input takes the photo and hands it over to the named one.
   const inputRef = useRef<HTMLInputElement>(null);
@@ -7439,14 +7513,63 @@ function CompressedImageInput({
       setPreviewUrl(initialImageUrl ?? null);
       setPreparing(false);
       setHasSelectedPhoto(false);
+      setSaveState("idle");
       if (input) preparedPhotoFiles.delete(input);
+      // A submitted (reset) form no longer needs its photo draft.
+      if (draftStorageKey) void deletePhotoDraft(draftStorageKey);
     };
     form?.addEventListener("reset", resetPreview);
     return () => {
       form?.removeEventListener("reset", resetPreview);
       releaseObjectUrl();
     };
-  }, [initialImageUrl]);
+  }, [draftStorageKey, initialImageUrl]);
+
+
+  async function autoSavePhoto(file: File, input: HTMLInputElement) {
+    if (!autoSaveTarget || appIsOffline()) return;
+    setSaveState("saving");
+    setSaveError(null);
+    const formData = new FormData();
+    formData.set("student_type", autoSaveTarget.studentType);
+    formData.set("student_id", autoSaveTarget.studentId);
+    formData.set("field", inputName);
+    formData.set("photo", file);
+    formData.set(actionIdempotencyField, crypto.randomUUID());
+    try {
+      const result = await saveStudentPhotoAction(formData);
+      if (!result.ok) {
+        setSaveState("error");
+        setSaveError(result.message);
+        return;
+      }
+      setSaveState("saved");
+      // Already on the student record: the form must not upload it a second time.
+      if (input.files?.[0] && (input.files[0] === file || preparedPhotoFiles.get(input) === file)) {
+        input.value = "";
+        preparedPhotoFiles.delete(input);
+      }
+      window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(mutationCommittedEvent, {
+        detail: { scope: "dashboard-library", savingMessageKey: "savingChanges", patch: result.patch },
+      }));
+    } catch (error) {
+      setSaveState("error");
+      setSaveError(error instanceof Error ? error.message : t("photoSaveFailed"));
+    }
+  }
+
+  function removePhoto() {
+    const input = inputRef.current;
+    if (input) {
+      input.value = "";
+      preparedPhotoFiles.delete(input);
+    }
+    releaseObjectUrl();
+    setPreviewUrl(initialImageUrl ?? null);
+    setHasSelectedPhoto(false);
+    setSaveState("idle");
+    if (draftStorageKey) void deletePhotoDraft(draftStorageKey);
+  }
 
   // Every new photo (camera or gallery) goes through the crop step first.
   function handleCameraPhoto(cameraInput: HTMLInputElement) {
@@ -7485,19 +7608,21 @@ function CompressedImageInput({
     if (input && !hasSelectedPhoto) input.value = "";
   }
 
-  function handlePhotoChange(input: HTMLInputElement) {
+  function handlePhotoChange(input: HTMLInputElement, options: { restored?: boolean } = {}) {
     const file = input.files?.[0];
     if (!file) {
       preparedPhotoFiles.delete(input);
       releaseObjectUrl();
       setPreviewUrl(initialImageUrl ?? null);
       setHasSelectedPhoto(false);
+      setSaveState("idle");
       return;
     }
 
     showFilePreview(file);
     preparedPhotoFiles.delete(input);
     setHasSelectedPhoto(true);
+    setSaveState(options.restored ? "restored" : "idle");
     setPreparing(true);
     const preparation = compressUploadImage(file)
       .then((preparedFile) => {
@@ -7506,6 +7631,9 @@ function CompressedImageInput({
           preparedPhotoFiles.set(input, preparedFile);
           showFilePreview(preparedFile);
         }
+        const finalFile = preparedFile ?? file;
+        if (autoSaveTarget) void autoSavePhoto(finalFile, input);
+        else if (draftStorageKey && !options.restored) void savePhotoDraft(draftStorageKey, finalFile);
       })
       .finally(() => {
         if (pendingFilePreparations.get(input) === preparation) {
@@ -7515,6 +7643,29 @@ function CompressedImageInput({
       });
     pendingFilePreparations.set(input, preparation);
   }
+
+  // Restore a photo chosen before the app was closed (new-student forms only).
+  useEffect(() => {
+    if (!draftStorageKey) return;
+    let cancelled = false;
+    void loadPhotoDraft(draftStorageKey).then((file) => {
+      const input = inputRef.current;
+      if (cancelled || !file || !input || input.files?.length) return;
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        input.files = transfer.files;
+      } catch {
+        return;
+      }
+      handlePhotoChange(input, { restored: true });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Runs once per draft key; handlePhotoChange is stable enough for a one-off restore.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftStorageKey]);
 
   return (
     <div className={`image-upload-preview-field full-span ${previewUrl ? "has-preview" : "without-preview"}`}>
@@ -7536,7 +7687,22 @@ function CompressedImageInput({
           )}
           <div>
             <strong>{previewLabel}</strong>
-            <span>{preparing ? t("compressingPhoto") : hasSelectedPhoto ? t("photoReady") : label}</span>
+            <span className={saveState === "error" ? "image-save-error" : saveState === "saved" ? "image-save-ok" : undefined}>
+              {preparing
+                ? t("compressingPhoto")
+                : saveState === "saving"
+                  ? t("savingPhoto")
+                  : saveState === "saved"
+                    ? t("photoSaved")
+                    : saveState === "error"
+                      ? saveError ?? t("photoSaveFailed")
+                      : saveState === "restored"
+                        ? t("photoRestored")
+                        : hasSelectedPhoto ? t("photoReady") : label}
+            </span>
+            {hasSelectedPhoto && saveState !== "saved" && saveState !== "saving" ? (
+              <button className="image-remove-button" type="button" onClick={removePhoto}>{t("remove")}</button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -8842,14 +9008,14 @@ function LibraryStudentsView({
                   onSubmit={(event) => submitWith(event, saveLibraryStudentAction, setNotice, startTransition, false, () => setEditingStudent(false))}
                 >
                   <input type="hidden" name="id" value={selectedStudent.id} />
-                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={studentNameInputValue(selectedStudent)} initialImageUrl={selectedStudent.photo_url} variant="student" />
+                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={studentNameInputValue(selectedStudent)} initialImageUrl={selectedStudent.photo_url} variant="student" autoSave={{ studentType: "library", studentId: selectedStudent.id }} />
                   <label>{t("name")}<input name="student_name" defaultValue={studentNameInputValue(selectedStudent)} required /></label>
                   <label>{t("rollNumber")}<input name="roll_number" defaultValue={studentDisplayRollNumber(selectedStudent)} required /></label>
                   <label>{t("phone")}<input name="phone_number" defaultValue={selectedStudent.phone_number ?? ""} inputMode="tel" /></label>
                   <label className="full-span">{t("address")}<input name="address" defaultValue={selectedStudent.address ?? ""} /></label>
                   <label>{t("aadharNumber")}<input name="aadhar_number" defaultValue={selectedStudent.aadhar_number ?? ""} inputMode="numeric" /></label>
-                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedStudent.aadhar_photo_url} variant="document" />
-                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedStudent.aadhar_back_photo_url} variant="document" />
+                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedStudent.aadhar_photo_url} variant="document" autoSave={{ studentType: "library", studentId: selectedStudent.id }} />
+                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedStudent.aadhar_back_photo_url} variant="document" autoSave={{ studentType: "library", studentId: selectedStudent.id }} />
                   <label>{t("seatNumber")}<input name="seat_number" defaultValue={selectedStudent.seat_number ?? ""} /></label>
                   <label>{t("lockerNumber")}<input name="locker_number" defaultValue={selectedStudent.locker_number ?? ""} /></label>
                   <div className="full-span flex flex-wrap gap-2">
@@ -8866,14 +9032,14 @@ function LibraryStudentsView({
                   onSubmit={(event) => submitWith(event, saveCourseStudentAction, setNotice, startTransition, false, () => setEditingStudent(false))}
                 >
                   <input type="hidden" name="payment_id" value={selectedCourseStudent.paymentId ?? ""} />
-                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={drawerName} initialImageUrl={selectedCourseStudent.photoUrl} variant="student" />
+                  <CompressedImageInput inputName="student_photo" label={t("studentPhoto")} previewLabel={t("photoPreview")} displayName={drawerName} initialImageUrl={selectedCourseStudent.photoUrl} variant="student" autoSave={{ studentType: "course", studentId: selectedCourseStudent.id }} />
                   <label>{t("name")}<input name="customer_name" defaultValue={drawerName} required /></label>
                   <label>{t("rollNumber")}<input name="roll_number" defaultValue={selectedCourseStudent.rollNumber ?? ""} required /></label>
                   <label>{t("phone")}<input name="phone_number" defaultValue={selectedCourseStudent.phoneNumber ?? ""} inputMode="tel" /></label>
                   <label className="full-span">{t("address")}<input name="address" defaultValue={selectedCourseStudent.address ?? ""} /></label>
                   <label>{t("aadharNumber")}<input name="aadhar_number" defaultValue={selectedCourseStudent.aadharNumber ?? ""} inputMode="numeric" /></label>
-                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedCourseStudent.aadharPhotoUrl} variant="document" />
-                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedCourseStudent.aadharBackPhotoUrl} variant="document" />
+                  <CompressedImageInput inputName="aadhar_photo" label={t("aadharFront")} previewLabel={t("aadharFrontPreview")} initialImageUrl={selectedCourseStudent.aadharPhotoUrl} variant="document" autoSave={{ studentType: "course", studentId: selectedCourseStudent.id }} />
+                  <CompressedImageInput inputName="aadhar_back_photo" label={t("aadharBack")} previewLabel={t("aadharBackPreview")} initialImageUrl={selectedCourseStudent.aadharBackPhotoUrl} variant="document" autoSave={{ studentType: "course", studentId: selectedCourseStudent.id }} />
                   <label>{t("startDate")}<input name="start_date" type="date" defaultValue={selectedCourseStudent.subscriptionStartDate ?? ""} required /></label>
                   <label>{t("endDate")}<input name="end_date" type="date" defaultValue={selectedCourseStudent.subscriptionEndDate ?? ""} required /></label>
                   <label>{t("startTime")}<input name="start_time" type="time" defaultValue={selectedCourseStudent.startTime?.slice(0, 5) ?? "06:00"} required /></label>
@@ -10171,6 +10337,7 @@ function PaymentForm({
                   </label>
                   <CompressedImageInput
                     inputName="student_photo"
+                    draftKey="library-new-student"
                     label={t("studentPhoto")}
                     previewLabel={t("photoPreview")}
                     displayName={studentName}
@@ -10178,12 +10345,14 @@ function PaymentForm({
                   />
                   <CompressedImageInput
                     inputName="aadhar_photo"
+                    draftKey="library-new-student"
                     label={t("aadharFront")}
                     previewLabel={t("aadharFrontPreview")}
                     variant="document"
                   />
                   <CompressedImageInput
                     inputName="aadhar_back_photo"
+                    draftKey="library-new-student"
                     label={t("aadharBack")}
                     previewLabel={t("aadharBackPreview")}
                     variant="document"
@@ -10474,6 +10643,7 @@ function PaymentForm({
                       </label>
                       <CompressedImageInput
                         inputName="student_photo"
+                        draftKey="course-new-student"
                         label={t("studentPhoto")}
                         previewLabel={t("photoPreview")}
                         displayName={studentName}
@@ -10481,12 +10651,14 @@ function PaymentForm({
                       />
                       <CompressedImageInput
                         inputName="aadhar_photo"
+                        draftKey="course-new-student"
                         label={t("aadharFront")}
                         previewLabel={t("aadharFrontPreview")}
                         variant="document"
                       />
                       <CompressedImageInput
                         inputName="aadhar_back_photo"
+                        draftKey="course-new-student"
                         label={t("aadharBack")}
                         previewLabel={t("aadharBackPreview")}
                         variant="document"
