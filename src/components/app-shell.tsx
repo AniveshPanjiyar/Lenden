@@ -131,6 +131,8 @@ type StudentRecordSource =
 type CourseStudentRecordSource = Extract<StudentRecordSource, { type: "course" }>;
 type CourseStudentRecord = {
   id: string;
+  pausedAt?: string | null;
+  inactiveAt?: string | null;
   paymentId: string | null;
   identityKey: string;
   displayName: string;
@@ -370,6 +372,14 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "Camera",
     gallery: "Gallery",
     fullTime: "Full time",
+    pausedTag: "Paused",
+    markPaused: "Mark paused",
+    changeStatus: "Pause or mark inactive?",
+    pauseOrInactiveHelp: "Paused: back within 45 days with no admission fee (after 45 days it becomes Inactive). Inactive: admission fee applies on return. Profile and history stay unchanged.",
+    admissionFee: "Admission fee",
+    admissionFeeWaived: "No admission fee: paused {days} days ago (within 45 days).",
+    admissionFeeApplies: "Inactive student: admission fee applies.",
+    newStartsToday: "Paused / inactive students start a new subscription from today.",
     savingPhoto: "Saving photo…",
     photoSaved: "Photo saved",
     photoSaveFailed: "Could not save the photo. It will be saved with the form.",
@@ -874,6 +884,14 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "कैमरा",
     gallery: "गैलरी",
     fullTime: "पूरा समय",
+    pausedTag: "रोका गया",
+    markPaused: "रोकें (पॉज़)",
+    changeStatus: "पॉज़ करें या बंद करें?",
+    pauseOrInactiveHelp: "पॉज़: 45 दिन में लौटने पर एडमिशन फीस नहीं (45 दिन बाद बंद हो जाएगा)। बंद: लौटने पर एडमिशन फीस लगेगी। प्रोफाइल और हिसाब वैसा ही रहेगा।",
+    admissionFee: "एडमिशन फीस",
+    admissionFeeWaived: "एडमिशन फीस नहीं: {days} दिन पहले पॉज़ किया (45 दिन के अंदर)।",
+    admissionFeeApplies: "बंद छात्र: एडमिशन फीस लगेगी।",
+    newStartsToday: "पॉज़/बंद छात्र का नया सब्सक्रिप्शन आज से शुरू होगा।",
     savingPhoto: "फोटो सेव हो रही है…",
     photoSaved: "फोटो सेव हो गई",
     photoSaveFailed: "फोटो सेव नहीं हुई। फॉर्म के साथ सेव होगी।",
@@ -7342,6 +7360,29 @@ function ImageCropDialog({
 }
 
 const rosterExpiringSoonDays = 7;
+const studentPauseGraceDays = 45;
+
+/** Paused = inactive but may return within 45 days without an admission fee. */
+function studentPauseState(active: boolean, pausedAt: string | null | undefined) {
+  if (active) return { state: "active" as const, daysLeft: 0 };
+  if (!pausedAt) return { state: "inactive" as const, daysLeft: 0 };
+  const elapsedDays = Math.floor((Date.now() - new Date(pausedAt).getTime()) / 86400000);
+  const daysLeft = studentPauseGraceDays - elapsedDays;
+  return daysLeft > 0 ? { state: "paused" as const, daysLeft } : { state: "inactive" as const, daysLeft: 0 };
+}
+
+/** Inactive tab default order: paused first (latest pause on top), then inactive (longest inactive first). */
+function comparePausedThenInactive(
+  a: { active: boolean; pausedAt?: string | null; inactiveAt?: string | null },
+  b: { active: boolean; pausedAt?: string | null; inactiveAt?: string | null },
+) {
+  const aPaused = studentPauseState(a.active, a.pausedAt).state === "paused";
+  const bPaused = studentPauseState(b.active, b.pausedAt).state === "paused";
+  if (aPaused !== bPaused) return aPaused ? -1 : 1;
+  if (aPaused) return (b.pausedAt ?? "").localeCompare(a.pausedAt ?? "");
+  if (!a.inactiveAt || !b.inactiveAt) return a.inactiveAt ? -1 : b.inactiveAt ? 1 : 0;
+  return a.inactiveAt.localeCompare(b.inactiveAt);
+}
 
 function rosterFlagLabel(flag: StudentRosterFlag, t: (key: string) => string) {
   if (flag === "full_time") return t("fullTime");
@@ -7839,8 +7880,9 @@ function addDaysIsoDate(value: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function subscriptionRenewalDateRange(previousEndDate: string | null | undefined) {
-  if (!previousEndDate) {
+function subscriptionRenewalDateRange(previousEndDate: string | null | undefined, continuesPrevious = true) {
+  // Active students continue from their last end date; paused / inactive ones start today.
+  if (!previousEndDate || !continuesPrevious) {
     return { startDate: todayIso(), endDate: addMonthsIso() };
   }
 
@@ -7854,11 +7896,11 @@ function subscriptionRenewalDateRange(previousEndDate: string | null | undefined
 }
 
 function libraryRenewalDateRange(student: LibraryStudent | null | undefined) {
-  return subscriptionRenewalDateRange(student?.subscription_end_date);
+  return subscriptionRenewalDateRange(student?.subscription_end_date, student?.active !== false);
 }
 
 function courseRenewalDateRange(record: CourseStudentRecord | null | undefined) {
-  return subscriptionRenewalDateRange(record?.subscriptionEndDate);
+  return subscriptionRenewalDateRange(record?.subscriptionEndDate, record?.active !== false);
 }
 
 function rollNumberFromVirtualLibraryStudentId(value: string) {
@@ -8338,6 +8380,8 @@ function courseStudentRecordFromStudent(student: CourseStudent, source: CourseSt
     aadharPhotoUrl: student.aadhar_photo_url,
     aadharBackPhotoUrl: student.aadhar_back_photo_url,
     active: student.active,
+    pausedAt: student.paused_at ?? null,
+    inactiveAt: student.inactive_at ?? null,
   };
 }
 
@@ -8539,7 +8583,12 @@ function LibraryStudentsView({
           ? compareNaturalText(studentDisplayName(a, t), studentDisplayName(b, t))
           : rosterSort === "seat"
             ? compareNaturalText(a.seat_number, b.seat_number)
-            : 0)
+            : listMode === "inactive"
+              ? comparePausedThenInactive(
+                { active: a.active, pausedAt: a.paused_at, inactiveAt: a.inactive_at },
+                { active: b.active, pausedAt: b.paused_at, inactiveAt: b.inactive_at },
+              )
+              : 0)
       || compareLibraryStudentsByExpiry(a, b, t)) : [];
   const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
     .filter((record) => matchesRosterFlags({
@@ -8562,7 +8611,9 @@ function LibraryStudentsView({
         ? compareNaturalText(a.rollNumber, b.rollNumber)
         : rosterSort === "name"
           ? compareNaturalText(courseStudentDisplayName(a, t), courseStudentDisplayName(b, t))
-          : 0)
+          : listMode === "inactive"
+            ? comparePausedThenInactive(a, b)
+            : 0)
       || compareCourseStudentRecordsByExpiry(a, b, t));
 
   useEffect(() => {
@@ -8709,12 +8760,17 @@ function LibraryStudentsView({
   const drawerDues = selectedStudent?.dues_amount ?? selectedCourseStudent?.duesAmount ?? null;
   const drawerAdvance = selectedStudent?.advance_amount ?? selectedCourseStudent?.advanceAmount ?? null;
   const drawerLastPayment = selectedStudent?.last_payment_date ?? selectedCourseStudent?.lastPaymentDate ?? null;
-  const drawerStatusLabel = drawerExpired
-    ? t("expiredSubscription")
-    : drawerActive
-      ? t("active")
-      : t("inactiveStudents");
-  const drawerStatusClass = drawerExpired ? "status-pending" : drawerActive ? "status-approved" : "status-rejected";
+  const drawerPause = studentPauseState(drawerActive, selectedStudent?.paused_at ?? selectedCourseStudent?.pausedAt ?? null);
+  const drawerStatusLabel = drawerPause.state === "paused"
+    ? `${t("pausedTag")} · ${drawerPause.daysLeft} ${t(drawerPause.daysLeft === 1 ? "day" : "days")} ${t("remainingSuffix")}`
+    : !drawerActive
+      ? t("inactiveTag")
+      : drawerExpired
+        ? t("expiredSubscription")
+        : t("active");
+  const drawerStatusClass = drawerPause.state === "paused"
+    ? "status-pending"
+    : !drawerActive ? "status-rejected" : drawerExpired ? "status-pending" : "status-approved";
   const showSourceSelector = variant === "page" || studentSources.length > 1;
   const showStatusFilters = variant === "page";
   const allowCallActions = variant === "page";
@@ -8829,9 +8885,12 @@ function LibraryStudentsView({
               );
             }
 
-            const expiryLabel = student.active
+            const pause = studentPauseState(student.active, student.paused_at);
+            const expiryLabel = pause.state === "active"
               ? libraryExpiryStatusLabel(student, today, t)
-              : `${t("inactiveTag")} · ${libraryExpiryStatusLabel(student, today, t)}`;
+              : pause.state === "paused"
+                ? `${t("pausedTag")} · ${pause.daysLeft} ${t(pause.daysLeft === 1 ? "day" : "days")} ${t("remainingSuffix")}`
+                : `${t("inactiveTag")} · ${libraryExpiryStatusLabel(student, today, t)}`;
             const displayName = studentDisplayName(student, t);
             const rollNumber = studentDisplayRollNumber(student);
             const slotTime = displayTimeRange(student.start_time, student.end_time);
@@ -8859,7 +8918,12 @@ function LibraryStudentsView({
           {visibleCourseStudents.map((record) => {
             const displayName = courseStudentDisplayName(record, t);
             const courseExpired = Boolean(record.subscriptionEndDate && record.subscriptionEndDate < today);
-            const expiryLabel = record.active ? subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t) : t("inactiveTag");
+            const coursePause = studentPauseState(record.active, record.pausedAt);
+            const expiryLabel = coursePause.state === "active"
+              ? subscriptionExpiryStatusLabel(record.subscriptionEndDate, today, t)
+              : coursePause.state === "paused"
+                ? `${t("pausedTag")} · ${coursePause.daysLeft} ${t(coursePause.daysLeft === 1 ? "day" : "days")} ${t("remainingSuffix")}`
+                : t("inactiveTag");
             const timeRange = displayTimeRange(record.startTime, record.endTime);
             const meta = [
               record.courseName,
@@ -9029,36 +9093,40 @@ function LibraryStudentsView({
               {confirmingStatus ? (
                 <section className="student-status-confirmation" role="alertdialog" aria-label={drawerActive ? t("markInactive") : t("reactivate")}>
                   <div>
-                    <strong>{drawerActive ? t("markInactive") : t("reactivate")}?</strong>
+                    <strong>{drawerActive ? t("changeStatus") : `${t("reactivate")}?`}</strong>
                     <p>
                       {drawerActive
-                        ? "The student moves to Inactive. Their profile, subscription history, and payments stay unchanged."
+                        ? t("pauseOrInactiveHelp")
                         : "The student returns to Active with the same profile and subscription history."}
                     </p>
                   </div>
                   <div className="student-status-confirmation-actions">
                     <button className="secondary-button" type="button" onClick={() => setConfirmingStatus(false)}>{t("cancel")}</button>
-                    <form
-                      onSubmit={(event) => submitAndClose(
-                        event,
-                        setStudentStatusAction,
-                        setNotice,
-                        startTransition,
-                        () => {
-                          setQuery("");
-                          setListMode(drawerActive ? "inactive" : "active");
-                          closeStudentDetails();
-                        },
-                      )}
-                    >
-                      <input type="hidden" name="student_type" value={drawerKind} />
-                      <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
-                      {selectedStudent ? <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} /> : null}
-                      <input type="hidden" name="active" value={drawerActive ? "false" : "true"} />
-                      <button className={drawerActive ? "secondary-button tone-cancel" : "primary-button"} type="submit">
-                        {drawerActive ? t("markInactive") : t("reactivate")}
-                      </button>
-                    </form>
+                    {(drawerActive ? (["paused", "inactive"] as const) : (["active"] as const)).map((nextStatus) => (
+                      <form
+                        key={nextStatus}
+                        onSubmit={(event) => submitAndClose(
+                          event,
+                          setStudentStatusAction,
+                          setNotice,
+                          startTransition,
+                          () => {
+                            setQuery("");
+                            setListMode(nextStatus === "active" ? "active" : "inactive");
+                            closeStudentDetails();
+                          },
+                        )}
+                      >
+                        <input type="hidden" name="student_type" value={drawerKind ?? ""} />
+                        <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                        {selectedStudent ? <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} /> : null}
+                        <input type="hidden" name="active" value={nextStatus === "active" ? "true" : "false"} />
+                        <input type="hidden" name="status" value={nextStatus} />
+                        <button className={nextStatus === "active" ? "primary-button" : nextStatus === "paused" ? "secondary-button tone-pause" : "secondary-button tone-cancel"} type="submit">
+                          {nextStatus === "active" ? t("reactivate") : nextStatus === "paused" ? t("markPaused") : t("markInactive")}
+                        </button>
+                      </form>
+                    ))}
                   </div>
                 </section>
               ) : null}
@@ -9649,6 +9717,7 @@ function PaymentForm({
   const initialCourse = type === "course" && initialCourseSource ? initialCourseSource.course : null;
   const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : initialMemberMode ?? null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
+  const [admissionFee, setAdmissionFee] = useState("");
   const [paid, setPaid] = useState(
     initialLibraryDueAmount > 0
       ? String(initialLibraryDueAmount)
@@ -9858,7 +9927,15 @@ function PaymentForm({
   const collectingCourseDues = type === "course" && courseMemberMode === "existing" && Boolean(selectedCourseStudent) && courseDueAmount > 0;
   const collectingStudentDues = collectingLibraryDues || collectingCourseDues;
   const currentDueAmount = collectingLibraryDues ? libraryDueAmount : collectingCourseDues ? courseDueAmount : 0;
-  const feeNumber = Number(fee || 0);
+  // Admission fee: new and inactive students pay it; a pause within 45 days waives it.
+  const libraryReturnState = type === "library" && !collectingLibraryDues
+    ? selectedLibraryStudent
+      ? studentPauseState(selectedLibraryStudent.active, selectedLibraryStudent.paused_at)
+      : libraryMemberMode === "new" ? { state: "new" as const, daysLeft: 0 } : null
+    : null;
+  const admissionApplies = libraryReturnState?.state === "new" || libraryReturnState?.state === "inactive";
+  const admissionFeeNumber = admissionApplies ? Number(admissionFee || 0) : 0;
+  const feeNumber = Number(fee || 0) + admissionFeeNumber;
   const paidNumber = Number(paid || 0);
   const amountNumber = Number(amount || 0);
   const splitCollectionNumber = Number(cashCollection || 0) + Number(onlineCollection || 0);
@@ -10853,10 +10930,26 @@ function PaymentForm({
       {(type === "course" && coursePaymentFieldsReady && !collectingCourseDues)
         || (type === "library" && libraryPaymentFieldsReady && !collectingLibraryDues) ? (
         <>
+          {libraryReturnState?.state === "paused" ? (
+            <p className="student-return-note full-span">
+              {t("admissionFeeWaived").replace("{days}", String(studentPauseGraceDays - libraryReturnState.daysLeft))} {t("newStartsToday")}
+            </p>
+          ) : null}
+          {libraryReturnState?.state === "inactive" ? (
+            <p className="student-return-note warning full-span">{t("admissionFeeApplies")} {t("newStartsToday")}</p>
+          ) : null}
+          {admissionApplies ? (
+            <label className="full-span">
+              {t("admissionFee")}
+              <input name="admission_fee" type="number" min="0" step="1" value={admissionFee} onChange={(event) => setAdmissionFee(event.target.value)} placeholder="0" />
+            </label>
+          ) : null}
+          {/* Fee sent with the payment = subscription fee + admission fee. */}
+          <input type="hidden" name="fee_amount" value={feeNumber} />
           <div className="form-pair full-span">
             <label>
-              {t("fee")}
-              <input name="fee_amount" type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />
+              {admissionFeeNumber > 0 ? `${t("fee")} (${t("total")} ${formatMoney(feeNumber)})` : t("fee")}
+              <input type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />
             </label>
             {mode === "mixed" ? (
               <input type="hidden" name="paid_amount" value={splitCollectionNumber} />

@@ -254,6 +254,9 @@ export type Payment = {
 
 export type LibraryStudent = {
   id: string;
+  /** Paused (inactive, may return within 45 days without an admission fee). */
+  paused_at?: string | null;
+  inactive_at?: string | null;
   business_id: string;
   roll_number: string;
   phone_number: string | null;
@@ -312,6 +315,9 @@ export type LibraryStudentSubscriptionEvent = {
 
 export type CourseStudent = {
   id: string;
+  /** Paused (inactive, may return within 45 days without an admission fee). */
+  paused_at?: string | null;
+  inactive_at?: string | null;
   business_id: string;
   source_course_id: string;
   identity_key: string;

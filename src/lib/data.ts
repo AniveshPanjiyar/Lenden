@@ -347,7 +347,7 @@ async function loadDashboard(
     needsStudents && canViewLibraryStudents && studentSourceId === "library"
       ? supabase
           .from("library_students")
-          .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at")
+          .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,placeholder,last_payment_id,last_payment_date,created_at,updated_at")
           .eq("business_id", bootstrap.businessContext.business.id)
           .eq("active", studentActive)
           .eq("placeholder", false)
@@ -358,7 +358,7 @@ async function loadDashboard(
     needsStudents && canViewCourseStudents && Boolean(studentCourseId)
       ? supabase
           .from("course_students")
-          .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at")
+          .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,last_payment_id,created_at,updated_at")
           .eq("business_id", bootstrap.businessContext.business.id)
           .eq("source_course_id", studentCourseId ?? "")
           .eq("active", studentActive)
@@ -909,7 +909,7 @@ export async function getStudentCollectionPage(
   if (isLibrary) {
     let query = supabase
       .from("library_students")
-      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
+      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
       .eq("placeholder", false);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
@@ -946,7 +946,7 @@ export async function getStudentCollectionPage(
 
   let query = supabase
     .from("course_students")
-    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
+    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
     .eq("source_course_id", sourceCourseId);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
@@ -1040,6 +1040,9 @@ export async function getStudentRosterPage(
   const today = dateIsoInTimeZone(new Date(), timeZone);
   const nowTime = timeOfDayInZone(timeZone);
   const supabase = await createClient({ businessId: businessContext.business.id });
+  // Pauses older than 45 days become inactive before the roster is read.
+  const expired = await supabase.rpc("lenden_expire_paused_students");
+  if (expired.error && !/lenden_expire_paused_students/.test(expired.error.message)) throw new Error(expired.error.message);
 
   // Tab badges: Active / Live (inside today's time slot now) / Inactive, honouring the filter chips.
   const rosterCounts = async (table: "library_students" | "course_students", source: "library" | "course", scope: (query: ReturnType<typeof countQuery>) => ReturnType<typeof countQuery>) => {
@@ -1064,13 +1067,16 @@ export async function getStudentRosterPage(
     }
     let query = supabase
       .from("library_students")
-      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
+      .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
       .eq("business_id", businessContext.business.id)
       .eq("placeholder", false);
     query = applyStudentRosterFlags(query, flags, "library", today);
     if (status !== "all") query = query.eq("active", active);
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     if (status === "all") query = query.order("active", { ascending: false });
+    if (status === "inactive" && sort === "expiry") {
+      query = query.order("paused_at", { ascending: false, nullsFirst: false }).order("inactive_at", { ascending: true, nullsFirst: false });
+    }
     const result = await query
       .order("subscription_end_date")
       .order("roll_number")
@@ -1106,13 +1112,16 @@ export async function getStudentRosterPage(
   }
   let query = supabase
     .from("course_students")
-    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,last_payment_id,created_at,updated_at", { count: "exact" })
+    .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,last_payment_id,created_at,updated_at", { count: "exact" })
     .eq("business_id", businessContext.business.id)
     .eq("source_course_id", sourceCourseId);
   query = applyStudentRosterFlags(query, flags, "course", today);
   if (status !== "all") query = query.eq("active", active);
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   if (status === "all") query = query.order("active", { ascending: false });
+  if (status === "inactive" && sort === "expiry") {
+    query = query.order("paused_at", { ascending: false, nullsFirst: false }).order("inactive_at", { ascending: true, nullsFirst: false });
+  }
   const result = await query
     .order("subscription_end_date")
     .order("roll_number")

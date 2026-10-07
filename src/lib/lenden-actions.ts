@@ -1327,13 +1327,17 @@ async function saveLibraryStudentRecord(
     ].join("|");
     if (currentSubscriptionKey > nextSubscriptionKey) {
       if (params.reactivate && !current.active) {
-        const reactivated = await admin.from("library_students").update({ active: true }).eq("id", studentId);
+        const reactivated = await admin.from("library_students").update({ active: true, paused_at: null, inactive_at: null }).eq("id", studentId);
         if (reactivated.error) throw new Error(reactivated.error.message);
       }
       return studentId;
     }
     // A payment refreshes the subscription snapshot; status changes only when a new subscription reactivates it.
     payload.active = current.active || Boolean(params.reactivate);
+    if (params.reactivate && !current.active) {
+      payload.paused_at = null;
+      payload.inactive_at = null;
+    }
   }
 
   const query = studentId
@@ -1464,6 +1468,10 @@ async function upsertCourseStudentRecord(
   if (params.paymentId) payload.last_payment_id = params.paymentId;
   if (params.currentSubscriptionKey) payload.current_subscription_key = params.currentSubscriptionKey;
   if (!current || params.reactivate) payload.active = true;
+  if (current && params.reactivate && !current.active) {
+    payload.paused_at = null;
+    payload.inactive_at = null;
+  }
 
   const result = current
     ? await admin.from("course_students").update(payload).eq("id", current.id).select("*").single()
@@ -1961,6 +1969,8 @@ const handlers = {
       incentive_amount: incentiveAmount,
       description: asString(formData, "description"),
       remark: asString(formData, "remark"),
+      // Admission fee (new / returning inactive students) is part of fee_amount; kept here for reference.
+      metadata: (asNumber(formData, "admission_fee") ?? 0) > 0 ? { admission_fee: asNumber(formData, "admission_fee") } : {},
       photo_path: photoPath,
       collected_by: profile.id,
       assigned_profile_id: profile.id,
@@ -2287,6 +2297,16 @@ const handlers = {
     const studentType = asString(formData, "student_type") === "course" ? "course" : "library";
     let id = asString(formData, "id");
     const active = asBool(formData, "active");
+    // "paused": inactive for now, admission fee waived if they return within 45 days.
+    const paused = !active && asString(formData, "status") === "paused";
+    const nowIso = new Date().toISOString();
+    const statusDates = active
+      ? { paused_at: null, inactive_at: null }
+      : paused
+        ? { paused_at: nowIso, inactive_at: null }
+        : { paused_at: null, inactive_at: nowIso };
+    const statusMessage = (kind: "Course" | "Library") =>
+      active ? `${kind} student reactivated.` : paused ? `${kind} student paused.` : `${kind} student moved to inactive.`;
     const previousId = id;
     if (!id) return fail("Choose a student.");
 
@@ -2302,14 +2322,14 @@ const handlers = {
       if (courseResponse.error || !existing) throw new Error(courseResponse.error?.message ?? "Course student not found.");
       const updateResponse = await admin
         .from("course_students")
-        .update({ active })
+        .update({ active, ...statusDates })
         .eq("id", id)
         .select("*")
         .single();
       const updated = typedData<CourseStudent>(updateResponse);
       if (updateResponse.error || !updated) throw new Error(updateResponse.error?.message ?? "Could not update student status.");
       const signedUpdated = await signedCourseStudentPatch(admin, updated);
-      return ok(active ? "Course student reactivated." : "Course student moved to inactive.", {
+      return ok(statusMessage("Course"), {
         type: "student",
         studentType: "course",
         student: signedUpdated,
@@ -2362,7 +2382,7 @@ const handlers = {
 
     const updateResponse = await admin
       .from("library_students")
-      .update({ active, placeholder: active ? false : Boolean(student.placeholder) })
+      .update({ active, ...statusDates, placeholder: active ? false : Boolean(student.placeholder) })
       .eq("id", id)
       .select("*")
       .single();
@@ -2384,7 +2404,7 @@ const handlers = {
     });
 
     const signedUpdated = await signedLibraryStudentPatch(admin, updated);
-    return ok(active ? "Library student reactivated." : "Library student moved to inactive.", {
+    return ok(statusMessage("Library"), {
       type: "student",
       studentType: "library",
       student: signedUpdated,
