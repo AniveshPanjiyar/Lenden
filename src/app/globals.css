@@ -11538,3 +11538,19 @@ input[readonly][type="time"] { opacity: 0.75; }
 }
 .student-return-note.warning { background: rgba(248, 224, 168, 0.45); color: #8a5a00; border-color: rgba(176, 125, 30, 0.3); }
 .secondary-button.tone-pause { border-color: rgba(176, 125, 30, 0.45); color: #8a5a00; }
+
+/* Expiry badges: remaining = green, expired = red. */
+.library-expiry-chip,
+.library-list-expiry { background: #1f8f4e; color: #fff; box-shadow: 0 6px 14px rgba(31, 143, 78, 0.24); }
+.library-expiry-chip.expired,
+.library-list-expiry.expired { background: #c62828; color: #fff; box-shadow: 0 6px 14px rgba(198, 40, 40, 0.24); }
+
+/* Library time slots: extra slots below the first, with add / remove. */
+.extra-slots { display: grid; gap: 10px; }
+.extra-slot-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; gap: 10px; align-items: end; }
+.extra-slot-row > label { min-width: 0; }
+.extra-slot-row input { width: 100%; min-width: 0; }
+.extra-slot-remove { width: 40px; height: 44px; }
+.extra-slot-add { width: fit-content; display: inline-flex; align-items: center; gap: 6px; }
+.slot-validity { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.extra-slots { position: relative; }

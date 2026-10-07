@@ -1093,6 +1093,40 @@ async function referencedRowCount(
   return response.count ?? 0;
 }
 
+type TimeSlot = { start: string; end: string };
+
+/** Extra daily slots (after the first) from the form: [{start, end}] as JSON. */
+function readExtraTimeSlots(value: string | null): TimeSlot[] | null {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const slots: TimeSlot[] = [];
+    for (const item of parsed) {
+      const start = normalizeClockTime(typeof item?.start === "string" ? item.start : null);
+      const end = normalizeClockTime(typeof item?.end === "string" ? item.end : null);
+      if (!start || !end) return null;
+      slots.push({ start, end });
+    }
+    return slots;
+  } catch {
+    return null;
+  }
+}
+
+/** Every slot must end after it starts and no two slots may overlap. Returns total hours. */
+function totalSlotHours(slots: TimeSlot[]) {
+  const sorted = [...slots].sort((a, b) => minutesFromTime(a.start) - minutesFromTime(b.start));
+  let total = 0;
+  for (let index = 0; index < sorted.length; index += 1) {
+    const hours = slotHoursBetween(sorted[index].start, sorted[index].end);
+    if (hours === null) return null;
+    if (index > 0 && minutesFromTime(sorted[index].start) < minutesFromTime(sorted[index - 1].end)) return null;
+    total += hours;
+  }
+  return total;
+}
+
 type LibraryStudentFormFields = {
   rollNumber: string;
   studentName: string;
@@ -1104,6 +1138,8 @@ type LibraryStudentFormFields = {
   startTime: string | null;
   endTime: string | null;
   slotHours: number | null;
+  /** Further daily slots; undefined leaves the stored ones untouched. */
+  extraSlots?: TimeSlot[];
   subscriptionStartDate: string | null;
   subscriptionEndDate: string | null;
   feeAmount: number | null;
@@ -1127,7 +1163,17 @@ function readLibraryStudentFields(
   const endTime = normalizeClockTime(asString(formData, "end_time"));
   const feeAmount = asNumber(formData, "fee_amount");
   const paidAmount = asNumber(formData, "paid_amount") ?? asNumber(formData, "amount");
-  const slotHours = slotHoursBetween(startTime, endTime);
+  const extraSlotsInput = formData.has("extra_time_slots") ? readExtraTimeSlots(asString(formData, "extra_time_slots")) : undefined;
+  if (extraSlotsInput === null) {
+    return { ok: false, result: fail("Enter valid times for every extra slot.") };
+  }
+  const extraSlots = extraSlotsInput;
+  const slotHours = startTime && endTime
+    ? totalSlotHours([{ start: startTime, end: endTime }, ...(extraSlots ?? [])])
+    : slotHoursBetween(startTime, endTime);
+  if (startTime && endTime && extraSlots?.length && slotHours === null) {
+    return { ok: false, result: fail("Time slots must not overlap, and each must end after it starts.") };
+  }
   const hasSubscriptionDetails = Boolean(startDate || endDate || startTime || endTime || feeAmount !== null || paidAmount !== null);
 
   if (!rollNumber || !studentName) {
@@ -1162,6 +1208,7 @@ function readLibraryStudentFields(
       startTime,
       endTime,
       slotHours,
+      extraSlots,
       subscriptionStartDate: startDate,
       subscriptionEndDate: endDate,
       feeAmount,
@@ -1199,6 +1246,7 @@ function libraryStudentPayload(
     active,
     placeholder: false,
   };
+  if (fields.extraSlots !== undefined) payload.extra_time_slots = fields.extraSlots;
   if (photoUrl) payload.photo_url = photoUrl;
   if (aadharPhotoUrl) payload.aadhar_photo_url = aadharPhotoUrl;
   if (aadharBackPhotoUrl) payload.aadhar_back_photo_url = aadharBackPhotoUrl;
@@ -1499,6 +1547,9 @@ function fieldsFromLibraryStudentRecord(record: Record<string, string | number |
     startTime: typeof record.start_time === "string" ? normalizeClockTime(record.start_time) : null,
     endTime: typeof record.end_time === "string" ? normalizeClockTime(record.end_time) : null,
     slotHours: typeof record.slot_hours === "number" ? record.slot_hours : record.slot_hours ? Number(record.slot_hours) : null,
+    extraSlots: Array.isArray((record as Record<string, unknown>).extra_time_slots)
+      ? ((record as Record<string, unknown>).extra_time_slots as TimeSlot[])
+      : undefined,
     subscriptionStartDate: typeof record.subscription_start_date === "string" ? record.subscription_start_date : null,
     subscriptionEndDate: typeof record.subscription_end_date === "string" ? record.subscription_end_date : null,
     feeAmount: typeof record.fee_amount === "number" ? record.fee_amount : record.fee_amount ? Number(record.fee_amount) : null,
@@ -1970,7 +2021,10 @@ const handlers = {
       description: asString(formData, "description"),
       remark: asString(formData, "remark"),
       // Admission fee (new / returning inactive students) is part of fee_amount; kept here for reference.
-      metadata: (asNumber(formData, "admission_fee") ?? 0) > 0 ? { admission_fee: asNumber(formData, "admission_fee") } : {},
+      metadata: {
+        ...((asNumber(formData, "admission_fee") ?? 0) > 0 ? { admission_fee: asNumber(formData, "admission_fee") } : {}),
+        ...(libraryStudentFields?.extraSlots?.length ? { extra_time_slots: libraryStudentFields.extraSlots } : {}),
+      },
       photo_path: photoPath,
       collected_by: profile.id,
       assigned_profile_id: profile.id,

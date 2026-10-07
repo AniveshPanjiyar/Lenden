@@ -372,6 +372,10 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "Camera",
     gallery: "Gallery",
     fullTime: "Full time",
+    addSlot: "Add slot",
+    removeSlot: "Remove slot",
+    slotEndAfterStart: "Each slot must end after it starts.",
+    slotsOverlap: "Time slots overlap. Change the times so they do not overlap.",
     pausedTag: "Paused",
     markPaused: "Mark paused",
     changeStatus: "Pause or mark inactive?",
@@ -884,6 +888,10 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "कैमरा",
     gallery: "गैलरी",
     fullTime: "पूरा समय",
+    addSlot: "स्लॉट जोड़ें",
+    removeSlot: "स्लॉट हटाएँ",
+    slotEndAfterStart: "हर स्लॉट शुरू होने के बाद ही खत्म होना चाहिए।",
+    slotsOverlap: "स्लॉट का समय आपस में टकरा रहा है। समय बदलें।",
     pausedTag: "रोका गया",
     markPaused: "रोकें (पॉज़)",
     changeStatus: "पॉज़ करें या बंद करें?",
@@ -6904,7 +6912,8 @@ function isTimeRangeLiveNow(startTime: string | null | undefined, endTime: strin
 }
 
 function isLibraryStudentLiveNow(student: LibraryStudent, minuteOfDay: number) {
-  return isTimeRangeLiveNow(student.start_time, student.end_time, minuteOfDay);
+  return isTimeRangeLiveNow(student.start_time, student.end_time, minuteOfDay)
+    || (student.extra_time_slots ?? []).some((slot) => isTimeRangeLiveNow(slot.start, slot.end, minuteOfDay));
 }
 
 function displayDate(value: string | null | undefined) {
@@ -7536,6 +7545,40 @@ function deletePhotoDraft(key: string) {
 
 const studentRecordIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type TimeSlotValue = { start: string; end: string };
+
+function clockMinutes(value: string | null | undefined) {
+  const [hours, minutes] = (value ?? "").slice(0, 5).split(":").map(Number);
+  return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : 0;
+}
+
+/** Slots must each end after they start and must not overlap one another. */
+function timeSlotsProblem(slots: TimeSlotValue[], t: (key: string) => string) {
+  if (slots.some((slot) => !slot.start || !slot.end || clockMinutes(slot.end) <= clockMinutes(slot.start))) {
+    return t("slotEndAfterStart");
+  }
+  const sorted = [...slots].sort((a, b) => clockMinutes(a.start) - clockMinutes(b.start));
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (clockMinutes(sorted[index].start) < clockMinutes(sorted[index - 1].end)) return t("slotsOverlap");
+  }
+  return null;
+}
+
+/** A one-hour slot right after the latest booked slot (capped at 10 PM). */
+function nextFreeSlot(slots: TimeSlotValue[]): TimeSlotValue {
+  const latestEnd = Math.max(...slots.map((slot) => clockMinutes(slot.end)), 6 * 60);
+  const start = Math.min(latestEnd, 21 * 60);
+  const toClock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  return { start: toClock(start), end: toClock(Math.min(start + 60, 22 * 60)) };
+}
+
+/** First slot plus any extra slots, e.g. "7:00 AM-10:00 AM, 4:00 PM-8:00 PM". */
+function displayTimeSlots(startTime: string | null | undefined, endTime: string | null | undefined, extra: TimeSlotValue[] | null | undefined) {
+  return [displayTimeRange(startTime ?? null, endTime ?? null), ...(extra ?? []).map((slot) => displayTimeRange(slot.start, slot.end))]
+    .filter((value) => value && value !== "-")
+    .join(", ") || "-";
+}
+
 const libraryFullTimeStart = "07:00";
 const libraryFullTimeEnd = "22:00";
 
@@ -7867,6 +7910,7 @@ function libraryStudentPrefill(student: LibraryStudent, t: (key: string) => stri
     lockerNumber: student.locker_number ?? "",
     startTime: (student.start_time ?? "06:00").slice(0, 5),
     endTime: (student.end_time ?? "07:00").slice(0, 5),
+    extraSlots: (student.extra_time_slots ?? []).map((slot) => ({ start: slot.start.slice(0, 5), end: slot.end.slice(0, 5) })),
     fee: student.fee_amount ? String(student.fee_amount) : "",
     searchLabel: `${studentDisplayRollNumber(student)} · ${studentDisplayName(student, t)}`,
   };
@@ -7983,7 +8027,7 @@ function LibraryStudentSummaryCard({
         </div>
         <div>
           <span>{t("timing")}</span>
-          <strong>{displayTimeRange(student.start_time, student.end_time)}</strong>
+          <strong>{displayTimeSlots(student.start_time, student.end_time, student.extra_time_slots)}</strong>
           <small>{student.slot_hours ? `${student.slot_hours}h` : "-"}</small>
         </div>
         <div>
@@ -8865,7 +8909,7 @@ function LibraryStudentsView({
             if (listMode === "live") {
               const displayName = studentDisplayName(student, t);
               const rollNumber = studentDisplayRollNumber(student);
-              const slotTime = displayTimeRange(student.start_time, student.end_time);
+              const slotTime = displayTimeSlots(student.start_time, student.end_time, student.extra_time_slots);
               return (
                 <article key={student.id} className="min-w-0">
                   <button
@@ -8893,7 +8937,7 @@ function LibraryStudentsView({
                 : `${t("inactiveTag")} · ${libraryExpiryStatusLabel(student, today, t)}`;
             const displayName = studentDisplayName(student, t);
             const rollNumber = studentDisplayRollNumber(student);
-            const slotTime = displayTimeRange(student.start_time, student.end_time);
+            const slotTime = displayTimeSlots(student.start_time, student.end_time, student.extra_time_slots);
             return (
               <StudentRosterCard
                 key={student.id}
@@ -9731,6 +9775,14 @@ function PaymentForm({
   const [onlineCollection, setOnlineCollection] = useState("");
   const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? initialCoursePrefill?.startTime ?? "06:00");
   const [endTime, setEndTime] = useState(initialLibraryPrefill?.endTime ?? initialCoursePrefill?.endTime ?? "07:00");
+  // Extra daily slots after the first one (library); they may not overlap each other or the first.
+  const [extraSlots, setExtraSlots] = useState<TimeSlotValue[]>(initialLibraryPrefill?.extraSlots ?? []);
+  const allTimeSlots = [{ start: startTime, end: endTime }, ...extraSlots];
+  const timeSlotError = timeSlotsProblem(allTimeSlots, t);
+  const slotValidityRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    slotValidityRef.current?.setCustomValidity(type === "library" && timeSlotError ? timeSlotError : "");
+  }, [timeSlotError, type]);
   // Library "Full time" = the whole opening day (7 AM - 10 PM); while ticked the times are locked.
   const libraryFullTime = startTime === libraryFullTimeStart && endTime === libraryFullTimeEnd;
   const timesBeforeFullTimeRef = useRef<{ start: string; end: string } | null>(null);
@@ -9739,6 +9791,7 @@ function PaymentForm({
       timesBeforeFullTimeRef.current = { start: startTime, end: endTime };
       setStartTime(libraryFullTimeStart);
       setEndTime(libraryFullTimeEnd);
+      setExtraSlots([]);
       return;
     }
     const previous = timesBeforeFullTimeRef.current;
@@ -9746,6 +9799,53 @@ function PaymentForm({
     setStartTime(restorable ? previous.start : "06:00");
     setEndTime(restorable ? previous.end : "07:00");
   };
+  const libraryExtraSlotsEditor = libraryFullTime ? null : (
+    <div className="extra-slots full-span">
+      {extraSlots.map((slot, index) => (
+        <div className="extra-slot-row" key={index}>
+          <label>
+            {t("startTime")} {index + 2}
+            <input
+              type="time"
+              step="3600"
+              min="06:00"
+              max="22:00"
+              value={slot.start}
+              onChange={(event) => setExtraSlots((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, start: event.target.value } : item))}
+              required
+            />
+          </label>
+          <label>
+            {t("endTime")} {index + 2}
+            <input
+              type="time"
+              step="3600"
+              min="06:00"
+              max="22:00"
+              value={slot.end}
+              onChange={(event) => setExtraSlots((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, end: event.target.value } : item))}
+              required
+            />
+          </label>
+          <button
+            className="icon-button extra-slot-remove"
+            type="button"
+            aria-label={t("removeSlot")}
+            onClick={() => setExtraSlots((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+      <button className="secondary-button extra-slot-add" type="button" onClick={() => setExtraSlots((current) => [...current, nextFreeSlot([{ start: startTime, end: endTime }, ...current])])}>
+        <Plus size={16} /> {t("addSlot")}
+      </button>
+      {timeSlotError ? <p className="form-error">{timeSlotError}</p> : null}
+      <input type="hidden" name="extra_time_slots" value={JSON.stringify(extraSlots)} />
+      {/* Not read-only: read-only inputs skip validation, and this one carries the overlap error. */}
+      <input ref={slotValidityRef} className="slot-validity" tabIndex={-1} aria-hidden="true" value={timeSlotError ? "" : "ok"} onChange={() => undefined} />
+    </div>
+  );
   const libraryFullTimeToggle = (
     <label className="full-time-toggle full-span">
       <input type="checkbox" checked={libraryFullTime} onChange={(event) => toggleLibraryFullTime(event.target.checked)} />
@@ -9944,7 +10044,9 @@ function PaymentForm({
   const splitRemaining = Math.max(splitTotal - splitCollectionNumber, 0);
   const dues = collectingStudentDues ? Math.max(currentDueAmount - collectedNumber, 0) : Math.max(feeNumber - collectedNumber, 0);
   const advance = collectingStudentDues ? Math.max(collectedNumber - currentDueAmount, 0) : Math.max(collectedNumber - feeNumber, 0);
-  const slotHours = Math.max((Number(endTime.slice(0, 2)) || 0) - (Number(startTime.slice(0, 2)) || 0), 0);
+  const slotHours = type === "library"
+    ? allTimeSlots.reduce((sum, slot) => sum + Math.max(clockMinutes(slot.end) - clockMinutes(slot.start), 0), 0) / 60
+    : Math.max((Number(endTime.slice(0, 2)) || 0) - (Number(startTime.slice(0, 2)) || 0), 0);
   const libraryMemberChoicePending = type === "library" && !initialLibraryStudent && !libraryMemberMode;
   const libraryExistingMemberPending = type === "library" && libraryMemberMode === "existing" && !selectedLibraryStudentId;
   const libraryPaymentFieldsReady = type !== "library" || (!libraryMemberChoicePending && !libraryExistingMemberPending);
@@ -10002,6 +10104,7 @@ function PaymentForm({
     setLockerNumber("");
     setStartTime("06:00");
     setEndTime("07:00");
+    setExtraSlots([]);
     setFee("");
     setLibrarySearch("");
     setSubscriptionStartDate(todayIso());
@@ -10023,6 +10126,7 @@ function PaymentForm({
     setLockerNumber("");
     setStartTime("06:00");
     setEndTime("07:00");
+    setExtraSlots([]);
     setFee("");
     setLibrarySearch("");
     setSubscriptionStartDate(todayIso());
@@ -10055,6 +10159,7 @@ function PaymentForm({
     setLockerNumber(values.lockerNumber);
     setStartTime(values.startTime);
     setEndTime(values.endTime);
+    setExtraSlots(values.extraSlots);
     setFee(values.fee);
     setSubscriptionStartDate(renewalRange.startDate);
     setSubscriptionEndDate(renewalRange.endDate);
@@ -10076,6 +10181,7 @@ function PaymentForm({
       setLockerNumber("");
       setStartTime("06:00");
       setEndTime("07:00");
+    setExtraSlots([]);
       setFee("");
       setLibrarySearch("");
       setSubscriptionStartDate(todayIso());
@@ -10106,6 +10212,7 @@ function PaymentForm({
     setLockerNumber("");
     setStartTime("06:00");
     setEndTime("07:00");
+    setExtraSlots([]);
     setFee("");
     setSubscriptionStartDate(today);
     setSubscriptionEndDate(addMonthsIso());
@@ -10127,6 +10234,7 @@ function PaymentForm({
     setLockerNumber("");
     setStartTime("06:00");
     setEndTime("07:00");
+    setExtraSlots([]);
     setFee("");
     setSubscriptionStartDate(today);
     setSubscriptionEndDate(addMonthsIso());
@@ -10317,6 +10425,7 @@ function PaymentForm({
                   required
                 />
               </label>
+              {libraryExtraSlotsEditor}
               <label>
                 {t("slotHours")}
                 <input name="slot_hours" value={slotHours} readOnly />
@@ -10584,6 +10693,7 @@ function PaymentForm({
                       required
                     />
                   </label>
+                  {libraryExtraSlotsEditor}
                   <label>
                     {t("slotHours")}
                     <input name="slot_hours" value={slotHours} readOnly />

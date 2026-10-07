@@ -254,6 +254,8 @@ export type Payment = {
 
 export type LibraryStudent = {
   id: string;
+  /** Daily slots after the first (start_time / end_time). */
+  extra_time_slots?: { start: string; end: string }[] | null;
   /** Paused (inactive, may return within 45 days without an admission fee). */
   paused_at?: string | null;
   inactive_at?: string | null;
