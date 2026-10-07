@@ -11529,3 +11529,4 @@ input[readonly][type="time"] { opacity: 0.75; }
   width: fit-content; margin-top: 4px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
   background: transparent; color: var(--bad, #b83230); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
 }
+.student-filter-heading { margin: 6px 0 0; font-size: 13px; font-weight: 900; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }

@@ -379,6 +379,8 @@ const messages: Record<Language, Record<string, string>> = {
     seatAssigned: "Seat assigned",
     lockerAssigned: "Locker assigned",
     expiringSoon: "Expiring soon",
+    sortBy: "Sort by",
+    sortExpiry: "Expiry",
     expiringSoonHelp: "Expiring soon = subscription ends within the next 7 days.",
     clearFilters: "Clear",
     students: "Students",
@@ -881,6 +883,8 @@ const messages: Record<Language, Record<string, string>> = {
     seatAssigned: "सीट मिली",
     lockerAssigned: "लॉकर मिला",
     expiringSoon: "जल्द खत्म",
+    sortBy: "क्रम",
+    sortExpiry: "खत्म होने की तारीख",
     expiringSoonHelp: "जल्द खत्म = अगले 7 दिनों में सब्सक्रिप्शन खत्म।",
     clearFilters: "हटाएँ",
     students: "छात्र",
@@ -7346,19 +7350,40 @@ function rosterFlagLabel(flag: StudentRosterFlag, t: (key: string) => string) {
   return t("expiringSoon");
 }
 
+type StudentRosterSortKey = "expiry" | "roll" | "name" | "seat";
+const studentRosterNaturalCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
+/** Text that holds numbers (roll, seat) in number order: "2" before "10"; blanks last. */
+function compareNaturalText(left: string | null | undefined, right: string | null | undefined) {
+  const a = left?.trim() ?? "";
+  const b = right?.trim() ?? "";
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  return studentRosterNaturalCollator.compare(a, b);
+}
+
 function StudentRosterFilterSheet({
   flags,
+  sort,
   library,
   onApply,
   onClose,
 }: {
   flags: StudentRosterFlag[];
+  sort: StudentRosterSortKey;
   library: boolean;
-  onApply: (flags: StudentRosterFlag[]) => void;
+  onApply: (flags: StudentRosterFlag[], sort: StudentRosterSortKey) => void;
   onClose: () => void;
 }) {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<StudentRosterFlag[]>(flags);
+  const [draftSort, setDraftSort] = useState<StudentRosterSortKey>(sort);
+  // Seat order applies to library students only.
+  const sortOptions: { value: StudentRosterSortKey; label: string }[] = [
+    { value: "expiry", label: t("sortExpiry") },
+    { value: "roll", label: t("rollNumber") },
+    { value: "name", label: t("name") },
+    ...(library ? [{ value: "seat" as const, label: t("seatNumber") }] : []),
+  ];
   // Seats and lockers exist only for library students.
   const options: StudentRosterFlag[] = library ? ["full_time", "seat", "locker", "expiring"] : ["full_time", "expiring"];
   const toggle = (flag: StudentRosterFlag) =>
@@ -7392,9 +7417,25 @@ function StudentRosterFilterSheet({
           ))}
         </div>
         <p className="date-filter-note">{t("expiringSoonHelp")}</p>
+        <h3 className="student-filter-heading">{t("sortBy")}</h3>
+        <div className="student-filter-chips" role="radiogroup" aria-label={t("sortBy")}>
+          {sortOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={draftSort === option.value}
+              className={`filter-chip ${draftSort === option.value ? "active" : ""}`}
+              onClick={() => setDraftSort(option.value)}
+            >
+              {draftSort === option.value ? <Check size={14} aria-hidden="true" /> : null}
+              {option.label}
+            </button>
+          ))}
+        </div>
         <div className="student-subscription-edit-actions">
-          <button className="secondary-button" type="button" onClick={() => setDraft([])}>{t("clearFilters")}</button>
-          <button className="primary-button" type="button" onClick={() => onApply(draft)}>{t("applyFilters")}</button>
+          <button className="secondary-button" type="button" onClick={() => { setDraft([]); setDraftSort("expiry"); }}>{t("clearFilters")}</button>
+          <button className="primary-button" type="button" onClick={() => onApply(draft, draftSort)}>{t("applyFilters")}</button>
         </div>
       </section>
     </div>,
@@ -8392,10 +8433,11 @@ function LibraryStudentsView({
   const rosterPageSize = variant === "collection" ? 15 : 100;
   // Students page filter chips (server-side, plus the same check on locally merged rows).
   const [rosterFlags, setRosterFlags] = useState<StudentRosterFlag[]>([]);
+  const [rosterSort, setRosterSort] = useState<StudentRosterSortKey>("expiry");
   const [rosterFilterOpen, setRosterFilterOpen] = useState(false);
   const rosterFlagKey = [...rosterFlags].sort().join(",");
   const rosterQuery = useInfiniteQuery({
-    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize, rosterFlagKey],
+    queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize, rosterFlagKey, rosterSort],
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({
         tab: "library_students",
@@ -8406,6 +8448,7 @@ function LibraryStudentsView({
       });
       if (debouncedQuery) params.set("studentSearch", debouncedQuery);
       if (rosterFlagKey) params.set("studentFlags", rosterFlagKey);
+      if (rosterSort !== "expiry") params.set("studentSort", rosterSort);
       return fetchJson<StudentRosterPayload>(`/api/businesses/${businessId}/operational/students?${params}`, signal);
     },
     initialPageParam: "0",
@@ -8490,6 +8533,13 @@ function LibraryStudentsView({
       // Searches are mostly by roll number: roll matches first, then the usual expiry order.
       (normalizedQuery ? rollSearchRank(studentDisplayRollNumber(a), normalizedQuery) - rollSearchRank(studentDisplayRollNumber(b), normalizedQuery) : 0)
       || (listMode === "all" ? Number(b.active) - Number(a.active) : 0)
+      || (rosterSort === "roll"
+        ? compareNaturalText(studentDisplayRollNumber(a), studentDisplayRollNumber(b))
+        : rosterSort === "name"
+          ? compareNaturalText(studentDisplayName(a, t), studentDisplayName(b, t))
+          : rosterSort === "seat"
+            ? compareNaturalText(a.seat_number, b.seat_number)
+            : 0)
       || compareLibraryStudentsByExpiry(a, b, t)) : [];
   const visibleCourseStudents = showingLibraryStudents ? [] : sourceCourseStudents
     .filter((record) => matchesRosterFlags({
@@ -8508,6 +8558,11 @@ function LibraryStudentsView({
     .sort((a, b) =>
       (normalizedQuery ? rollSearchRank(a.rollNumber, normalizedQuery) - rollSearchRank(b.rollNumber, normalizedQuery) : 0)
       || (listMode === "all" ? Number(b.active) - Number(a.active) : 0)
+      || (rosterSort === "roll"
+        ? compareNaturalText(a.rollNumber, b.rollNumber)
+        : rosterSort === "name"
+          ? compareNaturalText(courseStudentDisplayName(a, t), courseStudentDisplayName(b, t))
+          : 0)
       || compareCourseStudentRecordsByExpiry(a, b, t));
 
   useEffect(() => {
@@ -8708,7 +8763,7 @@ function LibraryStudentsView({
             </span>
             {variant !== "collection" ? (
               <button
-                className={`student-filter-button${rosterFlags.length > 0 ? " active" : ""}`}
+                className={`student-filter-button${rosterFlags.length > 0 || rosterSort !== "expiry" ? " active" : ""}`}
                 type="button"
                 aria-label={`${t("filters")}${rosterFlags.length ? `: ${rosterFlags.length}` : ""}`}
                 onClick={(event) => {
@@ -8722,8 +8777,13 @@ function LibraryStudentsView({
             ) : null}
           </span>
         </label>
-        {rosterFlags.length > 0 ? (
+        {rosterFlags.length > 0 || rosterSort !== "expiry" ? (
           <div className="student-active-filters" aria-label={t("filters")}>
+            {rosterSort !== "expiry" ? (
+              <button type="button" className="filter-chip active" onClick={() => setRosterSort("expiry")}>
+                {t("sortBy")}: {rosterSort === "roll" ? t("rollNumber") : rosterSort === "name" ? t("name") : t("seatNumber")} <X size={12} aria-hidden="true" />
+              </button>
+            ) : null}
             {rosterFlags.map((flag) => (
               <button key={flag} type="button" className="filter-chip active" onClick={() => setRosterFlags((current) => current.filter((item) => item !== flag))}>
                 {rosterFlagLabel(flag, t)} <X size={12} aria-hidden="true" />
@@ -8734,9 +8794,11 @@ function LibraryStudentsView({
         {rosterFilterOpen ? (
           <StudentRosterFilterSheet
             flags={rosterFlags}
+            sort={rosterSort}
             library={showingLibraryStudents}
-            onApply={(next) => {
+            onApply={(next, nextSort) => {
               setRosterFlags(next);
+              setRosterSort(nextSort);
               setRosterFilterOpen(false);
             }}
             onClose={() => setRosterFilterOpen(false)}

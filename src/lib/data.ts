@@ -770,6 +770,36 @@ function rollSearchRank(rollNumber: string | null | undefined, search: string) {
 }
 
 const rosterSearchCap = 300;
+const rosterSortCap = 1000;
+
+export type StudentRosterSort = "expiry" | "roll" | "name" | "seat";
+const naturalCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
+/** Roll / seat numbers are text: compare them in number order ("2" before "10"), blanks last. */
+function compareNatural(left: string | null | undefined, right: string | null | undefined) {
+  const a = left?.trim() ?? "";
+  const b = right?.trim() ?? "";
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  return naturalCollator.compare(a, b);
+}
+
+function sortRosterRows<T>(
+  rows: T[],
+  sort: StudentRosterSort,
+  fields: (row: T) => { roll: string | null | undefined; name: string | null | undefined; seat: string | null | undefined },
+) {
+  if (sort === "expiry") return rows;
+  const keyed = rows.map((row, index) => ({ row, index, ...fields(row) }));
+  keyed.sort((a, b) => {
+    const primary = sort === "roll"
+      ? compareNatural(a.roll, b.roll)
+      : sort === "name"
+        ? compareNatural(a.name, b.name)
+        : compareNatural(a.seat, b.seat);
+    return primary || compareNatural(a.roll, b.roll) || a.index - b.index;
+  });
+  return keyed.map((entry) => entry.row);
+}
 
 /** Rank a search's matches (roll number first) and page them in memory. */
 function rankedSearchPage<T>(
@@ -990,7 +1020,7 @@ function applyStudentRosterFlags<Q extends {
 export async function getStudentRosterPage(
   businessContext: BusinessContext,
   viewState: AppViewState,
-  options: { cursor?: string | null; search?: string | null; limit?: number; flags?: string | null } = {},
+  options: { cursor?: string | null; search?: string | null; limit?: number; flags?: string | null; sort?: string | null } = {},
 ): Promise<StudentRosterPayload> {
   const sourceId = viewState.studentFilters.sourceId;
   const status = viewState.studentFilters.status;
@@ -1002,6 +1032,10 @@ export async function getStudentRosterPage(
   const search = rosterSearchTerm(options.search ?? null);
   const active = status !== "inactive";
   const flags = parseStudentRosterFlags(options.flags);
+  const sort: StudentRosterSort = options.sort === "roll" || options.sort === "name" || options.sort === "seat" ? options.sort : "expiry";
+  // Roll / name / seat order is applied in memory (natural number order), so page after sorting.
+  const inMemory = Boolean(search) || sort !== "expiry";
+  const fetchCap = search ? rosterSearchCap : rosterSortCap;
   const timeZone = businessContext.business.timezone || undefined;
   const today = dateIsoInTimeZone(new Date(), timeZone);
   const nowTime = timeOfDayInZone(timeZone);
@@ -1040,10 +1074,14 @@ export async function getStudentRosterPage(
     const result = await query
       .order("subscription_end_date")
       .order("roll_number")
-      .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
+      .range(inMemory ? 0 : offset, inMemory ? fetchCap - 1 : offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
-    const fetchedItems = (result.data ?? []) as LibraryStudent[];
-    const searchPage = search
+    const fetchedItems = sortRosterRows((result.data ?? []) as LibraryStudent[], sort, (student) => ({
+      roll: collectionDisplayRollNumber(student),
+      name: student.student_name,
+      seat: student.seat_number,
+    }));
+    const searchPage = inMemory
       ? rankedSearchPage(fetchedItems, search, collectionDisplayRollNumber, offset, limit, status === "all" ? (student) => student.active : null)
       : null;
     const rawItems = searchPage ? searchPage.items : fetchedItems;
@@ -1078,10 +1116,14 @@ export async function getStudentRosterPage(
   const result = await query
     .order("subscription_end_date")
     .order("roll_number")
-    .range(search ? 0 : offset, search ? rosterSearchCap - 1 : offset + limit - 1);
+    .range(inMemory ? 0 : offset, inMemory ? fetchCap - 1 : offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
-  const fetchedItems = (result.data ?? []) as CourseStudent[];
-  const searchPage = search
+  const fetchedItems = sortRosterRows((result.data ?? []) as CourseStudent[], sort, (student) => ({
+    roll: student.roll_number,
+    name: student.student_name,
+    seat: null,
+  }));
+  const searchPage = inMemory
     ? rankedSearchPage(fetchedItems, search, (student) => student.roll_number, offset, limit, status === "all" ? (student) => student.active : null)
     : null;
   const rawItems = searchPage ? searchPage.items : fetchedItems;
