@@ -7727,34 +7727,36 @@ function StudentRosterCard({
         </div>
         <div className="library-list-info">
           <strong>{student.displayName}</strong>
-          <span>
-            {student.meta}
-            {student.timing ? <> · <b className="library-list-timing">{student.timing}</b></> : null}
-          </span>
+          <span>{student.meta}</span>
+          {student.timing ? <b className="library-list-timing">{student.timing}</b> : null}
           {seat ? <span className="library-list-seat-badge">{t("seat")}: {seat}</span> : null}
         </div>
       </button>
-      {whatsappHref ? (
-        <a
-          className="library-list-whatsapp-button"
-          href={whatsappHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`WhatsApp: ${student.displayName}`}
-          title="WhatsApp"
-        >
-          <MessageCircle size={22} />
-        </a>
-      ) : null}
-      {callHref ? (
-        <a
-          className="library-list-call-button"
-          href={callHref}
-          aria-label={`${t("callStudent")}: ${student.displayName}`}
-          title={t("callStudent")}
-        >
-          <PhoneCall size={22} />
-        </a>
+      {whatsappHref || callHref ? (
+        <div className="library-list-actions">
+          {whatsappHref ? (
+            <a
+              className="library-list-whatsapp-button"
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`WhatsApp: ${student.displayName}`}
+              title="WhatsApp"
+            >
+              <MessageCircle size={22} />
+            </a>
+          ) : null}
+          {callHref ? (
+            <a
+              className="library-list-call-button"
+              href={callHref}
+              aria-label={`${t("callStudent")}: ${student.displayName}`}
+              title={t("callStudent")}
+            >
+              <PhoneCall size={22} />
+            </a>
+          ) : null}
+        </div>
       ) : null}
     </article>
   );
