@@ -893,6 +893,137 @@ async function uploadLibraryStudentAadharPhoto(
   return path;
 }
 
+/**
+ * After a payment is cancelled, rebuild the student's current-subscription snapshot from what is
+ * still valid: the latest remaining subscription (by end date) of their active payments, else the
+ * imported subscription (library), else no subscription. Only runs when the cancelled payment was
+ * part of the student's current subscription.
+ */
+async function resyncStudentAfterPaymentCancel(admin: SupabaseAdminClient, paymentId: string) {
+  const paymentResponse = await admin
+    .from("payments")
+    .select("id,business_id,business_type,library_student_id,course_student_id,student_subscription_key")
+    .eq("id", paymentId)
+    .maybeSingle();
+  const payment = typedData<{
+    id: string;
+    business_id: string;
+    business_type: string;
+    library_student_id: string | null;
+    course_student_id: string | null;
+    student_subscription_key: string | null;
+  }>(paymentResponse);
+  if (!payment) return;
+  const isLibrary = payment.business_type === "library" && Boolean(payment.library_student_id);
+  const isCourse = payment.business_type === "course" && Boolean(payment.course_student_id);
+  if (!isLibrary && !isCourse) return;
+
+  const table = isLibrary ? "library_students" : "course_students";
+  const studentId = (isLibrary ? payment.library_student_id : payment.course_student_id) as string;
+  const studentResponse = await admin
+    .from(table)
+    .select("id,current_subscription_key,last_payment_id")
+    .eq("id", studentId)
+    .maybeSingle();
+  const student = typedData<{ id: string; current_subscription_key: string | null; last_payment_id: string | null }>(studentResponse);
+  if (!student) return;
+  const cancelledKey = payment.student_subscription_key || `payment:${payment.id}`;
+  const wasCurrent = student.last_payment_id === payment.id
+    || (Boolean(student.current_subscription_key) && student.current_subscription_key === cancelledKey);
+  if (!wasCurrent) return;
+
+  const remainingResponse = await admin
+    .from("payments")
+    .select("*")
+    .eq("business_id", payment.business_id)
+    .eq(isLibrary ? "library_student_id" : "course_student_id", studentId)
+    .eq("record_status", "active");
+  if (remainingResponse.error) throw new Error(remainingResponse.error.message);
+  const remaining = typedDataArray<Record<string, unknown>>(remainingResponse);
+
+  const updates: Record<string, unknown> = {};
+  if (remaining.length > 0) {
+    const groups = new Map<string, Record<string, unknown>[]>();
+    remaining.forEach((row) => {
+      const key = String(row.student_subscription_key || `payment:${row.id}`);
+      groups.set(key, [...(groups.get(key) ?? []), row]);
+    });
+    const ordered = (rows: Record<string, unknown>[]) => [...rows].sort((a, b) =>
+      String(a.payment_date).localeCompare(String(b.payment_date)) || String(a.created_at).localeCompare(String(b.created_at)));
+    const [latestKey, latestRows] = [...groups.entries()]
+      .map(([key, rows]) => [key, ordered(rows)] as const)
+      .sort(([, a], [, b]) =>
+        String(b[0].end_date ?? "").localeCompare(String(a[0].end_date ?? ""))
+        || String(b.at(-1)?.created_at ?? "").localeCompare(String(a.at(-1)?.created_at ?? "")))[0];
+    const first = latestRows[0];
+    const last = latestRows[latestRows.length - 1];
+    const fee = Math.max(...latestRows.map((row) => Number(row.fee_amount ?? 0)), 0);
+    const paid = latestRows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    const effectiveFee = fee > 0 ? fee : paid;
+    Object.assign(updates, {
+      subscription_start_date: first.start_date ?? null,
+      subscription_end_date: first.end_date ?? null,
+      start_time: first.start_time ?? null,
+      end_time: first.end_time ?? null,
+      slot_hours: first.slot_hours ?? null,
+      fee_amount: effectiveFee,
+      paid_amount: paid,
+      dues_amount: Math.max(effectiveFee - paid, 0),
+      advance_amount: Math.max(paid - effectiveFee, 0),
+      current_subscription_key: latestKey,
+      last_payment_id: last.id,
+    });
+    if (isLibrary) {
+      const metadata = (last.metadata as { extra_time_slots?: unknown } | null) ?? {};
+      updates.extra_time_slots = Array.isArray(metadata.extra_time_slots) ? metadata.extra_time_slots : [];
+      updates.last_payment_date = last.payment_date ?? null;
+    }
+  } else {
+    // No valid payment left: fall back to the imported subscription (library), else none.
+    const importedResponse = isLibrary
+      ? await admin
+        .from("library_student_subscription_events")
+        .select("subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,start_time,end_time,created_at")
+        .eq("library_student_id", studentId)
+        .is("payment_id", null)
+      : null;
+    const imported = importedResponse
+      ? typedDataArray<{
+        subscription_start_date: string | null;
+        subscription_end_date: string | null;
+        fee_amount: number | null;
+        paid_amount: number | null;
+        dues_amount: number | null;
+        advance_amount: number | null;
+        start_time: string | null;
+        end_time: string | null;
+        created_at: string;
+      }>(importedResponse)
+        .filter((event) => Boolean(event.subscription_end_date))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+      : null;
+    Object.assign(updates, {
+      subscription_start_date: imported?.subscription_start_date ?? null,
+      subscription_end_date: imported?.subscription_end_date ?? null,
+      fee_amount: imported?.fee_amount ?? null,
+      paid_amount: imported?.paid_amount ?? null,
+      dues_amount: imported?.dues_amount ?? null,
+      advance_amount: imported?.advance_amount ?? null,
+      current_subscription_key: null,
+      last_payment_id: null,
+    });
+    if (imported?.start_time) updates.start_time = imported.start_time;
+    if (imported?.end_time) updates.end_time = imported.end_time;
+    if (isLibrary) {
+      updates.extra_time_slots = [];
+      updates.last_payment_date = null;
+    }
+  }
+
+  const { error } = await admin.from(table).update(updates).eq("id", studentId);
+  if (error) throw new Error(error.message);
+}
+
 async function ensureLedgerEntry(
   admin: SupabaseAdminClient,
   params: {
@@ -3341,6 +3472,8 @@ const handlers = {
     if (error) throw new Error(error.message);
 
     await removeRecordLedgerEntries(admin, recordType, id);
+    // A cancelled subscription payment no longer defines the student's dates / amounts.
+    if (recordType === "payment") await resyncStudentAfterPaymentCancel(admin, id);
 
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id ? [] : [recordOwnerId],
@@ -3592,6 +3725,7 @@ const handlers = {
         .eq("id", request.record_id);
 
       await removeRecordLedgerEntries(admin, request.record_type, request.record_id);
+      if (request.record_type === "payment") await resyncStudentAfterPaymentCancel(admin, request.record_id);
     }
 
     await createNotifications(admin, {
