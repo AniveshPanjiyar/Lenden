@@ -11586,3 +11586,6 @@ input[readonly][type="time"] { opacity: 0.75; }
 }
 .course-message-settings > summary span { display: inline; }
 .course-message-settings[open] > summary { border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; margin-bottom: 10px; }
+.message-template-panels { display: grid; gap: 10px; }
+.message-template-panels > .primary-button { width: 100%; }
+.message-template-panels .course-message-form { padding-bottom: 12px; }

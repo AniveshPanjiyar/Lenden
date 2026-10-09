@@ -247,6 +247,8 @@ export function BusinessSetupSettings({
         </>
       ) : null}
 
+      {showMessages ? <MessageTemplatesSettings templates={messageTemplates} library={enabledModules.includes("library")} /> : null}
+
       {showRooms ? (
       <section className="admin-panel business-setup-section">
         <div className="business-users-heading">
@@ -398,7 +400,6 @@ export function BusinessSetupSettings({
         </BusinessMutationForm>
       </section>
       ) : null}
-      {showMessages ? <MessageTemplatesSettings templates={messageTemplates} /> : null}
       {!showRooms && !showCourses && !showMessages ? (
         <p className="admin-empty">No setup is needed for the enabled business units.</p>
       ) : null}
@@ -406,37 +407,79 @@ export function BusinessSetupSettings({
   );
 }
 
-function MessageTemplatesSettings({ templates }: { templates: { student_expired?: string; student_active?: string } }) {
+function MessageTemplatesSettings({
+  templates,
+  library,
+}: {
+  templates: { student_expired?: string; student_active?: string };
+  /** Library enabled: the section is the Library message setup (also the courses' fallback). */
+  library: boolean;
+}) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(saveMessageTemplatesAction, initialBusinessActionState);
   useEffect(() => {
     if (state.ok) router.refresh();
   }, [router, state.ok]);
+  const placeholderGuide = (
+    <small>
+      {"{name}"} = student name · {"{end_date}"} = end date · {"{roll}"} = roll number · {"{days}"} = days · {"{business}"} = business name
+    </small>
+  );
 
   return (
     <section className="admin-panel business-setup-section">
       <div className="business-users-heading">
         <div>
           <p className="eyebrow">WhatsApp</p>
-          <h2>Student messages</h2>
+          <h2>{library ? "Library" : "Student messages"}</h2>
           <p>
-            Prefilled text for the WhatsApp button on student cards. Leave empty to open WhatsApp with a blank message.
-            You can use {"{name}"}, {"{roll}"}, {"{end_date}"}, {"{days}"}, {"{business}"} and {"{course}"}.
-            Each course can also have its own expired-students message under Courses.
+            Prefilled text for the WhatsApp button on {library ? "library " : ""}student cards.
+            {library ? " Courses without their own message use the Expired students message too." : ""}
           </p>
         </div>
+        {library ? <BookOpen size={26} /> : <MessageCircle size={26} />}
       </div>
-      <form action={formAction} className="business-setup-form message-templates">
-        <label>
-          Expired students
-          <textarea name="student_expired" rows={4} maxLength={1000} defaultValue={templates.student_expired ?? ""}
-            placeholder="आपका {business} का सब्सक्रिप्शन {end_date} को खत्म हो गया है। कृपया रिन्यू करवाएँ।" />
-        </label>
-        <label>
-          Active students
-          <textarea name="student_active" rows={4} maxLength={1000} defaultValue={templates.student_active ?? ""}
-            placeholder="आपका सब्सक्रिप्शन {days} दिन में खत्म होगा ({end_date})।" />
-        </label>
+      <form key={`${templates.student_expired ?? ""}|${templates.student_active ?? ""}`} action={formAction} className="message-template-panels">
+        <details className="course-message-settings" open={!templates.student_expired}>
+          <summary>
+            <MessageCircle size={16} aria-hidden="true" />
+            <span>Expired students message</span>
+            <em className={templates.student_expired ? "is-set" : ""}>{templates.student_expired ? "Set" : "Not set"}</em>
+          </summary>
+          <div className="course-message-form">
+            <label>
+              <span>WhatsApp text for students whose subscription has ended</span>
+              <textarea
+                name="student_expired"
+                rows={5}
+                maxLength={1000}
+                // Not set yet: start from the suggested Hindi message so it can be edited, then saved.
+                defaultValue={templates.student_expired || (library ? defaultLibraryExpiredMessage : "")}
+              />
+            </label>
+            {placeholderGuide}
+          </div>
+        </details>
+        <details className="course-message-settings">
+          <summary>
+            <MessageCircle size={16} aria-hidden="true" />
+            <span>Active students message</span>
+            <em className={templates.student_active ? "is-set" : ""}>{templates.student_active ? "Set" : "Not set"}</em>
+          </summary>
+          <div className="course-message-form">
+            <label>
+              <span>WhatsApp text for students whose subscription is still running (optional)</span>
+              <textarea
+                name="student_active"
+                rows={4}
+                maxLength={1000}
+                defaultValue={templates.student_active ?? ""}
+                placeholder="नमस्ते {name}, आपका सब्सक्रिप्शन {end_date} को समाप्त होगा।"
+              />
+            </label>
+            {placeholderGuide}
+          </div>
+        </details>
         {state.message ? (
           <p className={state.ok ? "form-success" : "form-error"} role={state.ok ? "status" : "alert"}>
             {state.message}
@@ -448,6 +491,10 @@ function MessageTemplatesSettings({ templates }: { templates: { student_expired?
     </section>
   );
 }
+
+const defaultLibraryExpiredMessage =
+  "नमस्ते {name}, आपका लाइब्रेरी का सब्सक्रिप्शन {end_date} को समाप्त हो गया है। "
+  + "अपना सब्सक्रिप्शन जारी रखने के लिए तुरंत रिन्यू करवाएँ, या पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
 
 const defaultCourseExpiredMessage =
   "नमस्ते {name}, आपके {course} का सब्सक्रिप्शन {end_date} को समाप्त हो गया है। "
