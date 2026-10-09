@@ -17,6 +17,7 @@ import {
   deleteRoomAction,
   reviewChangeRequestAction,
   saveCourseAction,
+  saveCourseMessageAction,
   saveReferralAction,
   saveRoomAction,
   setCourseActiveAction,
@@ -297,7 +298,7 @@ export function BusinessSetupSettings({
         </div>
         <div className="business-setup-list">
           {courses.map((course) => (
-            <article key={course.id}>
+            <article key={course.id} className="business-course-row">
               <div><strong>{course.name}</strong></div>
               <span className={`status-pill ${course.active ? "active" : "suspended"}`}>
                 {course.active ? "Active" : "Hidden"}
@@ -310,6 +311,29 @@ export function BusinessSetupSettings({
                 activeAction={setCourseActiveAction}
                 onResult={handleResult}
               />
+              <details className="course-message-settings">
+                <summary>
+                  Expired students message {course.expired_message_template ? "· set" : "· not set"}
+                </summary>
+                <BusinessMutationForm
+                  key={course.expired_message_template ?? ""}
+                  action={saveCourseMessageAction}
+                  onResult={handleResult}
+                  className="business-setup-form message-templates"
+                >
+                  <input type="hidden" name="id" value={course.id} />
+                  <label>
+                    WhatsApp text for {course.name} students whose subscription has ended
+                    <textarea
+                      name="expired_message_template"
+                      rows={3}
+                      maxLength={1000}
+                      defaultValue={course.expired_message_template ?? ""}
+                      placeholder="Namaste {name}, aapka {course} course {end_date} ko khatam ho gaya hai…"
+                    />
+                  </label>
+                </BusinessMutationForm>
+              </details>
             </article>
           ))}
           {!courses.length ? <p className="muted">No courses configured.</p> : null}
@@ -389,7 +413,8 @@ function MessageTemplatesSettings({ templates }: { templates: { student_expired?
           <h2>Student messages</h2>
           <p>
             Prefilled text for the WhatsApp button on student cards. Leave empty to open WhatsApp with a blank message.
-            You can use {"{name}"}, {"{roll}"}, {"{end_date}"}, {"{days}"} and {"{business}"}.
+            You can use {"{name}"}, {"{roll}"}, {"{end_date}"}, {"{days}"}, {"{business}"} and {"{course}"}.
+            Each course can also have its own expired-students message under Courses.
           </p>
         </div>
       </div>

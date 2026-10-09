@@ -427,6 +427,10 @@ export async function saveCourseAction(formData: FormData): Promise<ActionResult
   return invokeLendenAction("saveCourse", formData);
 }
 
+export async function saveCourseMessageAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("saveCourseMessage", formData);
+}
+
 export async function deleteCourseAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("deleteCourse", formData);
 }

@@ -4719,6 +4719,20 @@ const handlers = {
     return ok("Course saved.");
   }),
 
+  saveCourseMessage: withErrors("Could not save the course message.", async (formData, { admin, profile }) => {
+    requireBusinessSettingsManager(profile);
+    const id = asString(formData, "id");
+    if (!id) return fail("Choose a course.");
+    const template = (asString(formData, "expired_message_template") ?? "").slice(0, 1000);
+    const { error } = await admin
+      .from("courses")
+      .update({ expired_message_template: template || null })
+      .eq("id", id)
+      .eq("business_id", profile.businessId);
+    if (error) throw new Error(error.message);
+    return ok(template ? "Course message saved." : "Course message cleared.");
+  }),
+
   deleteCourse: withErrors("Could not delete course.", async (formData, { admin, profile }) => {
     requireBusinessSettingsManager(profile);
     const id = asString(formData, "id");

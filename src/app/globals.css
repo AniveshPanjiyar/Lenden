@@ -11554,3 +11554,9 @@ input[readonly][type="time"] { opacity: 0.75; }
 .extra-slot-add { width: fit-content; display: inline-flex; align-items: center; gap: 6px; }
 .slot-validity { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .extra-slots { position: relative; }
+
+/* Business setup: per-course expired-students WhatsApp message. */
+.business-course-row { flex-wrap: wrap; }
+.course-message-settings { flex-basis: 100%; margin-top: 6px; }
+.course-message-settings > summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 800; }
+.course-message-settings textarea { width: 100%; }

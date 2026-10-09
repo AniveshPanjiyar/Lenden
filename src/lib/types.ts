@@ -180,6 +180,8 @@ export type Course = {
   business_id: string;
   name: string;
   active: boolean;
+  /** WhatsApp text for this course's expired students (empty = business template). */
+  expired_message_template?: string | null;
 };
 
 export type ReferralCode = {

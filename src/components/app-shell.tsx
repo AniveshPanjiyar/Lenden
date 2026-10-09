@@ -6988,10 +6988,10 @@ function displayTextValue(value: string | number | null | undefined) {
   return text || "-";
 }
 
-/** Fills the owner's template: {name}, {roll}, {end_date}, {days}, {business}. */
+/** Fills the owner's template: {name}, {roll}, {end_date}, {days}, {business}, {course}. */
 function fillStudentMessageTemplate(template: string | null | undefined, values: Record<string, string>) {
   if (!template?.trim()) return "";
-  return template.replace(/\{(name|roll|end_date|days|business)\}/g, (_, key: string) => values[key] ?? "");
+  return template.replace(/\{(name|roll|end_date|days|business|course)\}/g, (_, key: string) => values[key] ?? "");
 }
 
 /** Opens the student's WhatsApp chat (Indian numbers get +91), with the message prefilled if any. */
@@ -9162,8 +9162,22 @@ function LibraryStudentsView({
                   expired: courseExpired,
                 }}
                 selected={selectedCourseStudent?.id === record.id}
-                showCallAction={false}
+                showCallAction={allowCallActions}
                 onOpen={() => openStudentDetails(record.id)}
+                whatsappMessage={fillStudentMessageTemplate(
+                  // Expired: the course's own message, else the business "Expired students" one.
+                  courseExpired
+                    ? (selectedSource.type === "course" ? selectedSource.course.expired_message_template : null) || messageTemplates?.student_expired
+                    : messageTemplates?.student_active,
+                  {
+                    name: displayName,
+                    roll: record.rollNumber ?? "",
+                    end_date: displayDate(record.subscriptionEndDate),
+                    days: String(Math.abs(daysBetweenIsoDates(today, record.subscriptionEndDate) ?? 0)),
+                    business: businessName,
+                    course: record.courseName ?? "",
+                  },
+                )}
               />
             );
           })}
