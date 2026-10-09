@@ -11672,3 +11672,32 @@ input[readonly][type="time"] { opacity: 0.75; }
 .detail-date-edit { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 4px; }
 .detail-date-edit input { min-height: 40px; width: 100%; }
 .detail-date-edit button { min-height: 40px; padding: 0 12px; }
+
+/* Filter sheet: chips instead of dropdowns. */
+.filter-chip-section { padding: 16px 0; gap: 10px; }
+.filter-chip-section legend { margin-bottom: 10px; }
+.filter-chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-chip-group button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; max-width: 100%; padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 55%, transparent); border-radius: 999px;
+  background: var(--color-surface-container-low); color: var(--color-on-surface);
+  font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.filter-chip-group button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-chip-group button.active {
+  border-color: var(--brand-strong, #2f6f5e); background: var(--brand-strong, #2f6f5e); color: #fff;
+}
+.filter-chip-group button:focus-visible { outline: 2px solid var(--brand-strong, #2f6f5e); outline-offset: 2px; }
+/* View: a two-way switch that fills the row. */
+.filter-chip-segmented .filter-chip-group {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px;
+  border-radius: 14px; background: var(--color-surface-container-low);
+  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 40%, transparent);
+}
+.filter-chip-segmented .filter-chip-group button { justify-content: center; border: 0; border-radius: 10px; background: transparent; }
+.filter-chip-segmented .filter-chip-group button.active { background: var(--brand-strong, #2f6f5e); color: #fff; }
+.operational-filter-drawer > footer .operational-filter-apply { flex: 1; min-height: 48px; max-width: 260px; }
+@media (max-width: 640px) {
+  .operational-filter-drawer > footer .operational-filter-apply { max-width: none; }
+}

@@ -3916,6 +3916,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 transactionProfiles={transactionSelectableProfiles}
                 showTransactionProfile={!currentUserIsSalesAgent && canViewSharedBusinessHistory}
                 salesAgent={currentUserIsSalesAgent}
+                businessFirst={primaryOwner}
                 defaultProfileId={appData.profile.id}
                 onApplyDashboard={setDashboardFilters}
                 onApplyTransactions={setTransactionFilters}
@@ -4410,6 +4411,7 @@ function OperationalFilterDrawer({
   transactionProfiles,
   showTransactionProfile,
   salesAgent,
+  businessFirst,
   defaultProfileId,
   onApplyDashboard,
   onApplyTransactions,
@@ -4424,6 +4426,7 @@ function OperationalFilterDrawer({
   transactionProfiles: Profile[];
   showTransactionProfile: boolean;
   salesAgent: boolean;
+  businessFirst: boolean;
   defaultProfileId: string;
   onApplyDashboard: (filters: DashboardFilterState) => void;
   onApplyTransactions: (filters: TransactionFilterState) => void;
@@ -4491,6 +4494,10 @@ function OperationalFilterDrawer({
           : activity === "pending"
             ? t("pending")
             : t("all");
+  const businessOptions: { value: BusinessTypeFilter; label: string }[] = [
+    { value: "all", label: t("allBusinesses") },
+    ...businessTypes.map((businessType) => ({ value: businessType, label: labelForBusiness(businessType, t) })),
+  ];
   const recordTypeLabel = (recordType: TransactionRecordType) => recordType === "payment" ? t("payments") : recordType === "expense" ? t("expenses") : recordType === "transfer" ? t("cashTransfers") : recordType === "agent_payout" ? t("agentPayouts") : t("allTypes");
 
   return (
@@ -4511,84 +4518,113 @@ function OperationalFilterDrawer({
         </header>
         <div className="operational-filter-body">
           {tab === "home" ? (
-            <>
-              <label className="operational-filter-field operational-filter-section">
-                <span>{t("businessModule")}</span>
-                <select value={dashboardDraft.businessType} onChange={(event) => setDashboardDraft((current) => ({ ...current, businessType: event.target.value as BusinessTypeFilter }))}>
-                  <option value="all">{t("allBusinesses")}</option>
-                  {businessTypes.map((businessType) => <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>)}
-                </select>
-              </label>
-            </>
+            <FilterChipGroup
+              label={t("businessModule")}
+              value={dashboardDraft.businessType}
+              options={businessOptions}
+              onChange={(businessType) => setDashboardDraft((current) => ({ ...current, businessType }))}
+            />
           ) : null}
           {tab === "payments" ? (
             <>
-              <label className="operational-filter-field operational-filter-section">
-                <span>View</span>
-                <select
-                  value={transactionDraft.lens}
-                  onChange={(event) => {
-                    const lens = event.target.value as TransactionLens;
-                    setTransactionDraft((current) => ({
-                      ...current,
-                      lens,
-                      activity: "all",
-                      profileId: lens === "personal" ? defaultProfileId : "all",
-                    }));
-                  }}
-                >
-                  <option value="personal">My activity</option>
-                  <option value="business">Business activity</option>
-                </select>
-              </label>
+              <FilterChipGroup
+                className="filter-chip-segmented"
+                label="View"
+                value={transactionDraft.lens}
+                options={(businessFirst ? ["business", "personal"] as const : ["personal", "business"] as const)
+                  .map((lens) => ({ value: lens, label: lens === "business" ? "Business" : "My activity" }))}
+                onChange={(lens) => setTransactionDraft((current) => ({
+                  ...current,
+                  lens,
+                  activity: "all",
+                  profileId: lens === "personal" ? defaultProfileId : "all",
+                }))}
+              />
               {showTransactionProfile && transactionDraft.lens === "business" ? (
-                <label className="operational-filter-field operational-filter-section">
-                  <span>Person or team</span>
-                  <select value={transactionDraft.profileId} onChange={(event) => setTransactionDraft((current) => ({ ...current, profileId: event.target.value }))}>
-                    <option value="all">All accessible people</option>
-                    {transactionProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.id === defaultProfileId ? `${profile.full_name} (${t("self")})` : profile.full_name}</option>)}
-                  </select>
-                </label>
+                <FilterChipGroup
+                  label="Person or team"
+                  value={transactionDraft.profileId}
+                  options={[
+                    { value: "all", label: t("all") },
+                    ...transactionProfiles.map((person) => ({
+                      value: person.id,
+                      label: person.id === defaultProfileId ? `${person.full_name} (${t("self")})` : person.full_name,
+                    })),
+                  ]}
+                  onChange={(profileId) => setTransactionDraft((current) => ({ ...current, profileId }))}
+                />
               ) : null}
-              <label className="operational-filter-field operational-filter-section">
-                <span>{t("direction")}</span>
-                <select value={transactionDraft.activity} onChange={(event) => setTransactionDraft((current) => ({ ...current, activity: event.target.value as TransactionFilter }))}>
-                  {activityOptions.map((activity) => <option key={activity} value={activity}>{activityLabel(activity)}</option>)}
-                </select>
-              </label>
-              <label className="operational-filter-field operational-filter-section">
-                <span>{t("transactionType")}</span>
-                <select value={transactionDraft.recordType} onChange={(event) => setTransactionDraft((current) => ({ ...current, recordType: event.target.value as TransactionRecordType }))}>
-                  {recordTypeOptions.map((recordType) => <option key={recordType} value={recordType}>{recordTypeLabel(recordType)}</option>)}
-                </select>
-              </label>
-              <label className="operational-filter-field operational-filter-section">
-                <span>{t("paymentMode")}</span>
-                <select value={transactionDraft.mode} onChange={(event) => setTransactionDraft((current) => ({ ...current, mode: event.target.value as TransactionModeFilter }))}>
-                  <option value="all">{t("all")}</option><option value="cash">{t("cash")}</option><option value="online">{t("online")}</option><option value="mixed">{t("mixed")}</option>
-                </select>
-              </label>
+              <FilterChipGroup
+                label={t("direction")}
+                value={transactionDraft.activity}
+                options={activityOptions.map((activity) => ({ value: activity, label: activityLabel(activity) }))}
+                onChange={(activity) => setTransactionDraft((current) => ({ ...current, activity }))}
+              />
+              <FilterChipGroup
+                label={t("transactionType")}
+                value={transactionDraft.recordType}
+                options={recordTypeOptions.map((recordType) => ({ value: recordType, label: recordTypeLabel(recordType) }))}
+                onChange={(recordType) => setTransactionDraft((current) => ({ ...current, recordType }))}
+              />
+              <FilterChipGroup
+                label={t("paymentMode")}
+                value={transactionDraft.mode}
+                options={(["all", "cash", "online", "mixed"] as const).map((mode) => ({ value: mode, label: t(mode) }))}
+                onChange={(mode) => setTransactionDraft((current) => ({ ...current, mode }))}
+              />
               {businessTypes.length > 0 && !salesAgent ? (
-                <label className="operational-filter-field operational-filter-section">
-                  <span>{t("businessModule")}</span>
-                  <select value={transactionDraft.businessType} onChange={(event) => setTransactionDraft((current) => ({ ...current, businessType: event.target.value as BusinessTypeFilter }))}>
-                    <option value="all">{t("allBusinesses")}</option>
-                    {businessTypes.map((businessType) => <option key={businessType} value={businessType}>{labelForBusiness(businessType, t)}</option>)}
-                  </select>
-                </label>
+                <FilterChipGroup
+                  label={t("businessModule")}
+                  value={transactionDraft.businessType}
+                  options={businessOptions}
+                  onChange={(businessType) => setTransactionDraft((current) => ({ ...current, businessType }))}
+                />
               ) : null}
             </>
           ) : null}
         </div>
         <footer>
           <button className="operational-filter-reset" type="button" onClick={resetDraft}>{t("resetFilters")}</button>
-          <div>
-            <button className="secondary-button" type="button" onClick={close}>{t("cancel")}</button>
-            <button className="primary-button" type="button" onClick={applyDraft}>{t("applyFilters")}</button>
-          </div>
+          <button className="primary-button operational-filter-apply" type="button" onClick={applyDraft}>{t("applyFilters")}</button>
         </footer>
       </div>
     </dialog>
+  );
+}
+
+// One filter as a row of tappable chips (single choice); wraps on narrow screens.
+function FilterChipGroup<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  className?: string;
+}) {
+  return (
+    <fieldset className={`operational-filter-section filter-chip-section${className ? ` ${className}` : ""}`}>
+      <legend>{label}</legend>
+      <div className="filter-chip-group" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <button
+            aria-checked={value === option.value}
+            className={value === option.value ? "active" : ""}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            role="radio"
+            type="button"
+          >
+            {value === option.value ? <Check size={14} aria-hidden="true" /> : null}
+            <span>{option.label}</span>
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
