@@ -121,7 +121,7 @@ type MutationRefreshDetail = {
   patch?: MutationPatch;
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
-type TransactionActionKind = "detail" | "transfer" | "edit" | "date" | "delete";
+type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive" | "all";
 type StudentDrawerView = "details" | "history" | "subscription" | "refund";
@@ -3429,6 +3429,12 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     } else {
       setTab(nextTab);
     }
+    // Owners look at the whole business first whenever they open Transactions.
+    if (nextTab === "payments" && tab !== "payments" && primaryOwner) {
+      setTransactionFilters((current) => current.lens === "business"
+        ? current
+        : { ...current, lens: "business", activity: "all", profileId: "all" });
+    }
     setFilterDrawerOpen(false);
     setSidebarOpen(false);
   }
@@ -5778,6 +5784,7 @@ function TransactionsView({
     recordKey: string;
   } | null>(null);
   const [transactionActionNotice, setTransactionActionNotice] = useState<ActionResult | null>(null);
+  const [editingPaymentDate, setEditingPaymentDate] = useState(false);
   const [transactionSearch, setTransactionSearch] = useState("");
   const transactionSearchKey = transactionSearch.trim().toLowerCase();
   useEffect(() => {
@@ -6390,6 +6397,11 @@ function TransactionsView({
     ? expenses.find((expense) => expense.id === (selectedTransactionActionRecord.sourceId ?? selectedTransactionActionRecord.id)) ?? null
     : null;
   const selectedTransactionSourceId = selectedTransactionActionRecord?.sourceId ?? selectedTransactionActionRecord?.id ?? "";
+  const selectedPaymentDate = selectedPayment?.payment_date
+    ?? selectedExpense?.expense_date
+    ?? selectedTransactionActionRecord?.transactionDate
+    ?? selectedTransactionActionRecord?.date
+    ?? "";
   const attachmentRecord = selectedPayment?.photo_path
     ? { type: "payment" as const, id: selectedPayment.id }
     : selectedExpense?.photo_path
@@ -6411,6 +6423,7 @@ function TransactionsView({
   const openTransactionAction = (kind: TransactionActionKind, recordKey: string, trigger: HTMLButtonElement) => {
     trigger.closest("details")?.removeAttribute("open");
     setTransactionActionNotice(null);
+    setEditingPaymentDate(false);
     setTransactionAction({ kind, recordKey });
   };
   const setTransactionNotice = (notice: ActionResult | null) => {
@@ -6602,12 +6615,6 @@ function TransactionsView({
                             <span>{t("editTransaction")}</span>
                           </button>
                         ) : null}
-                        {record.recordType && canChangePaymentDate && record.recordStatus === "active" ? (
-                          <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("date", `${record.kind}-${record.id}`, event.currentTarget)}>
-                            <CalendarDays size={18} />
-                            <span>{t("changePaymentDate")}</span>
-                          </button>
-                        ) : null}
                         {record.recordType && record.canRequestTransfer ? (
                           <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}>
                             <ArrowUp size={18} />
@@ -6724,7 +6731,7 @@ function TransactionsView({
           className="modal-layer"
           role="dialog"
           aria-modal="true"
-          aria-label={transactionAction.kind === "detail" ? "Transaction details" : transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : transactionAction.kind === "date" ? t("changePaymentDate") : t("deleteTransaction")}
+          aria-label={transactionAction.kind === "detail" ? "Transaction details" : transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : t("deleteTransaction")}
         >
           <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeTransactionAction} />
           <section className="action-sheet transaction-action-sheet">
@@ -6738,9 +6745,7 @@ function TransactionsView({
                     ? t("transferTransaction")
                     : transactionAction.kind === "edit"
                       ? t("editTransaction")
-                      : transactionAction.kind === "date"
-                        ? t("changePaymentDate")
-                        : t("deleteTransaction")}
+                      : t("deleteTransaction")}
                 </h2>
                 <span>{selectedTransactionActionRecord.meta} · {formatMoney(Math.abs(selectedTransactionActionRecord.amount))}</span>
               </div>
@@ -6760,9 +6765,39 @@ function TransactionsView({
                 </section>
                 <dl className="transaction-detail-grid">
                   <div><dt>Made by</dt><dd>{profileName(profiles, selectedTransactionActionRecord.ownerId, t)}</dd></div>
-                  <div>
+                  <div className={editingPaymentDate ? "full" : undefined}>
                     <dt>{t("transactionDate")}</dt>
-                    <dd>{displayDate(selectedPayment?.payment_date ?? selectedExpense?.expense_date ?? selectedTransactionActionRecord.transactionDate ?? selectedTransactionActionRecord.date)}</dd>
+                    {editingPaymentDate ? (
+                      <dd>
+                        <form
+                          className="detail-date-edit"
+                          onSubmit={(event) => submitAndClose(event, updatePaymentDateAction, setTransactionNotice, startTransition, () => setEditingPaymentDate(false))}
+                        >
+                          <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
+                          <input type="hidden" name="id" value={selectedTransactionSourceId} />
+                          <input
+                            aria-label={t("transactionDate")}
+                            name="date"
+                            type="date"
+                            defaultValue={selectedPaymentDate}
+                            max={todayIso()}
+                            required
+                          />
+                          <button className="primary-button" type="submit">{t("save")}</button>
+                          <button className="secondary-button" type="button" onClick={() => setEditingPaymentDate(false)}>{t("cancel")}</button>
+                        </form>
+                        <small className="muted">{t("changePaymentDateHint")}</small>
+                      </dd>
+                    ) : (
+                      <dd className="detail-date-value">
+                        {displayDate(selectedPaymentDate)}
+                        {canChangePaymentDate && selectedTransactionActionRecord.recordType && selectedTransactionActionRecord.recordStatus === "active" ? (
+                          <button className="detail-inline-edit" type="button" onClick={() => setEditingPaymentDate(true)} aria-label={t("changePaymentDate")} title={t("changePaymentDate")}>
+                            <Pencil size={14} />
+                          </button>
+                        ) : null}
+                      </dd>
+                    )}
                   </div>
                   <div>
                     <dt>{t("approvalDate")}</dt>
@@ -6872,33 +6907,6 @@ function TransactionsView({
                   <input name="remark" defaultValue={selectedTransactionActionRecord.remark} />
                 </label>
                 <button className="primary-button full-span" type="submit">{t("editTransaction")}</button>
-              </form>
-            ) : null}
-
-            {transactionAction.kind === "date" ? (
-              <form
-                className="form-grid"
-                onSubmit={(event) => submitAndClose(event, updatePaymentDateAction, setTransactionNotice, startTransition, closeTransactionAction)}
-              >
-                {transactionActionNotice ? (
-                  <p className={transactionActionNotice.ok ? "form-success full-span" : "form-error full-span"} role={transactionActionNotice.ok ? "status" : "alert"}>
-                    {transactionActionNotice.message}{transactionActionNotice.errorId ? ` Error ID: ${transactionActionNotice.errorId}.` : ""}
-                  </p>
-                ) : null}
-                <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
-                <input type="hidden" name="id" value={selectedTransactionSourceId} />
-                <label className="full-span">
-                  {t("transactionDate")}
-                  <input
-                    name="date"
-                    type="date"
-                    defaultValue={selectedTransactionActionRecord.editDate ?? selectedTransactionActionRecord.transactionDate}
-                    max={todayIso()}
-                    required
-                  />
-                </label>
-                <p className="muted full-span">{t("changePaymentDateHint")}</p>
-                <button className="primary-button full-span" type="submit">{t("changePaymentDate")}</button>
               </form>
             ) : null}
 

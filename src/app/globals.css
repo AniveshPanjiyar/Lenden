@@ -11662,3 +11662,13 @@ input[readonly][type="time"] { opacity: 0.75; }
   .app-header-brand .profile-menu-trigger { width: 36px; height: 36px; }
   .header-date-button { padding: 0 8px; max-width: 96px; }
 }
+
+/* View details: edit the payment date in place. */
+.detail-date-value { display: flex; align-items: center; gap: 8px; }
+.detail-inline-edit {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 999px;
+  border: 1px solid rgba(47, 111, 94, 0.25); background: #fffdf8; color: var(--brand-strong, #2f6f5e); cursor: pointer;
+}
+.detail-date-edit { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 4px; }
+.detail-date-edit input { min-height: 40px; width: 100%; }
+.detail-date-edit button { min-height: 40px; padding: 0 12px; }
