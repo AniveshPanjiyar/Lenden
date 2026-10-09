@@ -3893,6 +3893,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
                 openTransactions={openTransactions}
+                onDateFilterKeyChange={(dateFilterKey) => setDashboardFilters((current) => ({ ...current, dateFilterKey }))}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -4636,6 +4637,31 @@ function OperationalFilterDrawer({
   );
 }
 
+function DateBasisToggle({
+  value,
+  onChange,
+}: {
+  value: DateFilterKey;
+  onChange: (value: DateFilterKey) => void;
+}) {
+  const { t } = useLanguage();
+  return (
+    <div className="date-basis-toggle" role="group" aria-label={t("dateKey")}>
+      {(["approval", "transaction"] as const).map((option) => (
+        <button
+          aria-pressed={value === option}
+          className={value === option ? "active" : ""}
+          key={option}
+          onClick={() => onChange(option)}
+          type="button"
+        >
+          {dateFilterKeyLabel(option, t)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function RoleDashboardView({
   summary,
   dateLabel,
@@ -4643,8 +4669,10 @@ function RoleDashboardView({
   asOfDate,
   openTransactions,
   openClosing,
+  onDateFilterKeyChange,
 }: {
   openClosing: () => void;
+  onDateFilterKeyChange: (value: DateFilterKey) => void;
   summary: DashboardSummary;
   dateLabel: string;
   dateFilterKey: DateFilterKey;
@@ -4665,17 +4693,15 @@ function RoleDashboardView({
   // Owners look at the business first.
   const [lens, setLens] = useState<TransactionLens>(primaryOwner ? "business" : "personal");
   const staff = summary.role === "staff";
-  const dateBasisLabel = dateFilterKeyLabel(dateFilterKey, t);
 
   // Cash in hand: staff see their own cash (pending collections included); managers also see their
   // Staff's cash; the Owner sees cash still with Managers + Staff.
   const cashSelfPending = summary.cashSelfPending ?? 0;
   const cashSelfTotal = summary.cashSelf + cashSelfPending;
-  const cashInHandRow = (
-    <div className={`flow-row tone-custody${primaryOwner || staff ? " single" : ""}`}>
+  const cashInHandRow = primaryOwner ? null : (
+    <div className="flow-row tone-custody single">
       <span className="flow-row-label"><WalletCards size={16} />{t("cashInHand")}</span>
-      {!primaryOwner ? (
-        <FlowCell
+      <FlowCell
           className="custody"
           label={staff ? `${t("cashInHand")} · ${t("self")}` : t("self")}
           value={formatMoney(cashSelfTotal)}
@@ -4690,18 +4716,24 @@ function RoleDashboardView({
             dateRange: { preset: "custom", from: summary.cashSelfSince ?? asOfDate, to: asOfDate },
           })}
         />
-      ) : null}
-      {!staff ? (
-        <FlowCell
-          className="custody"
-          label={t("cashWithStaff")}
-          value={formatMoney(summary.cashWithStaff)}
-          note={`${t("asOf")} ${asOfDate}`}
-          // Closing lists each person's cash in hand.
-          onClick={openClosing}
-        />
-      ) : null}
     </div>
+  );
+  const staffCashPanel = staff ? null : (
+    <section className="history-summary-panel dashboard-flow-card staff-cash-card">
+      <div className="flow-breakdown">
+        <div className="flow-row tone-custody single">
+          <span className="flow-row-label"><WalletCards size={16} />{t("cashInHand")}</span>
+          <FlowCell
+            className="custody"
+            label={t("cashWithStaff")}
+            value={formatMoney(summary.cashWithStaff)}
+            note={`${t("asOf")} ${asOfDate}`}
+            // Closing lists each person's cash in hand.
+            onClick={openClosing}
+          />
+        </div>
+      </div>
+    </section>
   );
 
   const personalPending = summary.personalPending ?? (staff ? summary.pending : { amount: 0, count: 0 });
@@ -4820,9 +4852,9 @@ function RoleDashboardView({
 
       {lens === "personal" ? (
         <section className="history-summary-panel dashboard-flow-card">
-          <div className="history-summary-context">
+          <div className="history-summary-context dashboard-date-context">
             <span>{dateLabel}</span>
-            <strong>{dateBasisLabel}</strong>
+            <DateBasisToggle value={dateFilterKey} onChange={onDateFilterKeyChange} />
           </div>
           <FlowBreakdown
             leadingRows={cashInHandRow}
@@ -4849,7 +4881,11 @@ function RoleDashboardView({
         </section>
       ) : (
         <>
-          <p className="dashboard-flow-range">{dateLabel} · {dateBasisLabel}</p>
+          {staffCashPanel}
+          <div className="dashboard-flow-range dashboard-date-context">
+            <span>{dateLabel}</span>
+            <DateBasisToggle value={dateFilterKey} onChange={onDateFilterKeyChange} />
+          </div>
           <div className="dashboard-business-cards">
             {businessCards.map(businessCard)}
           </div>
@@ -4874,6 +4910,7 @@ function HomeView({
   agentReferralCodes,
   changeTab,
   openTransactions,
+  onDateFilterKeyChange,
   setNotice,
   startTransition,
 }: {
@@ -4907,6 +4944,7 @@ function HomeView({
       dateFilterKey?: DateFilterKey;
     },
   ) => void;
+  onDateFilterKeyChange: (value: DateFilterKey) => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -4965,6 +5003,7 @@ function HomeView({
         asOfDate={dateRange.to}
         openTransactions={openTransactions}
         openClosing={() => changeTab("closing")}
+        onDateFilterKeyChange={onDateFilterKeyChange}
       />
     );
   }

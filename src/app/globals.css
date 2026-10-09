@@ -11611,3 +11611,16 @@ input[readonly][type="time"] { opacity: 0.75; }
 
 /* Payment date beside the Cash / Online word on transaction cards. */
 .journey-lane-date { margin-left: 2px; font-size: 0.78em; font-weight: 600; color: var(--muted, #6b7280); white-space: nowrap; }
+
+/* Dashboard: date range with an Approval / Payment date switch beside it. */
+.dashboard-date-context { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.date-basis-toggle {
+  display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px;
+  background: rgba(47, 111, 94, 0.08); border: 1px solid rgba(47, 111, 94, 0.18);
+}
+.date-basis-toggle button {
+  min-height: 30px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--history-muted, #5f6b65); font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer;
+}
+.date-basis-toggle button.active { background: var(--brand-strong, #2f6f5e); color: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
+.staff-cash-card { padding-block: 12px; }
