@@ -821,6 +821,8 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
+    showing: "Showing",
+    clearFilter: "Clear filter",
     changePaymentDate: "Change payment date",
     changePaymentDateHint: "Only the payment date changes. The approval date and cash balances stay the same.",
     dateBasisApproval: "Approval",
@@ -1344,6 +1346,8 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
+    showing: "दिखा रहे हैं",
+    clearFilter: "फ़िल्टर हटाएँ",
     changePaymentDate: "भुगतान की तारीख बदलें",
     changePaymentDateHint: "सिर्फ भुगतान की तारीख बदलेगी। मंजूरी की तारीख और नकद हिसाब वही रहेंगे।",
     dateBasisApproval: "मंजूरी",
@@ -2352,6 +2356,7 @@ function dashboardDataSearchParams(
     params.set("to", dateRange.to);
   }
   if (tab === "home" && dashboardFilters.businessType !== "all") params.set("dashBusiness", dashboardFilters.businessType);
+  if (tab === "home" && dashboardFilters.profileId !== "all") params.set("dashUser", dashboardFilters.profileId);
   if (tab === "payments") {
     if (transactionFilters.businessType !== "all") params.set("txBusiness", transactionFilters.businessType);
     if (transactionFilters.mode !== "all") params.set("txMode", transactionFilters.mode);
@@ -3547,6 +3552,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const activeFilterChips: { key: string; label: string; clear: () => void }[] = [];
   if (tab === "home") {
     if (dashboardFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(dashboardFilters.businessType, t), clear: () => setDashboardFilters((current) => ({ ...current, businessType: "all" })) });
+    if (dashboardFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, dashboardFilters.profileId, t), clear: () => setDashboardFilters((current) => ({ ...current, profileId: "all" })) });
   } else if (tab === "payments") {
     if (transactionFilters.lens === "business" && transactionFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: "all" })) });
     if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
@@ -3943,6 +3949,12 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
                 openTransactions={openTransactions}
+                personFilter={dashboardFilters.profileId !== "all"
+                  ? {
+                      name: profileName(appData.profiles, dashboardFilters.profileId, t),
+                      clear: () => setDashboardFilters((current) => ({ ...current, profileId: "all" })),
+                    }
+                  : null}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -4442,6 +4454,7 @@ function OperationalFilterDrawer({
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [dashboardDraft, setDashboardDraft] = useState(dashboardFilters);
   const [transactionDraft, setTransactionDraft] = useState(transactionFilters);
+  const [dateError, setDateError] = useState(false);
   const mountDialog = useCallback((node: HTMLDialogElement | null) => {
     dialogRef.current = node;
     if (node && !node.open) node.showModal();
@@ -4457,12 +4470,19 @@ function OperationalFilterDrawer({
   }, [closingFilters, dashboardDraft, onPrefetch, tab, transactionDraft]);
 
   // The date, range and date basis are set from the header; reset keeps them.
+  // Reset keeps the Approval / Payment choice, which lives in the header.
   function resetDraft() {
-    if (tab === "home") setDashboardDraft((current) => ({ ...defaultDashboardFilters(), dateRange: current.dateRange, dateFilterKey: current.dateFilterKey }));
-    if (tab === "payments") setTransactionDraft((current) => ({ ...defaultTransactionFilters(defaultProfileId), dateRange: current.dateRange, dateFilterKey: current.dateFilterKey }));
+    setDateError(false);
+    if (tab === "home") setDashboardDraft((current) => ({ ...defaultDashboardFilters(), dateFilterKey: current.dateFilterKey }));
+    if (tab === "payments") setTransactionDraft((current) => ({ ...defaultTransactionFilters(defaultProfileId), dateFilterKey: current.dateFilterKey }));
   }
 
   function applyDraft() {
+    const range = tab === "home" ? dashboardDraft.dateRange : transactionDraft.dateRange;
+    if (range.preset === "custom" && (!range.from || !range.to || range.from > range.to)) {
+      setDateError(true);
+      return;
+    }
     close();
     window.requestAnimationFrame(() => {
       if (tab === "home") onApplyDashboard(dashboardDraft);
@@ -4494,6 +4514,13 @@ function OperationalFilterDrawer({
           : activity === "pending"
             ? t("pending")
             : t("all");
+  const personOptions = [
+    { value: "all", label: t("all") },
+    ...transactionProfiles.map((person) => ({
+      value: person.id,
+      label: person.id === defaultProfileId ? `${person.full_name} (${t("self")})` : person.full_name,
+    })),
+  ];
   const businessOptions: { value: BusinessTypeFilter; label: string }[] = [
     { value: "all", label: t("allBusinesses") },
     ...businessTypes.map((businessType) => ({ value: businessType, label: labelForBusiness(businessType, t) })),
@@ -4518,15 +4545,35 @@ function OperationalFilterDrawer({
         </header>
         <div className="operational-filter-body">
           {tab === "home" ? (
-            <FilterChipGroup
-              label={t("businessModule")}
-              value={dashboardDraft.businessType}
-              options={businessOptions}
-              onChange={(businessType) => setDashboardDraft((current) => ({ ...current, businessType }))}
-            />
+            <>
+              <FilterDateRangeChips
+                value={dashboardDraft.dateRange}
+                onChange={(dateRange) => { setDateError(false); setDashboardDraft((current) => ({ ...current, dateRange })); }}
+                error={dateError}
+              />
+              {showTransactionProfile ? (
+                <FilterChipGroup
+                  label="Person or team"
+                  value={dashboardDraft.profileId}
+                  options={personOptions}
+                  onChange={(profileId) => setDashboardDraft((current) => ({ ...current, profileId }))}
+                />
+              ) : null}
+              <FilterChipGroup
+                label={t("businessModule")}
+                value={dashboardDraft.businessType}
+                options={businessOptions}
+                onChange={(businessType) => setDashboardDraft((current) => ({ ...current, businessType }))}
+              />
+            </>
           ) : null}
           {tab === "payments" ? (
             <>
+              <FilterDateRangeChips
+                value={transactionDraft.dateRange}
+                onChange={(dateRange) => { setDateError(false); setTransactionDraft((current) => ({ ...current, dateRange })); }}
+                error={dateError}
+              />
               <FilterChipGroup
                 className="filter-chip-segmented"
                 label="View"
@@ -4544,13 +4591,7 @@ function OperationalFilterDrawer({
                 <FilterChipGroup
                   label="Person or team"
                   value={transactionDraft.profileId}
-                  options={[
-                    { value: "all", label: t("all") },
-                    ...transactionProfiles.map((person) => ({
-                      value: person.id,
-                      label: person.id === defaultProfileId ? `${person.full_name} (${t("self")})` : person.full_name,
-                    })),
-                  ]}
+                  options={personOptions}
                   onChange={(profileId) => setTransactionDraft((current) => ({ ...current, profileId }))}
                 />
               ) : null}
@@ -4589,6 +4630,52 @@ function OperationalFilterDrawer({
         </footer>
       </div>
     </dialog>
+  );
+}
+
+// Calendar section of the filter sheet: preset chips, plus start / end dates for a custom range.
+function FilterDateRangeChips({
+  value,
+  onChange,
+  error,
+}: {
+  value: DateRangeState;
+  onChange: (value: DateRangeState) => void;
+  error: boolean;
+}) {
+  const { t } = useLanguage();
+  return (
+    <fieldset className="operational-filter-section filter-chip-section">
+      <legend><CalendarDays size={14} aria-hidden="true" /> {t("dateRange")}</legend>
+      <div className="filter-chip-group" role="radiogroup" aria-label={t("dateRange")}>
+        {dateRangeOptions.map((option) => (
+          <button
+            aria-checked={value.preset === option.value}
+            className={value.preset === option.value ? "active" : ""}
+            key={option.value}
+            onClick={() => onChange(rangeForPreset(option.value, value))}
+            role="radio"
+            type="button"
+          >
+            {value.preset === option.value ? <Check size={14} aria-hidden="true" /> : null}
+            <span>{t(option.labelKey)}</span>
+          </button>
+        ))}
+      </div>
+      {value.preset === "custom" ? (
+        <div className="header-date-fields filter-date-fields">
+          <label>
+            <span>{t("startDate")}</span>
+            <input type="date" value={value.from} max={value.to || undefined} onChange={(event) => onChange({ ...value, from: event.target.value })} />
+          </label>
+          <label>
+            <span>{t("endDate")}</span>
+            <input type="date" value={value.to} min={value.from || undefined} onChange={(event) => onChange({ ...value, to: event.target.value })} />
+          </label>
+        </div>
+      ) : null}
+      {error ? <p className="operational-filter-error" role="alert">{t("filterDateError")}</p> : null}
+    </fieldset>
   );
 }
 
@@ -4688,7 +4775,7 @@ function HeaderDatePicker({
   const yesterday = rangeForPreset("yesterday").from;
 
   const label = range
-    ? range.preset === "custom"
+    ? range.preset === "custom" || range.preset === "this_month"
       ? shortRangeLabel(range.from, range.to)
       : t(dateRangeOptions.find((option) => option.value === range.preset)?.labelKey ?? "today")
     : date === today
@@ -4805,8 +4892,10 @@ function RoleDashboardView({
   asOfDate,
   openTransactions,
   openClosing,
+  personFilter,
 }: {
   openClosing: () => void;
+  personFilter: { name: string; clear: () => void } | null;
   summary: DashboardSummary;
   asOfDate: string;
   openTransactions: (
@@ -5010,6 +5099,15 @@ function RoleDashboardView({
       ) : (
         <>
           {staffCashPanel}
+          {personFilter ? (
+            <div className="dashboard-person-filter">
+              <span>{t("showing")}</span>
+              <button type="button" onClick={personFilter.clear} aria-label={`${t("clearFilter")}: ${personFilter.name}`}>
+                <strong>{personFilter.name}</strong>
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
           <div className="dashboard-business-cards">
             {businessCards.map(businessCard)}
           </div>
@@ -5034,6 +5132,7 @@ function HomeView({
   agentReferralCodes,
   changeTab,
   openTransactions,
+  personFilter,
   setNotice,
   startTransition,
 }: {
@@ -5067,6 +5166,7 @@ function HomeView({
       dateFilterKey?: DateFilterKey;
     },
   ) => void;
+  personFilter: { name: string; clear: () => void } | null;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -5123,6 +5223,7 @@ function HomeView({
         asOfDate={dateRange.to}
         openTransactions={openTransactions}
         openClosing={() => changeTab("closing")}
+        personFilter={personFilter}
       />
     );
   }

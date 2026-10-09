@@ -11701,3 +11701,16 @@ input[readonly][type="time"] { opacity: 0.75; }
 @media (max-width: 640px) {
   .operational-filter-drawer > footer .operational-filter-apply { max-width: none; }
 }
+
+/* Dashboard narrowed to one person. */
+.dashboard-person-filter { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--history-muted, #5f6b65); }
+.dashboard-person-filter button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: 999px;
+  border: 0; background: var(--brand-strong, #2f6f5e); color: #fff; font: inherit; cursor: pointer;
+}
+.filter-chip-section legend { display: flex; align-items: center; gap: 6px; }
+.filter-date-fields { margin-top: 4px; }
+@media (max-width: 420px) {
+  .app-header-brand .date-basis-toggle button { padding: 0 7px; }
+  .header-date-button { max-width: 104px; gap: 4px; }
+}

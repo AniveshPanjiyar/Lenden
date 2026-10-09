@@ -22,6 +22,8 @@ export type DashboardFilterState = {
   dateRange: DateRangeState;
   dateFilterKey: DateFilterKey;
   businessType: BusinessTypeFilter;
+  // "all", or one person whose collections / expenses the Business figures are narrowed to.
+  profileId: string;
 };
 
 export type TransactionFilterState = {
@@ -67,6 +69,12 @@ const studentStatuses = ["active", "live", "inactive", "all"] as const;
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 const studentSourcePattern = /^(library|course:[0-9a-f-]{36})$/i;
 
+const profileIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validProfileId(value: string | undefined) {
+  return value && profileIdPattern.test(value) ? value : undefined;
+}
+
 function singleParam(params: RawSearchParams, name: string) {
   const value = params[name];
   return Array.isArray(value) ? value[0] : value;
@@ -106,7 +114,7 @@ export function rangeForPreset(preset: DateRangePreset, current?: DateRangeState
 }
 
 export function defaultDashboardFilters(): DashboardFilterState {
-  return { dateRange: rangeForPreset("today"), dateFilterKey: "approval", businessType: "all" };
+  return { dateRange: rangeForPreset("today"), dateFilterKey: "approval", businessType: "all", profileId: "all" };
 }
 
 export function defaultTransactionFilters(defaultProfileId: string): TransactionFilterState {
@@ -188,6 +196,7 @@ export function parseAppViewState(
       dateRange: parseRange(params, { preset: "dashRange", from: "dashFrom", to: "dashTo" }, dashboardLegacyRange),
       dateFilterKey: oneOf(singleParam(params, "dashDateKey") ?? (tab === "home" ? legacyDateKey : undefined), dateFilterKeys, "approval"),
       businessType: oneOf(singleParam(params, "dashBusiness"), businessTypes, "all"),
+      profileId: validProfileId(singleParam(params, "dashUser")) ?? "all",
     },
     transactionFilters: {
       dateRange: parseRange(params, { preset: "txRange", from: "txFrom", to: "txTo" }, transactionLegacyRange),
@@ -227,7 +236,7 @@ export function applyAppViewStateToSearchParams(
   const params = new URLSearchParams(source);
   [
     "range", "from", "to", "dateKey", "settlementFilter",
-    "dashRange", "dashFrom", "dashTo", "dashDateKey", "dashBusiness",
+    "dashRange", "dashFrom", "dashTo", "dashDateKey", "dashBusiness", "dashUser",
     "txRange", "txFrom", "txTo", "txDateKey", "txLens", "txUser", "txFilter", "txRecordType", "txMode", "txBusiness",
     "closingDate", "closingDateKey", "studentSource", "studentStatus",
   ].forEach((key) => params.delete(key));
@@ -236,6 +245,7 @@ export function applyAppViewStateToSearchParams(
   setRangeParams(params, "dash", state.dashboardFilters.dateRange);
   if (state.dashboardFilters.dateFilterKey !== "approval") params.set("dashDateKey", state.dashboardFilters.dateFilterKey);
   if (state.dashboardFilters.businessType !== "all") params.set("dashBusiness", state.dashboardFilters.businessType);
+  if (state.dashboardFilters.profileId !== "all") params.set("dashUser", state.dashboardFilters.profileId);
 
   setRangeParams(params, "tx", state.transactionFilters.dateRange);
   if (state.transactionFilters.dateFilterKey !== "approval") params.set("txDateKey", state.transactionFilters.dateFilterKey);

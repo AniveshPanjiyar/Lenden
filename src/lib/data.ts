@@ -265,6 +265,9 @@ async function loadDashboard(
       ? viewState?.dashboardFilters.businessType ?? "all"
       : "all";
   const modeFilter = activeTab === "payments" ? viewState?.transactionFilters.mode ?? "all" : "all";
+  const dashboardProfileId = activeTab === "home" && viewState?.dashboardFilters.profileId !== "all"
+    ? viewState?.dashboardFilters.profileId ?? null
+    : null;
   const closingDate = range.to;
 
   let paymentsQueryBase = supabase
@@ -403,6 +406,7 @@ async function loadDashboard(
           p_to: range.to,
           p_date_basis: dateFilterKey,
           p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+          p_profile_id: dashboardProfileId,
         })
       : Promise.resolve({ data: null, error: null }),
     needsDashboard
@@ -411,6 +415,7 @@ async function loadDashboard(
           p_to: range.to,
           p_date_basis: dateFilterKey,
           p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
+          p_profile_id: dashboardProfileId,
         })
       : Promise.resolve({ data: [], error: null }),
     needsDashboard
