@@ -372,6 +372,7 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "Camera",
     gallery: "Gallery",
     fullTime: "Full time",
+    recordCreated: "Record created",
     addSlot: "Add slot",
     removeSlot: "Remove slot",
     slotEndAfterStart: "Each slot must end after it starts.",
@@ -890,6 +891,7 @@ const messages: Record<Language, Record<string, string>> = {
     camera: "कैमरा",
     gallery: "गैलरी",
     fullTime: "पूरा समय",
+    recordCreated: "एंट्री बनाई गई",
     addSlot: "स्लॉट जोड़ें",
     removeSlot: "स्लॉट हटाएँ",
     slotEndAfterStart: "हर स्लॉट शुरू होने के बाद ही खत्म होना चाहिए।",
@@ -6618,7 +6620,18 @@ function TransactionsView({
                 </section>
                 <dl className="transaction-detail-grid">
                   <div><dt>Made by</dt><dd>{profileName(profiles, selectedTransactionActionRecord.ownerId, t)}</dd></div>
-                  <div><dt>Date and time</dt><dd>{selectedTransactionActionRecord.date} · {formatIndiaTime(selectedTransactionActionRecord.sortAt)}</dd></div>
+                  <div>
+                    <dt>{t("transactionDate")}</dt>
+                    <dd>{displayDate(selectedPayment?.payment_date ?? selectedExpense?.expense_date ?? selectedTransactionActionRecord.transactionDate ?? selectedTransactionActionRecord.date)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("approvalDate")}</dt>
+                    <dd>{transactionApprovalDateLabel(selectedPayment, selectedExpense, selectedTransactionActionRecord, t)}</dd>
+                  </div>
+                  <div className="full">
+                    <dt>{t("recordCreated")}</dt>
+                    <dd>{recordCreatedLabel(selectedPayment?.created_at ?? selectedExpense?.created_at ?? selectedTransactionActionRecord.sortAt)}</dd>
+                  </div>
                   {selectedPayment?.customer_name ? <div><dt>For</dt><dd>{selectedPayment.customer_name}</dd></div> : null}
                   {selectedPayment?.roll_number ? <div><dt>Roll number</dt><dd>{selectedPayment.roll_number}</dd></div> : null}
                   {selectedPayment?.room_number_snapshot ? <div><dt>Room</dt><dd>{selectedPayment.room_number_snapshot}</dd></div> : null}
@@ -6924,6 +6937,33 @@ function isTimeRangeLiveNow(startTime: string | null | undefined, endTime: strin
 function isLibraryStudentLiveNow(student: LibraryStudent, minuteOfDay: number) {
   return isTimeRangeLiveNow(student.start_time, student.end_time, minuteOfDay)
     || (student.extra_time_slots ?? []).some((slot) => isTimeRangeLiveNow(slot.start, slot.end, minuteOfDay));
+}
+
+/** Approval date(s) for the transaction details: per component for mixed payments, "Pending" until approved. */
+function transactionApprovalDateLabel(
+  payment: Payment | null,
+  expense: Expense | null,
+  record: { pendingApproval?: boolean; approvalDate?: string; date: string },
+  t: (key: string) => string,
+) {
+  const pending = t("pending");
+  if (payment) {
+    const cash = paymentCashAmount(payment) > 0;
+    const online = paymentOnlineAmount(payment) > 0;
+    const cashDate = payment.cash_posted_on ? displayDate(payment.cash_posted_on) : pending;
+    const onlineDate = payment.online_posted_on ? displayDate(payment.online_posted_on) : pending;
+    if (cash && online) return `${t("cash")} ${cashDate} · ${t("online")} ${onlineDate}`;
+    return online ? onlineDate : cashDate;
+  }
+  if (expense) return expense.posted_on ? displayDate(expense.posted_on) : pending;
+  if (record.pendingApproval) return pending;
+  return displayDate(record.approvalDate ?? record.date);
+}
+
+/** When the record was entered in the app (business time). */
+function recordCreatedLabel(createdAt: string | null | undefined) {
+  if (!createdAt) return "-";
+  return `${displayDate(indiaDateIso(createdAt))} · ${formatIndiaTime(createdAt)}`;
 }
 
 function displayDate(value: string | null | undefined) {
