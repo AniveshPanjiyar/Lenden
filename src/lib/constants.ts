@@ -18,7 +18,7 @@ export const staffPermissionValues = new Set<string>(
 export const businessLabels: Record<BusinessType, string> = {
   guest_house: "Guest House",
   library: "Library",
-  course: "Shikshan Sansthan",
+  course: "Courses",
   general: "General",
 };
 

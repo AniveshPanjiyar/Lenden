@@ -200,6 +200,47 @@ export async function saveBusinessModulesAction(
   }
 }
 
+const messageTemplateMaxLength = 1000;
+
+/** Owner-set WhatsApp templates for the student message button (empty = open WhatsApp blank). */
+export async function saveMessageTemplatesAction(
+  _state: BusinessUserActionState,
+  formData: FormData,
+): Promise<BusinessUserActionState> {
+  try {
+    const { identity, context } = await resolveBusinessContextFromRequest();
+    if (context.accessMode !== "support" && !isPrimaryOwner(context.membership?.role)) {
+      return { ok: false, message: "Only the Owner can change message templates." };
+    }
+    const clean = (key: string) => {
+      const value = formData.get(key);
+      return typeof value === "string" ? value.trim().slice(0, messageTemplateMaxLength) : "";
+    };
+    const templates = {
+      student_expired: clean("student_expired"),
+      student_active: clean("student_active"),
+    };
+    const { error } = await createAdminClient()
+      .from("businesses")
+      .update({ message_templates: templates })
+      .eq("id", context.business.id);
+    if (error) throw error;
+    await createAdminClient().from("audit_events").insert({
+      business_id: context.business.id,
+      actor_profile_id: identity.id,
+      event_type: "message_templates_updated",
+      entity_type: "business",
+      entity_id: context.business.id,
+      after_data: templates,
+    });
+    revalidatePath(`/b/${context.business.slug}`);
+    revalidatePath(`/b/${context.business.slug}/manage`);
+    return { ok: true, message: "Message templates saved." };
+  } catch (error) {
+    return businessActionError(error, "Could not save message templates.");
+  }
+}
+
 export async function transferPrimaryOwnershipAction(
   _state: BusinessUserActionState,
   formData: FormData,

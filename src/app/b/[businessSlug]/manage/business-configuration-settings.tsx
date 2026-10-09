@@ -36,6 +36,7 @@ import type {
 } from "@/lib/types";
 import {
   saveBusinessModulesAction,
+  saveMessageTemplatesAction,
   type BusinessUserActionState,
 } from "./actions";
 
@@ -202,12 +203,20 @@ export function BusinessSetupSettings({
   courses,
   referrals,
   profiles,
+  enabledModules,
+  messageTemplates,
 }: {
   rooms: Room[];
   courses: Course[];
   referrals: ReferralCode[];
   profiles: ProfileOption[];
+  /** Only the setup for enabled business units is shown. */
+  enabledModules: BusinessType[];
+  messageTemplates: { student_expired?: string; student_active?: string };
 }) {
+  const showRooms = enabledModules.includes("guest_house");
+  const showCourses = enabledModules.includes("course");
+  const showMessages = enabledModules.includes("library") || enabledModules.includes("course");
   const router = useRouter();
   const [notice, setNotice] = useState<ActionResult | null>(null);
   const salesAgents = profiles.filter((profile) => profile.role === "sales_agent");
@@ -236,6 +245,7 @@ export function BusinessSetupSettings({
         </>
       ) : null}
 
+      {showRooms ? (
       <section className="admin-panel business-setup-section">
         <div className="business-users-heading">
           <div>
@@ -273,7 +283,9 @@ export function BusinessSetupSettings({
           <span className="business-setup-form-icon"><Plus size={18} /></span>
         </BusinessMutationForm>
       </section>
+      ) : null}
 
+      {showCourses ? (
       <section className="admin-panel business-setup-section">
         <div className="business-users-heading">
           <div>
@@ -307,7 +319,9 @@ export function BusinessSetupSettings({
           <span className="business-setup-form-icon"><BookOpen size={18} /></span>
         </BusinessMutationForm>
       </section>
+      ) : null}
 
+      {showCourses ? (
       <section className="admin-panel business-setup-section">
         <div className="business-users-heading">
           <div>
@@ -351,7 +365,54 @@ export function BusinessSetupSettings({
           <label>Incentive value<input name="incentive_value" type="number" min="0" step="0.01" required /></label>
         </BusinessMutationForm>
       </section>
+      ) : null}
+      {showMessages ? <MessageTemplatesSettings templates={messageTemplates} /> : null}
+      {!showRooms && !showCourses && !showMessages ? (
+        <p className="admin-empty">No setup is needed for the enabled business units.</p>
+      ) : null}
     </div>
+  );
+}
+
+function MessageTemplatesSettings({ templates }: { templates: { student_expired?: string; student_active?: string } }) {
+  const router = useRouter();
+  const [state, formAction, pending] = useActionState(saveMessageTemplatesAction, initialBusinessActionState);
+  useEffect(() => {
+    if (state.ok) router.refresh();
+  }, [router, state.ok]);
+
+  return (
+    <section className="admin-panel business-setup-section">
+      <div className="business-users-heading">
+        <div>
+          <p className="eyebrow">WhatsApp</p>
+          <h2>Student messages</h2>
+          <p>
+            Prefilled text for the WhatsApp button on student cards. Leave empty to open WhatsApp with a blank message.
+            You can use {"{name}"}, {"{roll}"}, {"{end_date}"}, {"{days}"} and {"{business}"}.
+          </p>
+        </div>
+      </div>
+      <form action={formAction} className="business-setup-form message-templates">
+        <label>
+          Expired students
+          <textarea name="student_expired" rows={4} maxLength={1000} defaultValue={templates.student_expired ?? ""}
+            placeholder="आपका {business} का सब्सक्रिप्शन {end_date} को खत्म हो गया है। कृपया रिन्यू करवाएँ।" />
+        </label>
+        <label>
+          Active students
+          <textarea name="student_active" rows={4} maxLength={1000} defaultValue={templates.student_active ?? ""}
+            placeholder="आपका सब्सक्रिप्शन {days} दिन में खत्म होगा ({end_date})।" />
+        </label>
+        {state.message ? (
+          <p className={state.ok ? "form-success" : "form-error"} role={state.ok ? "status" : "alert"}>
+            {state.message}
+            {state.errorId ? ` Reference: ${state.errorId}.` : ""}
+          </p>
+        ) : null}
+        <button className="primary-button" type="submit" disabled={pending}>{pending ? "Saving…" : "Save messages"}</button>
+      </form>
+    </section>
   );
 }
 

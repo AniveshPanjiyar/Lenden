@@ -393,6 +393,8 @@ const messages: Record<Language, Record<string, string>> = {
     seatAssigned: "Seat assigned",
     lockerAssigned: "Locker assigned",
     expiringSoon: "Expiring soon",
+    expiredFilter: "Expired",
+    remainingFilter: "Remaining",
     sortBy: "Sort by",
     sortExpiry: "Expiry",
     expiringSoonHelp: "Expiring soon = subscription ends within the next 7 days.",
@@ -802,7 +804,7 @@ const messages: Record<Language, Record<string, string>> = {
     transferDate: "Transfer date",
     settlementHistory: "Settlement history",
     settlements: "Settlements",
-    shikshanSansthan: "Shikshan Sansthan",
+    shikshanSansthan: "Courses",
     slotHours: "Slot hours",
     staff: "Staff",
     staffBusinessStatus: "My service status",
@@ -909,6 +911,8 @@ const messages: Record<Language, Record<string, string>> = {
     seatAssigned: "सीट मिली",
     lockerAssigned: "लॉकर मिला",
     expiringSoon: "जल्द खत्म",
+    expiredFilter: "खत्म हो चुके",
+    remainingFilter: "बाकी वाले",
     sortBy: "क्रम",
     sortExpiry: "खत्म होने की तारीख",
     expiringSoonHelp: "जल्द खत्म = अगले 7 दिनों में सब्सक्रिप्शन खत्म।",
@@ -1318,7 +1322,7 @@ const messages: Record<Language, Record<string, string>> = {
     transferDate: "ट्रांसफर तारीख",
     settlementHistory: "सेटलमेंट हिसाब",
     settlements: "सेटलमेंट",
-    shikshanSansthan: "शिक्षण संस्थान",
+    shikshanSansthan: "कोर्स",
     slotHours: "घंटा",
     staff: "स्टाफ",
     staffBusinessStatus: "मेरे काम का स्टेटस",
@@ -3933,6 +3937,8 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
               <LibraryStudentsView
                 businessId={businessId}
                 cacheScope={cacheScope}
+                messageTemplates={appData.businessContext.business.message_templates ?? null}
+                businessName={appData.businessContext.business.name}
                 students={appData.libraryStudents}
                 courseStudentRows={appData.courseStudents}
                 courses={appData.courses}
@@ -6982,17 +6988,19 @@ function displayTextValue(value: string | number | null | undefined) {
   return text || "-";
 }
 
-const libraryRenewalReminderMessage =
-  "आपका लाइब्रेरी का सब्सक्रिप्शन समाप्त हो गया है। लाइब्रेरी जारी रखने के लिए अपना सब्सक्रिप्शन रिन्यू करवाएँ। "
-  + "या सब्सक्रिप्शन पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
+/** Fills the owner's template: {name}, {roll}, {end_date}, {days}, {business}. */
+function fillStudentMessageTemplate(template: string | null | undefined, values: Record<string, string>) {
+  if (!template?.trim()) return "";
+  return template.replace(/\{(name|roll|end_date|days|business)\}/g, (_, key: string) => values[key] ?? "");
+}
 
-/** Opens the student's WhatsApp chat with the renewal reminder prefilled (Indian numbers get +91). */
+/** Opens the student's WhatsApp chat (Indian numbers get +91), with the message prefilled if any. */
 function studentWhatsAppHref(phoneNumber: string | null | undefined, message: string) {
   let digits = phoneNumber?.replace(/\D/g, "") ?? "";
   if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
   if (digits.length === 10) digits = `91${digits}`;
   if (digits.length < 11) return null;
-  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  return message ? `https://wa.me/${digits}?text=${encodeURIComponent(message)}` : `https://wa.me/${digits}`;
 }
 
 /** Search is mostly by roll number: exact roll, then roll prefix, then roll contains, then the rest. */
@@ -7401,6 +7409,8 @@ function rosterFlagLabel(flag: StudentRosterFlag, t: (key: string) => string) {
   if (flag === "full_time") return t("fullTime");
   if (flag === "seat") return t("seatAssigned");
   if (flag === "locker") return t("lockerAssigned");
+  if (flag === "expired") return t("expiredFilter");
+  if (flag === "remaining") return t("remainingFilter");
   return t("expiringSoon");
 }
 
@@ -7439,7 +7449,9 @@ function StudentRosterFilterSheet({
     ...(library ? [{ value: "seat" as const, label: t("seatNumber") }] : []),
   ];
   // Seats and lockers exist only for library students.
-  const options: StudentRosterFlag[] = library ? ["full_time", "seat", "locker", "expiring"] : ["full_time", "expiring"];
+  const options: StudentRosterFlag[] = library
+    ? ["expired", "remaining", "expiring", "full_time", "seat", "locker"]
+    : ["expired", "remaining", "expiring", "full_time"];
   const toggle = (flag: StudentRosterFlag) =>
     setDraft((current) => current.includes(flag) ? current.filter((item) => item !== flag) : [...current, flag]);
   if (typeof document === "undefined") return null;
@@ -8214,16 +8226,19 @@ function StudentRosterCard({
   selected,
   showCallAction,
   onOpen,
+  whatsappMessage,
 }: {
   student: StudentRosterCardViewModel;
   selected: boolean;
   showCallAction: boolean;
   onOpen: () => void;
+  /** Prefilled WhatsApp text from the business template ("" = blank message). */
+  whatsappMessage?: string;
 }) {
   const { t } = useLanguage();
   const callHref = showCallAction ? studentPhoneHref(student.phoneNumber) : null;
   const seat = student.seatNumber?.trim() && student.seatNumber.trim() !== "-" ? student.seatNumber.trim() : null;
-  const whatsappHref = showCallAction ? studentWhatsAppHref(student.phoneNumber, libraryRenewalReminderMessage) : null;
+  const whatsappHref = showCallAction ? studentWhatsAppHref(student.phoneNumber, whatsappMessage ?? "") : null;
 
   return (
     <article
@@ -8623,7 +8638,12 @@ function LibraryStudentsView({
   setListMode,
   setNotice,
   startTransition,
+  messageTemplates = null,
+  businessName = "",
 }: {
+  /** Business WhatsApp templates for the student message button. */
+  messageTemplates?: { student_expired?: string; student_active?: string } | null;
+  businessName?: string;
   businessId: string;
   cacheScope: string;
   variant?: "page" | "collection";
@@ -8741,6 +8761,8 @@ function LibraryStudentsView({
       if (flag === "full_time") return record.startTime?.slice(0, 5) === libraryFullTimeStart && record.endTime?.slice(0, 5) === libraryFullTimeEnd;
       if (flag === "seat") return Boolean(record.seat?.trim() && record.seat.trim() !== "-");
       if (flag === "locker") return Boolean(record.locker?.trim() && record.locker.trim() !== "-");
+      if (flag === "expired") return Boolean(record.endDate && record.endDate < today);
+      if (flag === "remaining") return Boolean(record.endDate && record.endDate >= today);
       return Boolean(record.endDate && record.endDate >= today && record.endDate <= expiringUntil);
     });
   const visibleStudents = showingLibraryStudents ? sourceStudents
@@ -9096,6 +9118,16 @@ function LibraryStudentsView({
                 selected={selectedStudent?.id === student.id}
                 showCallAction={allowCallActions}
                 onOpen={() => openStudentDetails(student.id)}
+                whatsappMessage={fillStudentMessageTemplate(
+                  expired(student) ? messageTemplates?.student_expired : messageTemplates?.student_active,
+                  {
+                    name: displayName,
+                    roll: rollNumber,
+                    end_date: displayDate(student.subscription_end_date),
+                    days: String(Math.abs(daysBetweenIsoDates(today, student.subscription_end_date) ?? 0)),
+                    business: businessName,
+                  },
+                )}
               />
             );
           })}

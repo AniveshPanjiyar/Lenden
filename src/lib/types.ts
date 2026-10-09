@@ -41,6 +41,8 @@ export type Business = {
   timezone: string;
   currency: string;
   created_at: string;
+  /** WhatsApp templates set by the owner; placeholders like {name} are filled per student. */
+  message_templates?: { student_expired?: string; student_active?: string } | null;
 };
 
 export type BusinessMembership = {
@@ -826,4 +828,4 @@ export type PendingApprovalsPayload = {
   expenses: Expense[];
 };
 
-export type StudentRosterFlag = "full_time" | "seat" | "locker" | "expiring";
+export type StudentRosterFlag = "full_time" | "seat" | "locker" | "expiring" | "expired" | "remaining";

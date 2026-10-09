@@ -209,6 +209,8 @@ export default async function BusinessManagePage({
           courses={(courses ?? []) as Course[]}
           referrals={(referrals ?? []) as ReferralCode[]}
           profiles={profileOptions}
+          enabledModules={[...enabledModules] as BusinessType[]}
+          messageTemplates={context.business.message_templates ?? {}}
         />
       ) : null}
 

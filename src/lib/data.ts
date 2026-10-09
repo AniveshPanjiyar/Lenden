@@ -979,7 +979,7 @@ export async function getStudentCollectionPage(
   };
 }
 
-const studentRosterFlags = ["full_time", "seat", "locker", "expiring"] as const satisfies StudentRosterFlag[];
+const studentRosterFlags = ["full_time", "seat", "locker", "expiring", "expired", "remaining"] as const satisfies StudentRosterFlag[];
 const expiringSoonDays = 7;
 
 function parseStudentRosterFlags(value: string | null | undefined): StudentRosterFlag[] {
@@ -1009,9 +1009,13 @@ function applyStudentRosterFlags<Q extends {
   not: (column: string, operator: string, value: unknown) => Q;
   gte: (column: string, value: unknown) => Q;
   lte: (column: string, value: unknown) => Q;
+  lt: (column: string, value: unknown) => Q;
 }>(query: Q, flags: StudentRosterFlag[], source: "library" | "course", today: string) {
   let next = query;
   if (flags.includes("full_time")) next = next.eq("start_time", "07:00").eq("end_time", "22:00");
+  // Expired: subscription ended before today. Remaining: still running (ends today or later).
+  if (flags.includes("expired")) next = next.lt("subscription_end_date", today);
+  if (flags.includes("remaining")) next = next.gte("subscription_end_date", today);
   if (flags.includes("expiring")) {
     next = next.gte("subscription_end_date", today).lte("subscription_end_date", addDaysIsoDate(today, expiringSoonDays));
   }
@@ -1079,6 +1083,7 @@ export async function getStudentRosterPage(
       not: (column: string, operator: string, value: unknown) => LooseRosterQuery;
       gte: (column: string, value: unknown) => LooseRosterQuery;
       lte: (column: string, value: unknown) => LooseRosterQuery;
+      lt: (column: string, value: unknown) => LooseRosterQuery;
       limit: (count: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
     };
     const base = (table === "library_students"

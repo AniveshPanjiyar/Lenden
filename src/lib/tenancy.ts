@@ -99,7 +99,7 @@ export async function loadAvailableBusinesses(userId: string) {
 
   const { data: businessRows, error: businessError } = await supabase
     .from("businesses")
-    .select("id,name,slug,status,timezone,currency,created_at")
+    .select("id,name,slug,status,timezone,currency,created_at,message_templates")
     .in("id", memberships.map((membership) => membership.business_id))
     .eq("status", "active")
     .order("name");
@@ -125,7 +125,7 @@ export async function loadAllBusinessAccesses(userId: string) {
 
   const { data: businessRows, error: businessError } = await admin
     .from("businesses")
-    .select("id,name,slug,status,timezone,currency,created_at")
+    .select("id,name,slug,status,timezone,currency,created_at,message_templates")
     .in("id", memberships.map((membership) => membership.business_id))
     .order("name");
   if (businessError) throw new BusinessAccessError(businessError.message, 500);
@@ -156,7 +156,7 @@ export async function resolveBusinessContext(identifier: { id?: string; slug?: s
     const supabase = await createClient();
     let query = supabase
       .from("businesses")
-      .select("id,name,slug,status,timezone,currency,created_at")
+      .select("id,name,slug,status,timezone,currency,created_at,message_templates")
       .eq("status", "active");
     query = identifier.id ? query.eq("id", identifier.id) : query.eq("slug", identifier.slug ?? "");
     const { data: supportBusiness, error: businessError } = await query.maybeSingle();
@@ -252,7 +252,7 @@ export async function resolveBusinessReadContext(businessId: string): Promise<{
   const [businessResult, membershipResult] = await Promise.all([
     identityClient
       .from("businesses")
-      .select("id,name,slug,status,timezone,currency,created_at")
+      .select("id,name,slug,status,timezone,currency,created_at,message_templates")
       .eq("id", businessId)
       .maybeSingle(),
     identityClient
