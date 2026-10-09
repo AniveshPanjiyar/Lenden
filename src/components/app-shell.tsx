@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
-import { createPortal, useFormStatus } from "react-dom";
+import { createPortal, flushSync, useFormStatus } from "react-dom";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -821,6 +821,7 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
+    howWasItPaid: "How was it paid?",
     showing: "Showing",
     clearFilter: "Clear filter",
     changePaymentDate: "Change payment date",
@@ -1346,6 +1347,7 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
+    howWasItPaid: "भुगतान कैसे हुआ?",
     showing: "दिखा रहे हैं",
     clearFilter: "फ़िल्टर हटाएँ",
     changePaymentDate: "भुगतान की तारीख बदलें",
@@ -10312,6 +10314,11 @@ function PaymentForm({
   );
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<PaymentMode>("cash");
+  // Collect asks for the mode once more before saving, since it is easy to miss in the form.
+  const paymentFormRef = useRef<HTMLFormElement | null>(null);
+  const modeConfirmedRef = useRef(false);
+  const [modeSheetOpen, setModeSheetOpen] = useState(false);
+  const [modeSheetChoice, setModeSheetChoice] = useState<PaymentMode>("cash");
   const [cashCollection, setCashCollection] = useState("");
   const [onlineCollection, setOnlineCollection] = useState("");
   const [startTime, setStartTime] = useState(initialLibraryPrefill?.startTime ?? initialCoursePrefill?.startTime ?? "06:00");
@@ -10583,6 +10590,7 @@ function PaymentForm({
   const collectedNumber = mode === "mixed" ? splitCollectionNumber : paidNumber;
   const splitTotal = collectingStudentDues ? currentDueAmount : type === "library" || type === "course" ? feeNumber : amountNumber;
   const splitRemaining = Math.max(splitTotal - splitCollectionNumber, 0);
+  const singleModeAmount = type === "library" || type === "course" ? paidNumber : amountNumber;
   const dues = collectingStudentDues ? Math.max(currentDueAmount - collectedNumber, 0) : Math.max(feeNumber - collectedNumber, 0);
   const advance = collectingStudentDues ? Math.max(collectedNumber - currentDueAmount, 0) : Math.max(collectedNumber - feeNumber, 0);
   const slotHours = type === "library"
@@ -10626,12 +10634,42 @@ function PaymentForm({
       return;
     }
 
+    if (!modeConfirmedRef.current) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+      setModeSheetChoice(mode);
+      if (mode !== "mixed" && !cashCollection && !onlineCollection) {
+        setCashCollection(String(singleModeAmount || ""));
+        setOnlineCollection("");
+      }
+      setModeSheetOpen(true);
+      return;
+    }
+
     if (onSuccess) {
       submitAndClose(event, createPaymentAction, setNotice, startTransition, onSuccess);
       return;
     }
 
     submitWith(event, createPaymentAction, setNotice, startTransition);
+  }
+
+  function confirmModeAndCollect() {
+    if (modeSheetChoice === "mixed" && (Number(cashCollection || 0) <= 0 || Number(onlineCollection || 0) <= 0)) return;
+    // Render the chosen mode (and the mixed split fields) into the form before submitting it.
+    flushSync(() => {
+      setMode(modeSheetChoice);
+      setModeSheetOpen(false);
+    });
+    // requestSubmit runs the submit handler synchronously; clear the flag either way so a submit
+    // that never happens cannot let the next Collect skip this question.
+    modeConfirmedRef.current = true;
+    paymentFormRef.current?.requestSubmit();
+    modeConfirmedRef.current = false;
   }
 
   function resetLibraryFieldsForNewStudent() {
@@ -10859,6 +10897,7 @@ function PaymentForm({
     <form
       className="form-grid two"
       onSubmit={handlePaymentSubmit}
+      ref={paymentFormRef}
     >
       <input type="hidden" name="business_type" value={type} />
       {type === "guest_house" ? (
@@ -11705,6 +11744,58 @@ function PaymentForm({
             {collectingStudentDues ? t("collectDue") : t("collectPayment")}
           </button>
         </>
+      ) : null}
+      {modeSheetOpen && typeof document !== "undefined" ? createPortal(
+        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("howWasItPaid")}>
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setModeSheetOpen(false)} />
+          <section className="action-sheet payment-mode-sheet">
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{collectingStudentDues ? t("collectDue") : t("collectPayment")}</p>
+                <h2>{t("howWasItPaid")}</h2>
+                {modeSheetChoice !== "mixed" ? <span>{formatMoney(singleModeAmount)}</span> : null}
+              </div>
+              <button className="icon-button" type="button" onClick={() => setModeSheetOpen(false)} aria-label={t("closeModal")}><X size={18} /></button>
+            </header>
+            <div className="payment-mode-choices" role="radiogroup" aria-label={t("mode")}>
+              {(["cash", "online", "mixed"] as const).map((option) => (
+                <button
+                  aria-checked={modeSheetChoice === option}
+                  className={modeSheetChoice === option ? "active" : ""}
+                  key={option}
+                  onClick={() => setModeSheetChoice(option)}
+                  role="radio"
+                  type="button"
+                >
+                  {option === "cash" ? <Banknote size={22} /> : option === "online" ? <CreditCard size={22} /> : <WalletCards size={22} />}
+                  <span>{t(option)}</span>
+                </button>
+              ))}
+            </div>
+            {modeSheetChoice === "mixed" ? (
+              <div className="payment-mode-split">
+                <label>
+                  {t("cashCollection")}
+                  <input type="number" inputMode="numeric" min="0" step="1" value={cashCollection} onChange={(event) => setCashCollection(event.target.value)} />
+                </label>
+                <label>
+                  {t("onlineCollection")}
+                  <input type="number" inputMode="numeric" min="0" step="1" value={onlineCollection} onChange={(event) => setOnlineCollection(event.target.value)} />
+                </label>
+                <p className="muted">{t("total")} {formatMoney(splitCollectionNumber)}{splitTotal > 0 ? ` · ${t("remaining")} ${formatMoney(splitRemaining)}` : ""}</p>
+              </div>
+            ) : null}
+            <button
+              className="primary-button payment-mode-confirm"
+              type="button"
+              disabled={modeSheetChoice === "mixed" && (Number(cashCollection || 0) <= 0 || Number(onlineCollection || 0) <= 0)}
+              onClick={confirmModeAndCollect}
+            >
+              {collectingStudentDues ? t("collectDue") : t("collectPayment")} · {t(modeSheetChoice)}
+            </button>
+          </section>
+        </div>,
+        document.body,
       ) : null}
     </form>
   );
