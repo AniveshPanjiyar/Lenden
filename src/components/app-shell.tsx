@@ -85,9 +85,7 @@ import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDa
 import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, StudentRosterFlag, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
-  defaultClosingFilters,
   defaultDashboardFilters,
-  defaultTransactionDateFilterKey,
   defaultTransactionFilters,
   parseAppViewState,
   rangeForPreset,
@@ -822,7 +820,6 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
-    dateBasisCreated: "Created",
     dateBasisApproval: "Approval",
     dateBasisPayment: "Payment",
     totalClosing: "Total closing",
@@ -1344,7 +1341,6 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
-    dateBasisCreated: "बनी",
     dateBasisApproval: "मंजूरी",
     dateBasisPayment: "भुगतान",
     totalClosing: "कुल बंद हिसाब",
@@ -1579,9 +1575,7 @@ function applyMutationPatch(
     if (patch.payment) {
       const approvalDates = [patch.payment.cash_posted_on, patch.payment.online_posted_on]
         .filter((value): value is string => Boolean(value));
-      const displayDates = dateFilterKey === "created"
-        ? [indiaDateIso(patch.payment.created_at)]
-        : dateFilterKey === "transaction" || approvalDates.length === 0
+      const displayDates = dateFilterKey === "transaction" || approvalDates.length === 0
         ? [patch.payment.payment_date]
         : approvalDates;
       const inRange = displayDates.some((date) => date >= rangeFrom && date <= closingDate) ||
@@ -2869,8 +2863,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
         const presetRange = rangeForPreset(preset ?? "today");
         const rangeFrom = params.get("from") ?? presetRange.from;
         const closingDate = params.get("to") ?? presetRange.to;
-        const rawDateKey = params.get("dateKey");
-        const cachedDateFilterKey: DateFilterKey = rawDateKey === "transaction" || rawDateKey === "created" ? rawDateKey : "approval";
+        const cachedDateFilterKey = params.get("dateKey") === "transaction" ? "transaction" : "approval";
         queryClient.setQueryData<DashboardPayload>(queryKey, applyMutationPatch(
           current,
           patch,
@@ -3229,11 +3222,11 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const transactionPostingEvents = useMemo(
     () => appData.financialActivity.length > 0
       ? [
-          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens, appData.businessContext.business.timezone),
+          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens),
           ...postingEvents.filter((event) => event.source_type === "agent_settlement"),
         ]
       : postingEvents,
-    [appData.businessContext.business.timezone, appData.financialActivity, postingEvents, transactionFilters.lens],
+    [appData.financialActivity, postingEvents, transactionFilters.lens],
   );
   const selectedBusiness = dashboardFilters.businessType;
   const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
@@ -3476,30 +3469,39 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
 
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
   const focusedPage = tab === "library_students" || tab === "notifications";
-  const showOperationalFilters = tab === "home" || tab === "payments" || tab === "closing";
-  // One date switch in the header for every page with dates; each page keeps its own choice.
-  const headerDateBasis: { value: DateFilterKey; options: DateFilterKey[]; onChange: (value: DateFilterKey) => void } | null =
-    currentUserIsSalesAgent
-      ? null
-      : tab === "home"
+  // Closing has no filters beyond its date, which lives in the header.
+  const showOperationalFilters = tab === "home" || tab === "payments";
+  // Date (or range) and the Approval / Payment switch live in the header on every page with dates;
+  // each page keeps its own choice.
+  const headerDateControls: {
+    basis: DateFilterKey;
+    onBasisChange: (value: DateFilterKey) => void;
+    range?: DateRangeState;
+    onRangeChange?: (value: DateRangeState) => void;
+    date?: string;
+    onDateChange?: (value: string) => void;
+  } | null = tab === "home"
+    ? {
+        basis: dashboardFilters.dateFilterKey,
+        onBasisChange: (dateFilterKey) => setDashboardFilters((current) => ({ ...current, dateFilterKey })),
+        range: dashboardFilters.dateRange,
+        onRangeChange: (dateRange) => setDashboardFilters((current) => ({ ...current, dateRange })),
+      }
+    : tab === "payments"
+      ? {
+          basis: transactionFilters.dateFilterKey,
+          onBasisChange: (dateFilterKey) => setTransactionFilters((current) => ({ ...current, dateFilterKey })),
+          range: transactionFilters.dateRange,
+          onRangeChange: (dateRange) => setTransactionFilters((current) => ({ ...current, dateRange })),
+        }
+      : tab === "closing"
         ? {
-            value: dashboardFilters.dateFilterKey,
-            options: ["approval", "transaction"],
-            onChange: (dateFilterKey) => setDashboardFilters((current) => ({ ...current, dateFilterKey })),
+            basis: closingFilters.dateFilterKey,
+            onBasisChange: (dateFilterKey) => setClosingFilters((current) => ({ ...current, dateFilterKey })),
+            date: closingFilters.date,
+            onDateChange: (date) => setClosingFilters((current) => ({ ...current, date })),
           }
-        : tab === "payments"
-          ? {
-              value: transactionFilters.dateFilterKey,
-              options: ["created", "approval", "transaction"],
-              onChange: (dateFilterKey) => setTransactionFilters((current) => ({ ...current, dateFilterKey })),
-            }
-          : tab === "closing"
-            ? {
-                value: closingFilters.dateFilterKey,
-                options: ["approval", "transaction"],
-                onChange: (dateFilterKey) => setClosingFilters((current) => ({ ...current, dateFilterKey })),
-              }
-            : null;
+        : null;
   const currentPageTitle = tab === "notifications"
     ? t("notifications")
     : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
@@ -3532,20 +3534,13 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
       : `${closingDate} · ${dateBasisLabel(closingFilters.dateFilterKey)}`;
   const activeFilterChips: { key: string; label: string; clear: () => void }[] = [];
   if (tab === "home") {
-    if (dashboardFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: dashboardDateRangeLabel, clear: () => setDashboardFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
-    if (dashboardFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(dashboardFilters.dateFilterKey), clear: () => setDashboardFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
     if (dashboardFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(dashboardFilters.businessType, t), clear: () => setDashboardFilters((current) => ({ ...current, businessType: "all" })) });
   } else if (tab === "payments") {
-    if (transactionFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: transactionDateRangeLabel, clear: () => setTransactionFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
-    if (transactionFilters.dateFilterKey !== defaultTransactionDateFilterKey) activeFilterChips.push({ key: "date-key", label: dateBasisLabel(transactionFilters.dateFilterKey), clear: () => setTransactionFilters((current) => ({ ...current, dateFilterKey: defaultTransactionDateFilterKey })) });
     if (transactionFilters.lens === "business" && transactionFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: "all" })) });
     if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
     if (transactionFilters.recordType !== "all") activeFilterChips.push({ key: "type", label: transactionRecordLabel(transactionFilters.recordType), clear: () => setTransactionFilters((current) => ({ ...current, recordType: "all" })) });
     if (transactionFilters.mode !== "all") activeFilterChips.push({ key: "mode", label: transactionModeLabel(transactionFilters.mode), clear: () => setTransactionFilters((current) => ({ ...current, mode: "all" })) });
     if (transactionFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(transactionFilters.businessType, t), clear: () => setTransactionFilters((current) => ({ ...current, businessType: "all" })) });
-  } else if (tab === "closing") {
-    if (closingFilters.date !== todayIso()) activeFilterChips.push({ key: "date", label: closingFilters.date, clear: () => setClosingFilters((current) => ({ ...current, date: todayIso() })) });
-    if (closingFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(closingFilters.dateFilterKey), clear: () => setClosingFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
   }
   const busyMessage = actionBusyMessageKey
     ? t(actionBusyMessageKey)
@@ -3599,12 +3594,16 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
             <SafeAvatarImage alt="" className="w-full h-full object-cover" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
             {!currentUserIsSalesAgent && unreadNotifications > 0 ? <span className="profile-unread-dot" aria-hidden="true" /> : null}
           </button>
-          {headerDateBasis ? (
-            <DateBasisToggle
-              value={headerDateBasis.value}
-              options={headerDateBasis.options}
-              onChange={headerDateBasis.onChange}
-            />
+          {headerDateControls ? (
+            <div className="header-date-controls">
+              <HeaderDatePicker
+                range={headerDateControls.range}
+                onRangeChange={headerDateControls.onRangeChange}
+                date={headerDateControls.date}
+                onDateChange={headerDateControls.onDateChange}
+              />
+              <DateBasisToggle value={headerDateControls.basis} onChange={headerDateControls.onBasisChange} />
+            </div>
           ) : (
             <>
               <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
@@ -3908,7 +3907,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 defaultProfileId={appData.profile.id}
                 onApplyDashboard={setDashboardFilters}
                 onApplyTransactions={setTransactionFilters}
-                onApplyClosing={setClosingFilters}
                 onPrefetch={prefetchOperationalFilters}
                 onClose={() => setFilterDrawerOpen(false)}
               />
@@ -4387,72 +4385,8 @@ function PendingReviewSheet({
   );
 }
 
-function FilterDateRangeFields({
-  value,
-  onChange,
-}: {
-  value: DateRangeState;
-  onChange: (value: DateRangeState) => void;
-}) {
-  const { t } = useLanguage();
-  return (
-    <div className="operational-filter-section">
-      <div className="operational-filter-section-heading">
-        <CalendarDays size={18} />
-        <strong>{t("dateRange")}</strong>
-      </div>
-      <label className="operational-filter-field">
-        <span>{t("dateRange")}</span>
-        <select
-          value={value.preset}
-          onChange={(event) => onChange(rangeForPreset(event.target.value as DateRangePreset, value))}
-        >
-          {dateRangeOptions.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
-        </select>
-      </label>
-      {value.preset === "custom" ? (
-        <div className="operational-filter-date-grid">
-          <label className="operational-filter-field">
-            <span>{t("startDate")}</span>
-            <input type="date" value={value.from} onChange={(event) => onChange({ ...value, from: event.target.value })} />
-          </label>
-          <label className="operational-filter-field">
-            <span>{t("endDate")}</span>
-            <input type="date" value={value.to} onChange={(event) => onChange({ ...value, to: event.target.value })} />
-          </label>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function dateFilterKeyLabel(key: DateFilterKey, t: (key: string) => string) {
-  return key === "created" ? t("recordCreated") : key === "transaction" ? t("transactionDate") : t("approvalDate");
-}
-
-function FilterDateBasisFields({
-  value,
-  onChange,
-  options = ["approval", "transaction"],
-}: {
-  value: DateFilterKey;
-  onChange: (value: DateFilterKey) => void;
-  options?: DateFilterKey[];
-}) {
-  const { t } = useLanguage();
-  return (
-    <fieldset className="operational-filter-section">
-      <legend>{t("dateKey")}</legend>
-      <div className="operational-filter-choice-grid">
-        {options.map((option) => (
-          <label className={value === option ? "selected" : ""} key={option}>
-            <input type="radio" name="filter-date-basis" value={option} checked={value === option} onChange={() => onChange(option)} />
-            <span>{dateFilterKeyLabel(option, t)}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
+  return key === "transaction" ? t("transactionDate") : t("approvalDate");
 }
 
 function OperationalFilterDrawer({
@@ -4467,7 +4401,6 @@ function OperationalFilterDrawer({
   defaultProfileId,
   onApplyDashboard,
   onApplyTransactions,
-  onApplyClosing,
   onPrefetch,
   onClose,
 }: {
@@ -4482,7 +4415,6 @@ function OperationalFilterDrawer({
   defaultProfileId: string;
   onApplyDashboard: (filters: DashboardFilterState) => void;
   onApplyTransactions: (filters: TransactionFilterState) => void;
-  onApplyClosing: (filters: ClosingFilterState) => void;
   onPrefetch: (
     tab: AppTab,
     dashboardFilters: DashboardFilterState,
@@ -4495,8 +4427,6 @@ function OperationalFilterDrawer({
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [dashboardDraft, setDashboardDraft] = useState(dashboardFilters);
   const [transactionDraft, setTransactionDraft] = useState(transactionFilters);
-  const [closingDraft, setClosingDraft] = useState(closingFilters);
-  const [error, setError] = useState("");
   const mountDialog = useCallback((node: HTMLDialogElement | null) => {
     dialogRef.current = node;
     if (node && !node.open) node.showModal();
@@ -4506,28 +4436,18 @@ function OperationalFilterDrawer({
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      void onPrefetch(tab, dashboardDraft, transactionDraft, closingDraft);
+      void onPrefetch(tab, dashboardDraft, transactionDraft, closingFilters);
     }, 250);
     return () => window.clearTimeout(timeout);
-  }, [closingDraft, dashboardDraft, onPrefetch, tab, transactionDraft]);
+  }, [closingFilters, dashboardDraft, onPrefetch, tab, transactionDraft]);
 
-  function dateRangeIsValid(range: DateRangeState) {
-    return range.preset !== "custom" || Boolean(range.from && range.to && range.from <= range.to);
-  }
-
+  // The date, range and date basis are set from the header; reset keeps them.
   function resetDraft() {
-    setError("");
-    if (tab === "home") setDashboardDraft(defaultDashboardFilters());
-    if (tab === "payments") setTransactionDraft(defaultTransactionFilters(defaultProfileId));
-    if (tab === "closing") setClosingDraft(defaultClosingFilters());
+    if (tab === "home") setDashboardDraft((current) => ({ ...defaultDashboardFilters(), dateRange: current.dateRange, dateFilterKey: current.dateFilterKey }));
+    if (tab === "payments") setTransactionDraft((current) => ({ ...defaultTransactionFilters(defaultProfileId), dateRange: current.dateRange, dateFilterKey: current.dateFilterKey }));
   }
 
   function applyDraft() {
-    const range = tab === "home" ? dashboardDraft.dateRange : tab === "payments" ? transactionDraft.dateRange : null;
-    if (range && !dateRangeIsValid(range)) {
-      setError(t("filterDateError"));
-      return;
-    }
     close();
     window.requestAnimationFrame(() => {
       if (tab === "home") onApplyDashboard(dashboardDraft);
@@ -4539,7 +4459,6 @@ function OperationalFilterDrawer({
             ? transactionDraft.profileId
             : defaultProfileId,
       });
-      if (tab === "closing") onApplyClosing(closingDraft);
     });
   }
 
@@ -4581,8 +4500,6 @@ function OperationalFilterDrawer({
         <div className="operational-filter-body">
           {tab === "home" ? (
             <>
-              <FilterDateRangeFields value={dashboardDraft.dateRange} onChange={(dateRange) => setDashboardDraft((current) => ({ ...current, dateRange }))} />
-              <FilterDateBasisFields value={dashboardDraft.dateFilterKey} onChange={(dateFilterKey) => setDashboardDraft((current) => ({ ...current, dateFilterKey }))} />
               <label className="operational-filter-field operational-filter-section">
                 <span>{t("businessModule")}</span>
                 <select value={dashboardDraft.businessType} onChange={(event) => setDashboardDraft((current) => ({ ...current, businessType: event.target.value as BusinessTypeFilter }))}>
@@ -4594,8 +4511,6 @@ function OperationalFilterDrawer({
           ) : null}
           {tab === "payments" ? (
             <>
-              <FilterDateRangeFields value={transactionDraft.dateRange} onChange={(dateRange) => setTransactionDraft((current) => ({ ...current, dateRange }))} />
-              <FilterDateBasisFields options={["created", "approval", "transaction"]} value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
               <label className="operational-filter-field operational-filter-section">
                 <span>View</span>
                 <select
@@ -4652,16 +4567,6 @@ function OperationalFilterDrawer({
               ) : null}
             </>
           ) : null}
-          {tab === "closing" ? (
-            <>
-              <label className="operational-filter-field operational-filter-section">
-                <span>{t("settlementDate")}</span>
-                <input type="date" value={closingDraft.date} onChange={(event) => setClosingDraft((current) => ({ ...current, date: event.target.value || todayIso() }))} />
-              </label>
-              <FilterDateBasisFields value={closingDraft.dateFilterKey} onChange={(dateFilterKey) => setClosingDraft((current) => ({ ...current, dateFilterKey }))} />
-            </>
-          ) : null}
-          {error ? <p className="operational-filter-error" role="alert">{error}</p> : null}
         </div>
         <footer>
           <button className="operational-filter-reset" type="button" onClick={resetDraft}>{t("resetFilters")}</button>
@@ -4677,18 +4582,15 @@ function OperationalFilterDrawer({
 
 function DateBasisToggle({
   value,
-  options,
   onChange,
 }: {
   value: DateFilterKey;
-  options: DateFilterKey[];
   onChange: (value: DateFilterKey) => void;
 }) {
   const { t } = useLanguage();
-  const shortLabel = (key: DateFilterKey) => key === "created" ? t("dateBasisCreated") : key === "transaction" ? t("dateBasisPayment") : t("dateBasisApproval");
   return (
     <div className="date-basis-toggle" role="group" aria-label={t("dateKey")}>
-      {options.map((option) => (
+      {(["approval", "transaction"] as const).map((option) => (
         <button
           aria-pressed={value === option}
           className={value === option ? "active" : ""}
@@ -4697,25 +4599,167 @@ function DateBasisToggle({
           title={dateFilterKeyLabel(option, t)}
           type="button"
         >
-          {shortLabel(option)}
+          {option === "transaction" ? t("dateBasisPayment") : t("dateBasisApproval")}
         </button>
       ))}
     </div>
   );
 }
 
+function shortDayLabel(isoDate: string) {
+  const date = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? isoDate
+    : date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+// "9 Oct", "1–9 Oct", or "28 Sep – 9 Oct": short enough for the header.
+function shortRangeLabel(from: string, to: string) {
+  if (from === to) return shortDayLabel(from);
+  if (from.slice(0, 7) === to.slice(0, 7)) return `${Number(from.slice(8, 10))}–${shortDayLabel(to)}`;
+  return `${shortDayLabel(from)} – ${shortDayLabel(to)}`;
+}
+
+// Header date button: a date range (Dashboard, Transactions) or a single day (Closing).
+function HeaderDatePicker({
+  range,
+  onRangeChange,
+  date,
+  onDateChange,
+}: {
+  range?: DateRangeState;
+  onRangeChange?: (value: DateRangeState) => void;
+  date?: string;
+  onDateChange?: (value: string) => void;
+}) {
+  const { t } = useLanguage();
+  const [open, setOpen] = useState(false);
+  const [draftRange, setDraftRange] = useState<DateRangeState | null>(null);
+  const [draftDate, setDraftDate] = useState("");
+  const today = todayIso();
+  const yesterday = rangeForPreset("yesterday").from;
+
+  const label = range
+    ? range.preset === "custom"
+      ? shortRangeLabel(range.from, range.to)
+      : t(dateRangeOptions.find((option) => option.value === range.preset)?.labelKey ?? "today")
+    : date === today
+      ? t("today")
+      : date === yesterday
+        ? t("yesterday")
+        : shortDayLabel(date ?? today);
+
+  function openPicker() {
+    setDraftRange(range ? { ...range } : null);
+    setDraftDate(date ?? today);
+    setOpen(true);
+  }
+
+  function chooseRangePreset(preset: DateRangePreset) {
+    if (!range || !onRangeChange) return;
+    if (preset === "custom") {
+      setDraftRange(rangeForPreset("custom", draftRange ?? range));
+      return;
+    }
+    onRangeChange(rangeForPreset(preset));
+    setOpen(false);
+  }
+
+  function applyCustom() {
+    if (range && onRangeChange && draftRange) {
+      if (!draftRange.from || !draftRange.to || draftRange.from > draftRange.to) return;
+      onRangeChange(draftRange);
+    }
+    if (!range && onDateChange) onDateChange(draftDate || today);
+    setOpen(false);
+  }
+
+  const customRangeInvalid = Boolean(draftRange && (!draftRange.from || !draftRange.to || draftRange.from > draftRange.to));
+
+  return (
+    <>
+      <button className="header-date-button" type="button" onClick={openPicker} aria-label={`${t("dateRange")}: ${label}`}>
+        <CalendarDays size={16} />
+        <span>{label}</span>
+      </button>
+      {open && typeof document !== "undefined" ? createPortal(
+        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("dateRange")}>
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setOpen(false)} />
+          <section className="action-sheet header-date-sheet">
+            <header className="sheet-header">
+              <h2>{range ? t("dateRange") : t("settlementDate")}</h2>
+              <button className="icon-button" type="button" onClick={() => setOpen(false)} aria-label={t("closeModal")}><X size={18} /></button>
+            </header>
+            {range && draftRange ? (
+              <>
+                <div className="header-date-presets">
+                  {dateRangeOptions.map((option) => (
+                    <button
+                      className={draftRange.preset === option.value ? "active" : ""}
+                      key={option.value}
+                      onClick={() => chooseRangePreset(option.value)}
+                      type="button"
+                    >
+                      {t(option.labelKey)}
+                    </button>
+                  ))}
+                </div>
+                {draftRange.preset === "custom" ? (
+                  <>
+                    <div className="header-date-fields">
+                      <label>
+                        <span>{t("startDate")}</span>
+                        <input type="date" value={draftRange.from} max={draftRange.to || undefined} onChange={(event) => setDraftRange((current) => current ? { ...current, from: event.target.value } : current)} />
+                      </label>
+                      <label>
+                        <span>{t("endDate")}</span>
+                        <input type="date" value={draftRange.to} min={draftRange.from || undefined} onChange={(event) => setDraftRange((current) => current ? { ...current, to: event.target.value } : current)} />
+                      </label>
+                    </div>
+                    {customRangeInvalid ? <p className="operational-filter-error" role="alert">{t("filterDateError")}</p> : null}
+                    <button className="primary-button header-date-apply" type="button" disabled={customRangeInvalid} onClick={applyCustom}>{t("applyFilters")}</button>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="header-date-presets">
+                  {[{ value: today, labelKey: "today" }, { value: yesterday, labelKey: "yesterday" }].map((option) => (
+                    <button
+                      className={draftDate === option.value ? "active" : ""}
+                      key={option.labelKey}
+                      onClick={() => { onDateChange?.(option.value); setOpen(false); }}
+                      type="button"
+                    >
+                      {t(option.labelKey)}
+                    </button>
+                  ))}
+                </div>
+                <div className="header-date-fields single">
+                  <label>
+                    <span>{t("settlementDate")}</span>
+                    <input type="date" value={draftDate} max={today} onChange={(event) => setDraftDate(event.target.value)} />
+                  </label>
+                </div>
+                <button className="primary-button header-date-apply" type="button" disabled={!draftDate} onClick={applyCustom}>{t("applyFilters")}</button>
+              </>
+            )}
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+    </>
+  );
+}
+
 function RoleDashboardView({
   summary,
-  dateLabel,
-  dateFilterKey,
   asOfDate,
   openTransactions,
   openClosing,
 }: {
   openClosing: () => void;
   summary: DashboardSummary;
-  dateLabel: string;
-  dateFilterKey: DateFilterKey;
   asOfDate: string;
   openTransactions: (
     lens: TransactionLens,
@@ -4892,10 +4936,6 @@ function RoleDashboardView({
 
       {lens === "personal" ? (
         <section className="history-summary-panel dashboard-flow-card">
-          <div className="history-summary-context">
-            <span>{dateLabel}</span>
-            <strong>{dateFilterKeyLabel(dateFilterKey, t)}</strong>
-          </div>
           <FlowBreakdown
             leadingRows={cashInHandRow}
             inLabel={t("cashIn")}
@@ -4922,7 +4962,6 @@ function RoleDashboardView({
       ) : (
         <>
           {staffCashPanel}
-          <p className="dashboard-flow-range">{dateLabel} · {dateFilterKeyLabel(dateFilterKey, t)}</p>
           <div className="dashboard-business-cards">
             {businessCards.map(businessCard)}
           </div>
@@ -5033,8 +5072,6 @@ function HomeView({
     return (
       <RoleDashboardView
         summary={data.dashboardSummary}
-        dateLabel={dateLabel}
-        dateFilterKey={dateFilterKey}
         asOfDate={dateRange.to}
         openTransactions={openTransactions}
         openClosing={() => changeTab("closing")}
@@ -5749,12 +5786,8 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  // Pending records have no approval date yet, so the date filter applies to their payment date
-  // (or their created date when filtering by record created). (Every pending record regardless of dates lives behind the header button.)
-  const pendingListDate = useCallback(
-    (paymentDate: string, createdAt: string) => dateFilterKey === "created" ? indiaDateIso(createdAt) : paymentDate,
-    [dateFilterKey],
-  );
+  // Pending records have no approval date yet, so the date filter always applies to their
+  // payment date. (Every pending record regardless of dates lives behind the header button.)
   const pendingAwaitingInScope = useCallback((isoDate: string) => dateInRange(isoDate.slice(0, 10), dateRange), [dateRange]);
   const pendingInSelectedDates = useCallback((record: { date: string }) => dateInRange(record.date.slice(0, 10), dateRange), [dateRange]);
   const allTransactionRecords = useMemo(() => {
@@ -5995,13 +6028,13 @@ function TransactionsView({
           });
         });
 
-        if (transactionLens === "personal" && incomingTransferId && pendingAwaitingInScope(pendingListDate(payment.payment_date, payment.created_at))) {
+        if (transactionLens === "personal" && incomingTransferId && pendingAwaitingInScope(payment.payment_date)) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-transfer-pending`,
             kind: "collection",
             filter: "cash_in",
-            date: pendingListDate(payment.payment_date, payment.created_at),
+            date: payment.payment_date,
             sortAt: pendingTransfer?.created_at ?? payment.created_at,
             amount: numberValue(payment.amount),
             cashAmount: cashImpact,
@@ -6018,13 +6051,13 @@ function TransactionsView({
           });
         }
 
-        if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingAwaitingInScope(pendingListDate(payment.payment_date, payment.created_at))) {
+        if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingAwaitingInScope(payment.payment_date)) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-pending`,
             kind: "collection",
             filter: transactionLens === "business" ? "collections" : "cash_in",
-            date: pendingListDate(payment.payment_date, payment.created_at),
+            date: payment.payment_date,
             sortAt: payment.created_at,
             amount: pendingAmount,
             cashAmount: pendingCashAmount,
@@ -6091,13 +6124,13 @@ function TransactionsView({
           });
         });
 
-        if (pendingApproval && userMatches(expense.spent_by) && pendingAwaitingInScope(pendingListDate(expense.expense_date, expense.created_at))) {
+        if (pendingApproval && userMatches(expense.spent_by) && pendingAwaitingInScope(expense.expense_date)) {
           rows.push({
             ...baseRecord,
             id: `${expense.id}-pending`,
             kind: "expense",
             filter: transactionLens === "business" ? "expenses" : "cash_out",
-            date: pendingListDate(expense.expense_date, expense.created_at),
+            date: expense.expense_date,
             sortAt: expense.created_at,
             amount: -numberValue(expense.amount),
             cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
@@ -6284,11 +6317,9 @@ function TransactionsView({
           : incoming
             ? t("cashReceived")
             : t("cashSent");
-      const displayDate = dateFilterKey === "created"
-        ? indiaDateIso(activity.created_at)
-        : dateFilterKey === "transaction"
-          ? activity.transaction_date
-          : activity.approval_date ?? activity.transaction_date;
+      const displayDate = dateFilterKey === "transaction"
+        ? activity.transaction_date
+        : activity.approval_date ?? activity.transaction_date;
       return {
         id: `feed-${activity.source_id}-${activity.category}-${displayDate}`,
         sourceId: activity.source_id,
@@ -6340,7 +6371,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows, ...feedFallbackRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, pendingListDate, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -6490,7 +6521,7 @@ function TransactionsView({
         </span>
       </label>
 
-      {transactionFilter === "pending" && !pendingOnly && dateFilterKey !== "created" ? (
+      {transactionFilter === "pending" && !pendingOnly ? (
         <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
       ) : null}
 
@@ -12672,7 +12703,6 @@ function ClosingView({
       <section className="closing-ledger-section">
         <div className="closing-ledger-heading">
           <h2>{t("userDailyLedger")}</h2>
-          <span>{date}</span>
         </div>
         <div className="closing-user-grid">
           {closingCards.map(({ summary, pending: pendingSummary }) => {
@@ -12719,7 +12749,6 @@ function ClosingView({
                 <section className="closing-cash-custody">
                   <div className="closing-section-heading">
                     <span><Banknote aria-hidden="true" size={17} /> {ownerCard ? t("todaysCash") : t("cashInHand")}</span>
-                    <small>{t("approvalDate")} · {date}</small>
                   </div>
                   {/* The Owner is where cash ends up, so a running balance is not meaningful; show only the day's flow. */}
                   <div
@@ -12761,7 +12790,6 @@ function ClosingView({
                     <div className={`closing-cash-result${summary.closing < 0 ? " negative" : ""}`}>
                       <span>
                         <small>{t("closingCashInHand")}</small>
-                        <em>{date}</em>
                         {summary.closing < 0 ? (
                           <b className="closing-reconciliation-status">{t("needsReconciliation")}</b>
                         ) : null}

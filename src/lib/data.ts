@@ -266,9 +266,6 @@ async function loadDashboard(
       : "all";
   const modeFilter = activeTab === "payments" ? viewState?.transactionFilters.mode ?? "all" : "all";
   const closingDate = range.to;
-  // Created-date filtering: pad a day either side in UTC; the client trims to the business-day range.
-  const createdFromIso = new Date(Date.parse(`${range.from}T00:00:00Z`) - 86_400_000).toISOString();
-  const createdToIso = new Date(Date.parse(`${range.to}T00:00:00Z`) + 2 * 86_400_000).toISOString();
 
   let paymentsQueryBase = supabase
     .from("payments")
@@ -276,9 +273,7 @@ async function loadDashboard(
     .eq("business_id", bootstrap.businessContext.business.id);
   if (businessTypeFilter !== "all") paymentsQueryBase = paymentsQueryBase.eq("business_type", businessTypeFilter);
   if (modeFilter !== "all") paymentsQueryBase = paymentsQueryBase.eq("mode", modeFilter);
-  const paymentsQuery = (dateFilterKey === "created"
-    ? paymentsQueryBase.gte("created_at", createdFromIso).lt("created_at", createdToIso)
-    : dateFilterKey === "transaction"
+  const paymentsQuery = (dateFilterKey === "transaction"
     ? paymentsQueryBase.gte("payment_date", range.from).lte("payment_date", range.to)
     : paymentsQueryBase.or(
         `and(cash_posted_on.gte.${range.from},cash_posted_on.lte.${range.to}),and(online_posted_on.gte.${range.from},online_posted_on.lte.${range.to})`,
@@ -291,9 +286,7 @@ async function loadDashboard(
     .eq("business_id", bootstrap.businessContext.business.id);
   if (businessTypeFilter !== "all") expensesQueryBase = expensesQueryBase.eq("business_type", businessTypeFilter);
   if (modeFilter !== "all") expensesQueryBase = expensesQueryBase.eq("mode", modeFilter);
-  const expensesQuery = (dateFilterKey === "created"
-    ? expensesQueryBase.gte("created_at", createdFromIso).lt("created_at", createdToIso)
-    : dateFilterKey === "transaction"
+  const expensesQuery = (dateFilterKey === "transaction"
     ? expensesQueryBase.gte("expense_date", range.from).lte("expense_date", range.to)
     : expensesQueryBase.gte("posted_on", range.from).lte("posted_on", range.to))
     .order("created_at", { ascending: false })

@@ -11633,3 +11633,32 @@ input[readonly][type="time"] { opacity: 0.75; }
   .app-header-brand { gap: 8px; }
   .app-header-brand .date-basis-toggle button { padding: 0 8px; font-size: 11.5px; }
 }
+
+/* Header date button + picker sheet. */
+.header-date-controls { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.header-date-button {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 34px; max-width: 112px; padding: 0 10px;
+  border: 1px solid rgba(47, 111, 94, 0.22); border-radius: 999px; background: #fffdf8;
+  color: var(--brand-strong, #2f6f5e); font-size: 12px; font-weight: 800; cursor: pointer; flex: 0 1 auto; min-width: 0;
+}
+.header-date-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-date-button svg { flex: 0 0 auto; }
+.header-date-sheet { display: grid; gap: 14px; }
+.header-date-sheet .sheet-header { display: flex; align-items: center; justify-content: space-between; }
+.header-date-presets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.header-date-presets button {
+  min-height: 44px; border-radius: 12px; border: 1px solid var(--line, rgba(0,0,0,.12)); background: #fffdf8;
+  font-weight: 700; color: var(--foreground, #1d2922); cursor: pointer;
+}
+.header-date-presets button.active { border-color: var(--brand-strong, #2f6f5e); background: rgba(47, 111, 94, 0.1); color: var(--brand-strong, #2f6f5e); }
+.header-date-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.header-date-fields.single { grid-template-columns: 1fr; }
+.header-date-fields label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted, #6b7280); }
+.header-date-fields input { min-height: 44px; width: 100%; }
+.header-date-apply { width: 100%; }
+@media (max-width: 420px) {
+  .app-header { padding-inline: 10px; }
+  .app-header-actions { gap: 4px; }
+  .app-header-brand .profile-menu-trigger { width: 36px; height: 36px; }
+  .header-date-button { padding: 0 8px; max-width: 96px; }
+}

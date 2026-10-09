@@ -18,7 +18,6 @@ function numberValue(value: number | string | null | undefined) {
 export function financialActivityPostingEvents(
   activity: FinancialActivity[],
   lens: FinancialActivity["lens"],
-  timezone?: string,
 ): DailyPostingEvent[] {
   return activity
     .filter((item) =>
@@ -47,7 +46,6 @@ export function financialActivityPostingEvents(
         online_amount: numberValue(item.online_amount),
         transaction_date: item.transaction_date,
         approval_date: item.approval_date ?? item.transaction_date,
-        created_date: dateIsoInTimeZone(item.created_at, timezone) || item.transaction_date,
         approved_at: item.created_at,
         approved_by: null,
       };
@@ -126,7 +124,6 @@ export function buildDailyPostingEvents({
         online_amount: 0,
         transaction_date: payment.payment_date,
         approval_date: payment.cash_posted_on ?? ledgerEntry?.entry_date ?? payment.payment_date,
-        created_date: dateIsoInTimeZone(payment.created_at, timezone),
         approved_at: payment.cash_approved_at ?? payment.approved_at,
         approved_by: payment.cash_approved_by ?? payment.approved_by,
       });
@@ -147,7 +144,6 @@ export function buildDailyPostingEvents({
         online_amount: onlineAmount,
         transaction_date: payment.payment_date,
         approval_date: payment.online_posted_on ?? payment.payment_date,
-        created_date: dateIsoInTimeZone(payment.created_at, timezone),
         approved_at: payment.online_approved_at ?? payment.approved_at,
         approved_by: payment.online_approved_by ?? payment.approved_by,
       });
@@ -173,7 +169,6 @@ export function buildDailyPostingEvents({
       online_amount: online ? amount : 0,
       transaction_date: expense.expense_date,
       approval_date: expense.posted_on ?? ledgerEntry?.entry_date ?? expense.expense_date,
-      created_date: dateIsoInTimeZone(expense.created_at, timezone),
       approved_at: expense.approved_at,
       approved_by: expense.approved_by,
     });
@@ -212,7 +207,6 @@ export function buildDailyPostingEvents({
       online_amount: 0,
       transaction_date: transactionDate,
       approval_date: approvalDate,
-      created_date: transactionDate,
       approved_at: movement.responded_at,
       approved_by: movement.responded_by,
     });
@@ -230,7 +224,6 @@ export function buildDailyPostingEvents({
       online_amount: 0,
       transaction_date: transactionDate,
       approval_date: approvalDate,
-      created_date: transactionDate,
       approved_at: movement.responded_at,
       approved_by: movement.responded_by,
     });
@@ -257,7 +250,6 @@ export function buildDailyPostingEvents({
       online_amount: 0,
       transaction_date: transactionDate,
       approval_date: approvalDate,
-      created_date: transactionDate,
       approved_at: settlement.responded_at,
       approved_by: settlement.responded_by,
     });
@@ -275,7 +267,6 @@ export function buildDailyPostingEvents({
       online_amount: 0,
       transaction_date: transactionDate,
       approval_date: approvalDate,
-      created_date: transactionDate,
       approved_at: settlement.responded_at,
       approved_by: settlement.responded_by,
     });
@@ -285,7 +276,6 @@ export function buildDailyPostingEvents({
 }
 
 export function postingEventDate(event: DailyPostingEvent, dateKey: DateFilterKey) {
-  if (dateKey === "created") return event.created_date;
   return dateKey === "transaction" ? event.transaction_date : event.approval_date;
 }
 
