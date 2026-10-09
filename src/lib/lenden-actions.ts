@@ -1024,6 +1024,44 @@ async function resyncStudentAfterPaymentCancel(admin: SupabaseAdminClient, payme
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Mode + amounts for editing an unapproved payment. Mixed takes a cash and an online part (both
+ * above zero) and the amount is their sum; cash / online take a single amount. Component statuses
+ * restart as pending for whichever parts exist.
+ */
+function editedPaymentAmounts(
+  record: Record<string, unknown>,
+  input: { mode: string | null; amount: number | null; cash: number | null; online: number | null },
+): { ok: true; updates: Record<string, unknown>; amount: number } | { ok: false; message: string } {
+  const mode = input.mode === "cash" || input.mode === "online" || input.mode === "mixed" ? input.mode : String(record.mode ?? "cash");
+  let cash = 0;
+  let online = 0;
+  if (mode === "mixed") {
+    cash = input.cash ?? Number(record.cash_collection ?? 0);
+    online = input.online ?? Number(record.online_collection ?? 0);
+    if (!(cash > 0) || !(online > 0)) return { ok: false, message: "A mixed payment needs both a cash and an online amount." };
+  } else {
+    const amount = input.amount ?? Number(record.amount ?? 0);
+    if (!(amount > 0)) return { ok: false, message: "Enter a valid amount." };
+    cash = mode === "cash" ? amount : 0;
+    online = mode === "online" ? amount : 0;
+  }
+  const amount = cash + online;
+  return {
+    ok: true,
+    amount,
+    updates: {
+      mode,
+      amount,
+      cash_collection: cash,
+      online_collection: online,
+      cash_approval_status: cash > 0 ? "pending" : null,
+      online_approval_status: online > 0 ? "pending" : null,
+      current_holder_id: cash > 0 ? record.collected_by ?? null : null,
+    },
+  };
+}
+
 async function ensureLedgerEntry(
   admin: SupabaseAdminClient,
   params: {
@@ -2683,7 +2721,16 @@ const handlers = {
       if (payment.record_status !== "active") continue;
       const requestedAmount = asNumber(formData, `amount_${id}`);
       const requestedDate = asString(formData, `date_${id}`);
-      const amountChanged = requestedAmount !== null && moneyToCents(requestedAmount) !== moneyToCents(currentAmount);
+      const requestedMode = asString(formData, `mode_${id}`);
+      const requestedCash = asNumber(formData, `cash_${id}`);
+      const requestedOnline = asNumber(formData, `online_${id}`);
+      const modeChanged = requestedMode !== null && requestedMode !== String(payment.mode);
+      const splitChanged = (requestedMode ?? payment.mode) === "mixed" && (
+        (requestedCash !== null && moneyToCents(requestedCash) !== moneyToCents(Number(payment.cash_collection ?? 0)))
+        || (requestedOnline !== null && moneyToCents(requestedOnline) !== moneyToCents(Number(payment.online_collection ?? 0)))
+      );
+      const amountChanged = modeChanged || splitChanged
+        || (requestedAmount !== null && moneyToCents(requestedAmount) !== moneyToCents(currentAmount));
       const dateChanged = requestedDate !== null && requestedDate !== String(payment.payment_date).slice(0, 10);
       if (!amountChanged && !dateChanged) continue;
 
@@ -2709,14 +2756,15 @@ const handlers = {
         updates.payment_date = requestedDate;
       }
       if (amountChanged) {
-        if (requestedAmount === null || requestedAmount <= 0) return fail("Enter a valid amount.");
-        if (payment.mode === "mixed") {
-          return fail("Change a mixed cash + online amount from the transaction itself.");
-        }
-        updates.amount = requestedAmount;
-        updates.cash_collection = payment.mode === "cash" ? requestedAmount : 0;
-        updates.online_collection = payment.mode === "online" ? requestedAmount : 0;
-        nextAmounts.set(id, requestedAmount);
+        const edited = editedPaymentAmounts(payment, {
+          mode: requestedMode,
+          amount: requestedAmount,
+          cash: requestedCash,
+          online: requestedOnline,
+        });
+        if (!edited.ok) return fail(edited.message);
+        Object.assign(updates, edited.updates);
+        nextAmounts.set(id, edited.amount);
       }
     }
 
@@ -3546,19 +3594,21 @@ const handlers = {
     if (recordType === "payment") {
       updates.payment_date = date;
       updates.description = description;
-      if (record.mode === "mixed") {
-        const splitTotal = Number(record.cash_collection ?? 0) + Number(record.online_collection ?? 0);
-        if (moneyToCents(splitTotal) !== moneyToCents(amount)) {
-          return fail("Mixed payments can be edited only when the amount matches the saved cash and online split.");
-        }
-      } else {
-        updates.cash_collection = record.mode === "cash" ? amount : 0;
-        updates.online_collection = record.mode === "online" ? amount : 0;
-      }
+      // Mode can change while unapproved; mixed carries its own cash / online split.
+      const edited = editedPaymentAmounts(record, {
+        mode: asString(formData, "mode"),
+        amount,
+        cash: asNumber(formData, "cash_collection"),
+        online: asNumber(formData, "online_collection"),
+      });
+      if (!edited.ok) return fail(edited.message);
+      Object.assign(updates, edited.updates);
     } else {
       if (!description || description.length < 3) return fail("Expense description must be at least 3 characters.");
       updates.expense_date = date;
       updates.description = description;
+      const expenseMode = asString(formData, "mode");
+      if (expenseMode === "cash" || expenseMode === "online") updates.mode = expenseMode;
     }
 
     if (allUpdatesMatch(record, updates)) return ok("No changes to save.");

@@ -6688,10 +6688,14 @@ function TransactionsView({
                 ) : null}
                 <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
                 <input type="hidden" name="id" value={selectedTransactionSourceId} />
-                <label>
-                  {t("amount")}
-                  <input name="amount" type="number" min="1" step="0.01" defaultValue={selectedTransactionActionRecord.editAmount} required />
-                </label>
+                <ModeAmountFields
+                  allowMixed={selectedTransactionActionRecord.recordType === "payment"}
+                  initialMode={(selectedPayment?.mode ?? selectedExpense?.mode ?? "cash") as PaymentMode}
+                  initialAmount={Number(selectedTransactionActionRecord.editAmount ?? 0)}
+                  initialCash={Number(selectedPayment?.cash_collection ?? 0)}
+                  initialOnline={Number(selectedPayment?.online_collection ?? 0)}
+                  names={{ mode: "mode", amount: "amount", cash: "cash_collection", online: "online_collection" }}
+                />
                 <label>
                   {selectedTransactionActionRecord.recordType === "payment" ? t("paymentDate") : t("expenseDate")}
                   <input name="date" type="date" defaultValue={selectedTransactionActionRecord.editDate} required />
@@ -7579,6 +7583,76 @@ function displayTimeSlots(startTime: string | null | undefined, endTime: string 
     .join(", ") || "-";
 }
 
+/**
+ * Edit an unapproved transaction's mode with its amount: one amount for cash / online, a cash and
+ * an online part for mixed (the amount is their sum).
+ */
+function ModeAmountFields({
+  allowMixed,
+  initialMode,
+  initialAmount,
+  initialCash,
+  initialOnline,
+  names,
+}: {
+  allowMixed: boolean;
+  initialMode: PaymentMode;
+  initialAmount: number;
+  initialCash: number;
+  initialOnline: number;
+  names: { mode: string; amount: string; cash: string; online: string };
+}) {
+  const { t } = useLanguage();
+  const [mode, setMode] = useState<PaymentMode>(initialMode);
+  const [amount, setAmount] = useState(String(initialAmount || ""));
+  const [cash, setCash] = useState(String(initialCash || ""));
+  const [online, setOnline] = useState(String(initialOnline || ""));
+  const total = Number(cash || 0) + Number(online || 0);
+  const modes: PaymentMode[] = allowMixed ? ["cash", "online", "mixed"] : ["cash", "online"];
+  const changeMode = (next: PaymentMode) => {
+    // Carry the current total over so switching mode does not lose the amount.
+    if (next === "mixed" && mode !== "mixed") {
+      setCash(mode === "cash" ? amount : "");
+      setOnline(mode === "online" ? amount : "");
+    } else if (next !== "mixed" && mode === "mixed") {
+      setAmount(total ? String(total) : amount);
+    }
+    setMode(next);
+  };
+
+  return (
+    <>
+      <label>
+        {t("mode")}
+        <select name={names.mode} value={mode} onChange={(event) => changeMode(event.target.value as PaymentMode)}>
+          {modes.map((option) => <option key={option} value={option}>{labelForMode(option, t)}</option>)}
+        </select>
+      </label>
+      {mode === "mixed" ? (
+        <>
+          <div className="form-pair full-span">
+            <label>
+              {t("cash")}
+              <input name={names.cash} type="number" min="1" step="0.01" value={cash} onChange={(event) => setCash(event.target.value)} required />
+            </label>
+            <label>
+              {t("online")}
+              <input name={names.online} type="number" min="1" step="0.01" value={online} onChange={(event) => setOnline(event.target.value)} required />
+            </label>
+          </div>
+          <p className="date-filter-note full-span">{t("total")} {formatMoney(total)}</p>
+          <input type="hidden" name={names.amount} value={total} />
+        </>
+      ) : (
+        <label>
+          {t("amount")}
+          <input name={names.amount} type="number" min="1" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+        </label>
+      )}
+    </>
+  );
+}
+
 /** Subscription edit: first slot plus (library) extra slots, kept free of overlaps. */
 function SubscriptionSlotsFields({
   startTime: initialStart,
@@ -8387,19 +8461,19 @@ function SubscriptionHistoryTimeline({
                   ) : (
                     <fieldset className="full-span student-subscription-edit-transaction" key={transaction.id}>
                       <legend>{transaction.collectorName} · {labelForMode(transaction.mode, t)}</legend>
-                      <label>
-                        {t("amount")}
-                        <input
-                          type="number"
-                          name={`amount_${transaction.id}`}
-                          defaultValue={transaction.amount}
-                          min="1"
-                          step="0.01"
-                          inputMode="decimal"
-                          disabled={transaction.mode === "mixed"}
-                          required
-                        />
-                      </label>
+                      <ModeAmountFields
+                        allowMixed
+                        initialMode={transaction.mode}
+                        initialAmount={transaction.amount}
+                        initialCash={transaction.cashAmount}
+                        initialOnline={transaction.onlineAmount}
+                        names={{
+                          mode: `mode_${transaction.id}`,
+                          amount: `amount_${transaction.id}`,
+                          cash: `cash_${transaction.id}`,
+                          online: `online_${transaction.id}`,
+                        }}
+                      />
                       <label>
                         {t("transactionDate")}
                         <input type="date" name={`date_${transaction.id}`} defaultValue={transaction.paymentDate.slice(0, 10)} required />
