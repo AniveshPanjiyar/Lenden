@@ -11589,3 +11589,22 @@ input[readonly][type="time"] { opacity: 0.75; }
 .message-template-panels { display: grid; gap: 10px; }
 .message-template-panels > .primary-button { width: 100%; }
 .message-template-panels .course-message-form { padding-bottom: 12px; }
+
+/* Sheets: the layer itself scrolls, so a sheet taller than the screen is never cut off
+   (iOS Safari clips a fixed layer's inner scroller). Short sheets still sit at the bottom. */
+.modal-layer {
+  display: flex;
+  flex-direction: column;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-top: calc(12px + env(safe-area-inset-top));
+}
+.modal-layer > .modal-backdrop { position: fixed; }
+.modal-layer > .action-sheet {
+  flex-shrink: 0;
+  margin-top: auto;
+  max-height: none;
+  overflow: visible;
+}

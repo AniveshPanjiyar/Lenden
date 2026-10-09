@@ -6581,7 +6581,7 @@ function TransactionsView({
         )}
       </section>
 
-      {transactionAction && selectedTransactionActionRecord ? (
+      {transactionAction && selectedTransactionActionRecord && typeof document !== "undefined" ? createPortal(
         <div
           className="modal-layer"
           role="dialog"
@@ -6755,7 +6755,8 @@ function TransactionsView({
               </form>
             ) : null}
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
 
     </div>
@@ -9803,7 +9804,8 @@ function ActionSheet({
   ];
   const title = actionModal === "positive" ? t("collectPayment") : t("negativeEntry");
 
-  return (
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label={title}>
       <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeAction} />
       <section className="action-sheet">
@@ -9939,7 +9941,8 @@ function ActionSheet({
           </>
         ) : null}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
