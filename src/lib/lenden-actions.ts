@@ -1057,7 +1057,7 @@ function editedPaymentAmounts(
       online_collection: online,
       cash_approval_status: cash > 0 ? "pending" : null,
       online_approval_status: online > 0 ? "pending" : null,
-      current_holder_id: cash > 0 ? record.collected_by ?? null : null,
+      // Custody (current_holder_id / assigned_profile_id) only changes through transfer acceptance.
     },
   };
 }
