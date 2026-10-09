@@ -11608,3 +11608,6 @@ input[readonly][type="time"] { opacity: 0.75; }
   max-height: none;
   overflow: visible;
 }
+
+/* Payment date beside the Cash / Online word on transaction cards. */
+.journey-lane-date { margin-left: 2px; font-size: 0.78em; font-weight: 600; color: var(--muted, #6b7280); white-space: nowrap; }

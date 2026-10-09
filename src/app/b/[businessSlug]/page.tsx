@@ -40,6 +40,13 @@ export default async function BusinessHome({
     const { identity, context } = await resolveBusinessContext({ slug: businessSlug });
     data = mergeAppData(await getBootstrapData(context, identity), emptyDashboardData());
     initialViewState = parseAppViewState(resolvedSearchParams, identity.id);
+    // Owners open transactions on the whole business unless the link picks a lens.
+    if (context.membership?.role === "primary_owner" && !first(resolvedSearchParams.txLens)) {
+      initialViewState = {
+        ...initialViewState,
+        transactionFilters: { ...initialViewState.transactionFilters, lens: "business" as const, profileId: "all" },
+      };
+    }
   } catch (error) {
     if (error instanceof BusinessAccessError && error.details) {
       redirect(`/access-pending?reason=${error.details.reason}&business=${encodeURIComponent(error.details.business.name)}`);

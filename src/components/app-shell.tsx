@@ -87,6 +87,7 @@ import {
   applyAppViewStateToSearchParams,
   defaultClosingFilters,
   defaultDashboardFilters,
+  defaultTransactionDateFilterKey,
   defaultTransactionFilters,
   parseAppViewState,
   rangeForPreset,
@@ -522,7 +523,7 @@ const messages: Record<Language, Record<string, string>> = {
     completedTask: "completed",
     assignedBy: "by",
     closingBalance: "Closing balance",
-    closingBalancePostingNote: "IN and OUT use transaction date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
+    closingBalancePostingNote: "IN and OUT use payment date. Opening, cash in hand, and closing balance remain based on approval/posting date.",
     closingCash: "Closing cash",
     closingCashInHand: "Closing cash in hand",
     code: "Code",
@@ -820,7 +821,7 @@ const messages: Record<Language, Record<string, string>> = {
     to: "to",
     toEmployee: "To employee",
     today: "Today",
-    transactionDate: "Transaction date",
+    transactionDate: "Payment date",
     totalClosing: "Total closing",
     totalCollected: "Total collected",
     totalExpenses: "Total expenses",
@@ -828,7 +829,7 @@ const messages: Record<Language, Record<string, string>> = {
     totalOut: "OUT",
     totalCollection: "Total collection",
     ownerAccountCredit: "Owner account credit",
-    pendingDateUsesTransaction: "Pending uses transaction date until approved.",
+    pendingDateUsesTransaction: "Pending uses payment date until approved.",
     totalOpening: "Total opening",
     totalRecorded: "Total recorded",
     tillDate: "Till date",
@@ -1041,7 +1042,7 @@ const messages: Record<Language, Record<string, string>> = {
     completedTask: "पूरा किया",
     assignedBy: "द्वारा",
     closingBalance: "बंद हिसाब",
-    closingBalancePostingNote: "IN और OUT ट्रांजैक्शन तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
+    closingBalancePostingNote: "IN और OUT भुगतान की तारीख से हैं। शुरुआती, हाथ में नकद और बंद हिसाब मंजूरी की तारीख से रहते हैं।",
     closingCash: "दिन के अंत का नकद",
     closingCashInHand: "बंद होते समय हाथ में नकद",
     code: "कोड",
@@ -1339,7 +1340,7 @@ const messages: Record<Language, Record<string, string>> = {
     to: "को",
     toEmployee: "किस स्टाफ को",
     today: "आज",
-    transactionDate: "ट्रांजैक्शन की तारीख",
+    transactionDate: "भुगतान की तारीख",
     totalClosing: "कुल बंद हिसाब",
     totalCollected: "कुल जमा",
     totalExpenses: "कुल खर्च",
@@ -1347,7 +1348,7 @@ const messages: Record<Language, Record<string, string>> = {
     totalOut: "OUT",
     totalCollection: "कुल जमा",
     ownerAccountCredit: "मालिक खाते में जमा",
-    pendingDateUsesTransaction: "मंजूरी तक बाकी एंट्री ट्रांजैक्शन तारीख से दिखाई जाती है।",
+    pendingDateUsesTransaction: "मंजूरी तक बाकी एंट्री भुगतान की तारीख से दिखाई जाती है।",
     totalOpening: "कुल शुरू हिसाब",
     totalRecorded: "कुल रिकॉर्ड",
     tillDate: "आज तक",
@@ -1572,7 +1573,9 @@ function applyMutationPatch(
     if (patch.payment) {
       const approvalDates = [patch.payment.cash_posted_on, patch.payment.online_posted_on]
         .filter((value): value is string => Boolean(value));
-      const displayDates = dateFilterKey === "transaction" || approvalDates.length === 0
+      const displayDates = dateFilterKey === "created"
+        ? [indiaDateIso(patch.payment.created_at)]
+        : dateFilterKey === "transaction" || approvalDates.length === 0
         ? [patch.payment.payment_date]
         : approvalDates;
       const inRange = displayDates.some((date) => date >= rangeFrom && date <= closingDate) ||
@@ -2860,7 +2863,8 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
         const presetRange = rangeForPreset(preset ?? "today");
         const rangeFrom = params.get("from") ?? presetRange.from;
         const closingDate = params.get("to") ?? presetRange.to;
-        const cachedDateFilterKey = params.get("dateKey") === "transaction" ? "transaction" : "approval";
+        const rawDateKey = params.get("dateKey");
+        const cachedDateFilterKey: DateFilterKey = rawDateKey === "transaction" || rawDateKey === "created" ? rawDateKey : "approval";
         queryClient.setQueryData<DashboardPayload>(queryKey, applyMutationPatch(
           current,
           patch,
@@ -3219,11 +3223,11 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const transactionPostingEvents = useMemo(
     () => appData.financialActivity.length > 0
       ? [
-          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens),
+          ...financialActivityPostingEvents(appData.financialActivity, transactionFilters.lens, appData.businessContext.business.timezone),
           ...postingEvents.filter((event) => event.source_type === "agent_settlement"),
         ]
       : postingEvents,
-    [appData.financialActivity, postingEvents, transactionFilters.lens],
+    [appData.businessContext.business.timezone, appData.financialActivity, postingEvents, transactionFilters.lens],
   );
   const selectedBusiness = dashboardFilters.businessType;
   const dashboardPaymentBusinesses = new Map(appData.payments.map((payment) => [payment.id, payment.business_type]));
@@ -3470,7 +3474,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const currentPageTitle = tab === "notifications"
     ? t("notifications")
     : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
-  const dateBasisLabel = (key: DateFilterKey) => key === "approval" ? t("approvalDate") : t("transactionDate");
+  const dateBasisLabel = (key: DateFilterKey) => dateFilterKeyLabel(key, t);
   const transactionActivityLabel = (activity: TransactionFilter) => {
     if (activity === "collections") return t("collections");
     if (activity === "expenses") return t("expenses");
@@ -3504,7 +3508,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     if (dashboardFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(dashboardFilters.businessType, t), clear: () => setDashboardFilters((current) => ({ ...current, businessType: "all" })) });
   } else if (tab === "payments") {
     if (transactionFilters.dateRange.preset !== "today") activeFilterChips.push({ key: "date", label: transactionDateRangeLabel, clear: () => setTransactionFilters((current) => ({ ...current, dateRange: rangeForPreset("today") })) });
-    if (transactionFilters.dateFilterKey !== "approval") activeFilterChips.push({ key: "date-key", label: dateBasisLabel(transactionFilters.dateFilterKey), clear: () => setTransactionFilters((current) => ({ ...current, dateFilterKey: "approval" })) });
+    if (transactionFilters.dateFilterKey !== defaultTransactionDateFilterKey) activeFilterChips.push({ key: "date-key", label: dateBasisLabel(transactionFilters.dateFilterKey), clear: () => setTransactionFilters((current) => ({ ...current, dateFilterKey: defaultTransactionDateFilterKey })) });
     if (transactionFilters.lens === "business" && transactionFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: "all" })) });
     if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
     if (transactionFilters.recordType !== "all") activeFilterChips.push({ key: "type", label: transactionRecordLabel(transactionFilters.recordType), clear: () => setTransactionFilters((current) => ({ ...current, recordType: "all" })) });
@@ -4383,22 +4387,28 @@ function FilterDateRangeFields({
   );
 }
 
+function dateFilterKeyLabel(key: DateFilterKey, t: (key: string) => string) {
+  return key === "created" ? t("recordCreated") : key === "transaction" ? t("transactionDate") : t("approvalDate");
+}
+
 function FilterDateBasisFields({
   value,
   onChange,
+  options = ["approval", "transaction"],
 }: {
   value: DateFilterKey;
   onChange: (value: DateFilterKey) => void;
+  options?: DateFilterKey[];
 }) {
   const { t } = useLanguage();
   return (
     <fieldset className="operational-filter-section">
       <legend>{t("dateKey")}</legend>
       <div className="operational-filter-choice-grid">
-        {(["approval", "transaction"] as DateFilterKey[]).map((option) => (
+        {options.map((option) => (
           <label className={value === option ? "selected" : ""} key={option}>
             <input type="radio" name="filter-date-basis" value={option} checked={value === option} onChange={() => onChange(option)} />
-            <span>{option === "approval" ? t("approvalDate") : t("transactionDate")}</span>
+            <span>{dateFilterKeyLabel(option, t)}</span>
           </label>
         ))}
       </div>
@@ -4546,7 +4556,7 @@ function OperationalFilterDrawer({
           {tab === "payments" ? (
             <>
               <FilterDateRangeFields value={transactionDraft.dateRange} onChange={(dateRange) => setTransactionDraft((current) => ({ ...current, dateRange }))} />
-              <FilterDateBasisFields value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
+              <FilterDateBasisFields options={["created", "approval", "transaction"]} value={transactionDraft.dateFilterKey} onChange={(dateFilterKey) => setTransactionDraft((current) => ({ ...current, dateFilterKey }))} />
               <label className="operational-filter-field operational-filter-section">
                 <span>View</span>
                 <select
@@ -4651,10 +4661,11 @@ function RoleDashboardView({
   ) => void;
 }) {
   const { t } = useLanguage();
-  const [lens, setLens] = useState<TransactionLens>("personal");
   const primaryOwner = summary.role === "primary_owner";
+  // Owners look at the business first.
+  const [lens, setLens] = useState<TransactionLens>(primaryOwner ? "business" : "personal");
   const staff = summary.role === "staff";
-  const dateBasisLabel = dateFilterKey === "transaction" ? t("transactionDate") : t("approvalDate");
+  const dateBasisLabel = dateFilterKeyLabel(dateFilterKey, t);
 
   // Cash in hand: staff see their own cash (pending collections included); managers also see their
   // Staff's cash; the Owner sees cash still with Managers + Staff.
@@ -4799,12 +4810,11 @@ function RoleDashboardView({
     <div className={`view-stack mobile-clean transaction-history-view dashboard-flow-view lens-${lens}`}>
       <nav className="transaction-primary-filters">
         <div className="transaction-lens-tabs" role="tablist" aria-label="Dashboard view">
-          <button aria-selected={lens === "personal"} className={lens === "personal" ? "active" : ""} onClick={() => setLens("personal")} role="tab" type="button">
-            My activity
-          </button>
-          <button aria-selected={lens === "business"} className={lens === "business" ? "active" : ""} onClick={() => setLens("business")} role="tab" type="button">
-            Business
-          </button>
+          {(primaryOwner ? ["business", "personal"] as const : ["personal", "business"] as const).map((option) => (
+            <button aria-selected={lens === option} className={lens === option ? "active" : ""} key={option} onClick={() => setLens(option)} role="tab" type="button">
+              {option === "business" ? "Business" : "My activity"}
+            </button>
+          ))}
         </div>
       </nav>
 
@@ -5435,11 +5445,13 @@ function TransactionJourney({
   steps = [],
   lanes = [],
   amount,
+  paymentDate,
   children,
 }: {
   steps?: TransactionJourneyStep[];
   lanes?: TransactionJourneyLane[];
   amount: number;
+  paymentDate?: string;
   children?: ReactNode;
 }) {
   const { t } = useLanguage();
@@ -5471,6 +5483,9 @@ function TransactionJourney({
                 <span>
                   {lane.component === "cash" ? <Banknote size={16} /> : <CreditCard size={16} />}
                   {t(lane.component)}
+                  {paymentDate ? (
+                    <small className="journey-lane-date" title={t("transactionDate")}>· {displayDate(paymentDate)}</small>
+                  ) : null}
                 </span>
                 <strong>{formatMoney(lane.amount)}</strong>
               </header>
@@ -5661,8 +5676,12 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
-  // Pending records have no approval date yet, so the date filter always applies to their
-  // transaction date. (Every pending record regardless of dates lives behind the header button.)
+  // Pending records have no approval date yet, so the date filter applies to their payment date
+  // (or their created date when filtering by record created). (Every pending record regardless of dates lives behind the header button.)
+  const pendingListDate = useCallback(
+    (paymentDate: string, createdAt: string) => dateFilterKey === "created" ? indiaDateIso(createdAt) : paymentDate,
+    [dateFilterKey],
+  );
   const pendingAwaitingInScope = useCallback((isoDate: string) => dateInRange(isoDate.slice(0, 10), dateRange), [dateRange]);
   const pendingInSelectedDates = useCallback((record: { date: string }) => dateInRange(record.date.slice(0, 10), dateRange), [dateRange]);
   const allTransactionRecords = useMemo(() => {
@@ -5903,13 +5922,13 @@ function TransactionsView({
           });
         });
 
-        if (transactionLens === "personal" && incomingTransferId && pendingAwaitingInScope(payment.payment_date)) {
+        if (transactionLens === "personal" && incomingTransferId && pendingAwaitingInScope(pendingListDate(payment.payment_date, payment.created_at))) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-transfer-pending`,
             kind: "collection",
             filter: "cash_in",
-            date: payment.payment_date,
+            date: pendingListDate(payment.payment_date, payment.created_at),
             sortAt: pendingTransfer?.created_at ?? payment.created_at,
             amount: numberValue(payment.amount),
             cashAmount: cashImpact,
@@ -5926,13 +5945,13 @@ function TransactionsView({
           });
         }
 
-        if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingAwaitingInScope(payment.payment_date)) {
+        if (!incomingTransferId && matchesActivityProfile && pendingAmount > 0 && pendingAwaitingInScope(pendingListDate(payment.payment_date, payment.created_at))) {
           rows.push({
             ...baseRecord,
             id: `${payment.id}-pending`,
             kind: "collection",
             filter: transactionLens === "business" ? "collections" : "cash_in",
-            date: payment.payment_date,
+            date: pendingListDate(payment.payment_date, payment.created_at),
             sortAt: payment.created_at,
             amount: pendingAmount,
             cashAmount: pendingCashAmount,
@@ -5999,13 +6018,13 @@ function TransactionsView({
           });
         });
 
-        if (pendingApproval && userMatches(expense.spent_by) && pendingAwaitingInScope(expense.expense_date)) {
+        if (pendingApproval && userMatches(expense.spent_by) && pendingAwaitingInScope(pendingListDate(expense.expense_date, expense.created_at))) {
           rows.push({
             ...baseRecord,
             id: `${expense.id}-pending`,
             kind: "expense",
             filter: transactionLens === "business" ? "expenses" : "cash_out",
-            date: expense.expense_date,
+            date: pendingListDate(expense.expense_date, expense.created_at),
             sortAt: expense.created_at,
             amount: -numberValue(expense.amount),
             cashAmount: expense.mode === "online" ? 0 : numberValue(expense.amount),
@@ -6192,7 +6211,11 @@ function TransactionsView({
           : incoming
             ? t("cashReceived")
             : t("cashSent");
-      const displayDate = activity.approval_date ?? activity.transaction_date;
+      const displayDate = dateFilterKey === "created"
+        ? indiaDateIso(activity.created_at)
+        : dateFilterKey === "transaction"
+          ? activity.transaction_date
+          : activity.approval_date ?? activity.transaction_date;
       return {
         id: `feed-${activity.source_id}-${activity.category}-${displayDate}`,
         sourceId: activity.source_id,
@@ -6244,7 +6267,7 @@ function TransactionsView({
 
     return [...paymentRows, ...expenseRows, ...settlementRows, ...agentRows, ...feedFallbackRows]
       .sort((a, b) => `${b.date}-${b.sortAt}-${b.id}`.localeCompare(`${a.date}-${a.sortAt}-${a.id}`));
-  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
+  }, [agentSettlements, canUseProfileFilter, currentUserIsSalesAgent, dateFilterKey, dateRange, expenses, financialActivity, ledger, movements, owner, payments, pendingAwaitingInScope, pendingListDate, permissionsByProfile, postingEvents, profile.id, profile.membership_role, profiles, staffUnitAssignments, t, transactionLens, transactionProfileId]);
   const selectedTransactionActionRecord = transactionAction
     ? allTransactionRecords.find((record) => `${record.kind}-${record.id}` === transactionAction.recordKey) ?? null
     : null;
@@ -6351,24 +6374,19 @@ function TransactionsView({
       {!currentUserIsSalesAgent && !pendingOnly ? (
         <nav className="transaction-primary-filters" aria-label="Transaction classification">
           <div className="transaction-lens-tabs" role="tablist" aria-label="Transaction lens">
-            <button
-              aria-selected={transactionLens === "personal"}
-              className={transactionLens === "personal" ? "active" : ""}
-              onClick={() => onSelectLens("personal")}
-              role="tab"
-              type="button"
-            >
-              My activity
-            </button>
-            <button
-              aria-selected={transactionLens === "business"}
-              className={transactionLens === "business" ? "active" : ""}
-              onClick={() => onSelectLens("business")}
-              role="tab"
-              type="button"
-            >
-              Business
-            </button>
+            {/* Owners see Business first. */}
+            {(profile.membership_role === "primary_owner" ? ["business", "personal"] as const : ["personal", "business"] as const).map((option) => (
+              <button
+                aria-selected={transactionLens === option}
+                className={transactionLens === option ? "active" : ""}
+                key={option}
+                onClick={() => onSelectLens(option)}
+                role="tab"
+                type="button"
+              >
+                {option === "business" ? "Business" : "My activity"}
+              </button>
+            ))}
           </div>
           <div className="transaction-activity-chips" aria-label={transactionLens === "business" ? "Business activity filters" : "My activity filters"}>
             {activityOptions.map((option) => (
@@ -6399,7 +6417,7 @@ function TransactionsView({
         </span>
       </label>
 
-      {transactionFilter === "pending" && !pendingOnly ? (
+      {transactionFilter === "pending" && !pendingOnly && dateFilterKey !== "created" ? (
         <p className="date-filter-note">{t("pendingDateUsesTransaction")}</p>
       ) : null}
 
@@ -6440,7 +6458,9 @@ function TransactionsView({
                       ) : <p>{record.meta}</p>}
                       {record.transactionDate && record.approvalDate && record.transactionDate !== record.approvalDate ? (
                         <small className="history-date-context">
-                          {t("transactionDate")} {record.transactionDate} · {t("approvalDate")} {record.approvalDate}
+                          {record.recordType === "payment" && record.journeyLanes?.length
+                            ? `${t("approvalDate")} ${record.approvalDate}`
+                            : `${t("transactionDate")} ${record.transactionDate} · ${t("approvalDate")} ${record.approvalDate}`}
                         </small>
                       ) : null}
                     </div>
@@ -6486,7 +6506,7 @@ function TransactionsView({
                     </details>
                     {(record.journey && record.journey.length > 0) || (record.journeyLanes && record.journeyLanes.length > 0) ? (
                       <div className="history-card-flow">
-                        <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
+                        <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount} paymentDate={record.recordType === "payment" ? record.transactionDate : undefined}>
                           {record.incomingTransferId ? (
                             <div className="history-transfer-actions journey-action-row">
                               <MiniAction
@@ -13172,7 +13192,7 @@ function ClosingReviewDetail({
                   </div>
                 </details>
                 <div className="history-card-flow">
-                  <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount}>
+                  <TransactionJourney steps={record.journey} lanes={record.journeyLanes} amount={record.amount} paymentDate={record.recordType === "payment" ? record.transactionDate : undefined}>
                     <div className="journey-action-row closing-history-approval-actions">
                       {record.recordType === "payment" ? (
                         <>

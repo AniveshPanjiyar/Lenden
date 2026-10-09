@@ -3,7 +3,8 @@ import type { BusinessType, PaymentMode } from "@/lib/types";
 
 export type AppTab = "home" | "payments" | "library_students" | "closing" | "work" | "settings" | "notifications";
 export type DateRangePreset = "today" | "yesterday" | "this_month" | "custom";
-export type DateFilterKey = "approval" | "transaction";
+// "created" (record created date) is only offered on the transactions page.
+export type DateFilterKey = "approval" | "transaction" | "created";
 export type TransactionLens = "business" | "personal";
 export type TransactionFilter = "all" | "collections" | "expenses" | "cash_in" | "cash_out" | "pending";
 export type TransactionRecordType = "all" | "payment" | "expense" | "transfer" | "agent_payout";
@@ -58,6 +59,8 @@ type RawSearchParams = Record<string, string | string[] | undefined>;
 const appTabs = ["home", "payments", "library_students", "closing", "work", "settings", "notifications"] as const;
 const dateRangePresets = ["today", "yesterday", "this_month", "custom"] as const;
 const dateFilterKeys = ["approval", "transaction"] as const;
+const transactionDateFilterKeys = ["created", "approval", "transaction"] as const;
+export const defaultTransactionDateFilterKey: DateFilterKey = "created";
 const transactionLenses = ["business", "personal"] as const;
 const transactionFilters = ["all", "collections", "expenses", "cash_in", "cash_out", "pending"] as const;
 const transactionRecordTypes = ["all", "payment", "expense", "transfer", "agent_payout"] as const;
@@ -112,7 +115,7 @@ export function defaultDashboardFilters(): DashboardFilterState {
 export function defaultTransactionFilters(defaultProfileId: string): TransactionFilterState {
   return {
     dateRange: rangeForPreset("today"),
-    dateFilterKey: "approval",
+    dateFilterKey: defaultTransactionDateFilterKey,
     lens: "personal",
     profileId: defaultProfileId,
     activity: "all",
@@ -191,7 +194,7 @@ export function parseAppViewState(
     },
     transactionFilters: {
       dateRange: parseRange(params, { preset: "txRange", from: "txFrom", to: "txTo" }, transactionLegacyRange),
-      dateFilterKey: oneOf(singleParam(params, "txDateKey") ?? (tab === "payments" ? legacyDateKey : undefined), dateFilterKeys, "approval"),
+      dateFilterKey: oneOf(singleParam(params, "txDateKey") ?? (tab === "payments" ? singleParam(params, "dateKey") : undefined), transactionDateFilterKeys, defaultTransactionDateFilterKey),
       lens: oneOf(singleParam(params, "txLens"), transactionLenses, inferredTransactionLens),
       profileId: singleParam(params, "txUser") || defaultProfileId,
       activity: oneOf(normalizeTransactionActivity(rawTransactionFilter), transactionFilters, "all"),
@@ -238,7 +241,7 @@ export function applyAppViewStateToSearchParams(
   if (state.dashboardFilters.businessType !== "all") params.set("dashBusiness", state.dashboardFilters.businessType);
 
   setRangeParams(params, "tx", state.transactionFilters.dateRange);
-  if (state.transactionFilters.dateFilterKey !== "approval") params.set("txDateKey", state.transactionFilters.dateFilterKey);
+  if (state.transactionFilters.dateFilterKey !== defaultTransactionDateFilterKey) params.set("txDateKey", state.transactionFilters.dateFilterKey);
   params.set("txLens", state.transactionFilters.lens);
   if (state.transactionFilters.profileId && state.transactionFilters.profileId !== defaults.profileId) params.set("txUser", state.transactionFilters.profileId);
   if (state.transactionFilters.activity !== "all") params.set("txFilter", state.transactionFilters.activity);

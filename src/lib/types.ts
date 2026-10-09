@@ -493,6 +493,8 @@ export type DailyPostingEvent = {
   online_amount: number;
   transaction_date: string;
   approval_date: string;
+  // Day the record was created, in the business timezone.
+  created_date: string;
   approved_at: string | null;
   approved_by: string | null;
 };
