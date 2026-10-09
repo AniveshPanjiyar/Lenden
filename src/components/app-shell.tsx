@@ -822,6 +822,9 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
+    dateBasisCreated: "Created",
+    dateBasisApproval: "Approval",
+    dateBasisPayment: "Payment",
     totalClosing: "Total closing",
     totalCollected: "Total collected",
     totalExpenses: "Total expenses",
@@ -1341,6 +1344,9 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
+    dateBasisCreated: "बनी",
+    dateBasisApproval: "मंजूरी",
+    dateBasisPayment: "भुगतान",
     totalClosing: "कुल बंद हिसाब",
     totalCollected: "कुल जमा",
     totalExpenses: "कुल खर्च",
@@ -3471,6 +3477,29 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const showQuickActions = tab === "home" && !currentUserIsSalesAgent && !supportMode;
   const focusedPage = tab === "library_students" || tab === "notifications";
   const showOperationalFilters = tab === "home" || tab === "payments" || tab === "closing";
+  // One date switch in the header for every page with dates; each page keeps its own choice.
+  const headerDateBasis: { value: DateFilterKey; options: DateFilterKey[]; onChange: (value: DateFilterKey) => void } | null =
+    currentUserIsSalesAgent
+      ? null
+      : tab === "home"
+        ? {
+            value: dashboardFilters.dateFilterKey,
+            options: ["approval", "transaction"],
+            onChange: (dateFilterKey) => setDashboardFilters((current) => ({ ...current, dateFilterKey })),
+          }
+        : tab === "payments"
+          ? {
+              value: transactionFilters.dateFilterKey,
+              options: ["created", "approval", "transaction"],
+              onChange: (dateFilterKey) => setTransactionFilters((current) => ({ ...current, dateFilterKey })),
+            }
+          : tab === "closing"
+            ? {
+                value: closingFilters.dateFilterKey,
+                options: ["approval", "transaction"],
+                onChange: (dateFilterKey) => setClosingFilters((current) => ({ ...current, dateFilterKey })),
+              }
+            : null;
   const currentPageTitle = tab === "notifications"
     ? t("notifications")
     : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
@@ -3570,8 +3599,18 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
             <SafeAvatarImage alt="" className="w-full h-full object-cover" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
             {!currentUserIsSalesAgent && unreadNotifications > 0 ? <span className="profile-unread-dot" aria-hidden="true" /> : null}
           </button>
-          <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
-          <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
+          {headerDateBasis ? (
+            <DateBasisToggle
+              value={headerDateBasis.value}
+              options={headerDateBasis.options}
+              onChange={headerDateBasis.onChange}
+            />
+          ) : (
+            <>
+              <img className="app-logo-image" src="/icon-192.png" alt="Lenden logo" />
+              <span className="app-brand-title font-headline text-xl font-bold text-primary dark:text-inverse-primary">Lenden</span>
+            </>
+          )}
         </div>
         <div className="app-header-title hidden md:flex items-center gap-3">
           <label className="sr-only" htmlFor="business-switcher">Business</label>
@@ -3893,7 +3932,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 agentReferralCodes={agentReferralCodes}
                 changeTab={changeTab}
                 openTransactions={openTransactions}
-                onDateFilterKeyChange={(dateFilterKey) => setDashboardFilters((current) => ({ ...current, dateFilterKey }))}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -4639,23 +4677,27 @@ function OperationalFilterDrawer({
 
 function DateBasisToggle({
   value,
+  options,
   onChange,
 }: {
   value: DateFilterKey;
+  options: DateFilterKey[];
   onChange: (value: DateFilterKey) => void;
 }) {
   const { t } = useLanguage();
+  const shortLabel = (key: DateFilterKey) => key === "created" ? t("dateBasisCreated") : key === "transaction" ? t("dateBasisPayment") : t("dateBasisApproval");
   return (
     <div className="date-basis-toggle" role="group" aria-label={t("dateKey")}>
-      {(["approval", "transaction"] as const).map((option) => (
+      {options.map((option) => (
         <button
           aria-pressed={value === option}
           className={value === option ? "active" : ""}
           key={option}
           onClick={() => onChange(option)}
+          title={dateFilterKeyLabel(option, t)}
           type="button"
         >
-          {dateFilterKeyLabel(option, t)}
+          {shortLabel(option)}
         </button>
       ))}
     </div>
@@ -4669,10 +4711,8 @@ function RoleDashboardView({
   asOfDate,
   openTransactions,
   openClosing,
-  onDateFilterKeyChange,
 }: {
   openClosing: () => void;
-  onDateFilterKeyChange: (value: DateFilterKey) => void;
   summary: DashboardSummary;
   dateLabel: string;
   dateFilterKey: DateFilterKey;
@@ -4852,9 +4892,9 @@ function RoleDashboardView({
 
       {lens === "personal" ? (
         <section className="history-summary-panel dashboard-flow-card">
-          <div className="history-summary-context dashboard-date-context">
+          <div className="history-summary-context">
             <span>{dateLabel}</span>
-            <DateBasisToggle value={dateFilterKey} onChange={onDateFilterKeyChange} />
+            <strong>{dateFilterKeyLabel(dateFilterKey, t)}</strong>
           </div>
           <FlowBreakdown
             leadingRows={cashInHandRow}
@@ -4882,10 +4922,7 @@ function RoleDashboardView({
       ) : (
         <>
           {staffCashPanel}
-          <div className="dashboard-flow-range dashboard-date-context">
-            <span>{dateLabel}</span>
-            <DateBasisToggle value={dateFilterKey} onChange={onDateFilterKeyChange} />
-          </div>
+          <p className="dashboard-flow-range">{dateLabel} · {dateFilterKeyLabel(dateFilterKey, t)}</p>
           <div className="dashboard-business-cards">
             {businessCards.map(businessCard)}
           </div>
@@ -4910,7 +4947,6 @@ function HomeView({
   agentReferralCodes,
   changeTab,
   openTransactions,
-  onDateFilterKeyChange,
   setNotice,
   startTransition,
 }: {
@@ -4944,7 +4980,6 @@ function HomeView({
       dateFilterKey?: DateFilterKey;
     },
   ) => void;
-  onDateFilterKeyChange: (value: DateFilterKey) => void;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -5003,7 +5038,6 @@ function HomeView({
         asOfDate={dateRange.to}
         openTransactions={openTransactions}
         openClosing={() => changeTab("closing")}
-        onDateFilterKeyChange={onDateFilterKeyChange}
       />
     );
   }

@@ -11624,3 +11624,12 @@ input[readonly][type="time"] { opacity: 0.75; }
 }
 .date-basis-toggle button.active { background: var(--brand-strong, #2f6f5e); color: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16); }
 .staff-cash-card { padding-block: 12px; }
+
+/* Header date switch (replaces the logo on Dashboard, Transactions and Closing). */
+.app-header-brand { flex: 1 1 auto; }
+.app-header-brand .date-basis-toggle { flex: 0 1 auto; min-width: 0; }
+.app-header-brand .date-basis-toggle button { min-height: 32px; padding: 0 11px; }
+@media (max-width: 420px) {
+  .app-header-brand { gap: 8px; }
+  .app-header-brand .date-basis-toggle button { padding: 0 8px; font-size: 11.5px; }
+}
