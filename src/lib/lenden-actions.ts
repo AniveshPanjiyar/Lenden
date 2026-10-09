@@ -2151,6 +2151,9 @@ const handlers = {
     }
 
     const createdAt = new Date().toISOString();
+    // Auto-approved records post on the day they are approved, like reviewed ones; a
+    // backdated transaction date must not move cash into an already closed day.
+    const createdPostingDate = approvalPostingDate(profile, createdAt);
     const paymentPayload: Record<string, unknown> = {
       business_type: business,
       mode,
@@ -2203,8 +2206,8 @@ const handlers = {
       online_approval_status: onlineCollection > 0 ? (ownerCreated ? "approved" : "pending") : null,
       cash_approved_at: ownerCreated && cashCollection > 0 ? createdAt : null,
       online_approved_at: ownerCreated && onlineCollection > 0 ? createdAt : null,
-      cash_posted_on: ownerCreated && cashCollection > 0 ? paymentDate : null,
-      online_posted_on: ownerCreated && onlineCollection > 0 ? paymentDate : null,
+      cash_posted_on: ownerCreated && cashCollection > 0 ? createdPostingDate : null,
+      online_posted_on: ownerCreated && onlineCollection > 0 ? createdPostingDate : null,
       cash_approved_by: ownerCreated && cashCollection > 0 ? profile.id : null,
       online_approved_by: ownerCreated && onlineCollection > 0 ? profile.id : null,
       approved_by: ownerCreated ? profile.id : null,
@@ -2379,7 +2382,7 @@ const handlers = {
         accountProfileId: profile.id,
         businessType: business,
         amount: cashCollection,
-        entryDate: paymentDate,
+        entryDate: createdPostingDate,
         sourceType: "payment",
         sourceId: payment.id,
         description: `Cash collected for ${business.replace("_", " ")}`,
@@ -3035,6 +3038,7 @@ const handlers = {
     if (existingExpense) return ok(ownerCreated ? "Expense saved." : "Expense saved as pending approval.");
 
     const photoPath = await uploadReceipt(admin, profile.businessId, formData.get("photo"), "expenses", requestKey);
+    const approvedAt = new Date().toISOString();
     const expenseResult = await admin
       .from("expenses")
       .insert({
@@ -3047,8 +3051,8 @@ const handlers = {
         photo_path: photoPath,
         spent_by: profile.id,
         approval_status: ownerCreated ? "approved" : "pending",
-        posted_on: ownerCreated ? expenseDate : null,
-        approved_at: ownerCreated ? new Date().toISOString() : null,
+        posted_on: ownerCreated ? approvalPostingDate(profile, approvedAt) : null,
+        approved_at: ownerCreated ? approvedAt : null,
         approved_by: ownerCreated ? profile.id : null,
         client_request_id: requestKey,
       })
@@ -3079,7 +3083,7 @@ const handlers = {
         accountProfileId: profile.id,
         businessType,
         amount: -amount,
-        entryDate: expenseDate,
+        entryDate: approvalPostingDate(profile, approvedAt),
         sourceType: "expense",
         sourceId: expense.id,
         description: `Expense: ${description}`,
@@ -3160,6 +3164,7 @@ const handlers = {
 
     // The refund is money going out of the unit: record it as an expense for the usual approval / custody flow.
     const description = `Advance returned · Roll ${student.roll_number ?? "-"} · ${student.student_name ?? ""}`.trim();
+    const approvedAt = new Date().toISOString();
     const expenseResult = await admin
       .from("expenses")
       .insert({
@@ -3171,8 +3176,8 @@ const handlers = {
         remark: asString(formData, "note"),
         spent_by: profile.id,
         approval_status: ownerCreated ? "approved" : "pending",
-        posted_on: ownerCreated ? refundDate : null,
-        approved_at: ownerCreated ? new Date().toISOString() : null,
+        posted_on: ownerCreated ? approvalPostingDate(profile, approvedAt) : null,
+        approved_at: ownerCreated ? approvedAt : null,
         approved_by: ownerCreated ? profile.id : null,
         client_request_id: requestKey,
       })
@@ -3188,7 +3193,7 @@ const handlers = {
         accountProfileId: profile.id,
         businessType: studentType,
         amount: -amount,
-        entryDate: refundDate,
+        entryDate: approvalPostingDate(profile, approvedAt),
         sourceType: "expense",
         sourceId: expense.id,
         description: `Expense: ${description}`,
