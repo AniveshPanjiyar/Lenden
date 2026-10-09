@@ -821,6 +821,7 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
+    hoursShort: "Hours",
     howWasItPaid: "How was it paid?",
     showing: "Showing",
     clearFilter: "Clear filter",
@@ -1347,6 +1348,7 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
+    hoursShort: "घंटे",
     howWasItPaid: "भुगतान कैसे हुआ?",
     showing: "दिखा रहे हैं",
     clearFilter: "फ़िल्टर हटाएँ",
@@ -10956,60 +10958,64 @@ function PaymentForm({
                 {t("paymentDate")}
                 <input name="payment_date" type="date" defaultValue={todayIso()} required />
               </label>
-              <label>
-                {t("startDate")}
-                <input
-                  name="start_date"
-                  type="date"
-                  value={subscriptionStartDate}
-                  onChange={(event) => setSubscriptionStartDate(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                {t("endDate")}
-                <input
-                  name="end_date"
-                  type="date"
-                  value={subscriptionEndDate}
-                  onChange={(event) => setSubscriptionEndDate(event.target.value)}
-                  required
-                />
-              </label>
+              <div className="form-pair full-span">
+                <label>
+                  {t("startDate")}
+                  <input
+                    name="start_date"
+                    type="date"
+                    value={subscriptionStartDate}
+                    onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  {t("endDate")}
+                  <input
+                    name="end_date"
+                    type="date"
+                    value={subscriptionEndDate}
+                    onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
               {libraryFullTimeToggle}
-              <label>
-                {t("startTime")}
-                <input
-                  name="start_time"
-                  type="time"
-                  min="06:00"
-                  max="22:00"
-                  step="3600"
-                  value={startTime}
-                  onChange={(event) => setStartTime(event.target.value)}
-                  readOnly={libraryFullTime}
-                  required
-                />
-              </label>
-              <label>
-                {t("endTime")}
-                <input
-                  name="end_time"
-                  type="time"
-                  min="06:00"
-                  max="22:00"
-                  step="3600"
-                  value={endTime}
-                  onChange={(event) => setEndTime(event.target.value)}
-                  readOnly={libraryFullTime}
-                  required
-                />
-              </label>
+              <div className="form-time-row full-span">
+                <label>
+                  {t("startTime")}
+                  <input
+                    name="start_time"
+                    type="time"
+                    min="06:00"
+                    max="22:00"
+                    step="3600"
+                    value={startTime}
+                    onChange={(event) => setStartTime(event.target.value)}
+                    readOnly={libraryFullTime}
+                    required
+                  />
+                </label>
+                <label>
+                  {t("endTime")}
+                  <input
+                    name="end_time"
+                    type="time"
+                    min="06:00"
+                    max="22:00"
+                    step="3600"
+                    value={endTime}
+                    onChange={(event) => setEndTime(event.target.value)}
+                    readOnly={libraryFullTime}
+                    required
+                  />
+                </label>
+                <label className="form-slot-hours">
+                  {t("hoursShort")}
+                  <input name="slot_hours" value={slotHours} readOnly tabIndex={-1} />
+                </label>
+              </div>
               {libraryExtraSlotsEditor}
-              <label>
-                {t("slotHours")}
-                <input name="slot_hours" value={slotHours} readOnly />
-              </label>
             </>
           )}
         </>
@@ -11212,72 +11218,78 @@ function PaymentForm({
                     {t("paymentDate")}
                     <input name="payment_date" type="date" defaultValue={todayIso()} required />
                   </label>
-                  <label>
-                    {t("startDate")}
-                    <input
-                      name="start_date"
-                      type="date"
-                      value={subscriptionStartDate}
-                      onChange={(event) => setSubscriptionStartDate(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("endDate")}
-                    <input
-                      name="end_date"
-                      type="date"
-                      value={subscriptionEndDate}
-                      onChange={(event) => setSubscriptionEndDate(event.target.value)}
-                      required
-                    />
-                  </label>
+                  <div className="form-pair full-span">
+                    <label>
+                      {t("startDate")}
+                      <input
+                        name="start_date"
+                        type="date"
+                        value={subscriptionStartDate}
+                        onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("endDate")}
+                      <input
+                        name="end_date"
+                        type="date"
+                        value={subscriptionEndDate}
+                        onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                        required
+                      />
+                    </label>
+                  </div>
                   {libraryMemberMode === "new" ? (
                     <>
-                      <label>
-                        {t("seatNumber")}
-                        <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
-                      </label>
-                      <label>
-                        {t("lockerNumber")}
-                        <input name="locker_number" value={lockerNumber} onChange={(event) => setLockerNumber(event.target.value)} />
-                      </label>
+                      <div className="form-pair full-span">
+                        <label>
+                          {t("seatNumber")}
+                          <input name="seat_number" value={seatNumber} onChange={(event) => setSeatNumber(event.target.value)} />
+                        </label>
+                        <label>
+                          {t("lockerNumber")}
+                          <input name="locker_number" value={lockerNumber} onChange={(event) => setLockerNumber(event.target.value)} />
+                        </label>
+                      </div>
                     </>
                   ) : null}
                   {libraryFullTimeToggle}
-                  <label>
-                    {t("startTime")}
-                    <input
-                      name="start_time"
-                      type="time"
-                      min="06:00"
-                      max="22:00"
-                      step="3600"
-                      value={startTime}
-                      onChange={(event) => setStartTime(event.target.value)}
-                      readOnly={libraryFullTime}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t("endTime")}
-                    <input
-                      name="end_time"
-                      type="time"
-                      min="06:00"
-                      max="22:00"
-                      step="3600"
-                      value={endTime}
-                      onChange={(event) => setEndTime(event.target.value)}
-                      readOnly={libraryFullTime}
-                      required
-                    />
-                  </label>
+                  <div className="form-time-row full-span">
+                    <label>
+                      {t("startTime")}
+                      <input
+                        name="start_time"
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        step="3600"
+                        value={startTime}
+                        onChange={(event) => setStartTime(event.target.value)}
+                        readOnly={libraryFullTime}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("endTime")}
+                      <input
+                        name="end_time"
+                        type="time"
+                        min="06:00"
+                        max="22:00"
+                        step="3600"
+                        value={endTime}
+                        onChange={(event) => setEndTime(event.target.value)}
+                        readOnly={libraryFullTime}
+                        required
+                      />
+                    </label>
+                    <label className="form-slot-hours">
+                      {t("hoursShort")}
+                      <input name="slot_hours" value={slotHours} readOnly tabIndex={-1} />
+                    </label>
+                  </div>
                   {libraryExtraSlotsEditor}
-                  <label>
-                    {t("slotHours")}
-                    <input name="slot_hours" value={slotHours} readOnly />
-                  </label>
                 </>
               )}
             </>
@@ -11516,56 +11528,60 @@ function PaymentForm({
                         {t("paymentDate")}
                         <input name="payment_date" type="date" defaultValue={today} required />
                       </label>
-                      <label>
-                        {t("startDate")}
-                        <input
-                          name="start_date"
-                          type="date"
-                          value={subscriptionStartDate}
-                          onChange={(event) => setSubscriptionStartDate(event.target.value)}
-                          required
-                        />
-                      </label>
-                      <label>
-                        {t("endDate")}
-                        <input
-                          name="end_date"
-                          type="date"
-                          value={subscriptionEndDate}
-                          onChange={(event) => setSubscriptionEndDate(event.target.value)}
-                          required
-                        />
-                      </label>
-                      <label>
-                        {t("startTime")}
-                        <input
-                          name="start_time"
-                          type="time"
-                          min="06:00"
-                          max="22:00"
-                          step="3600"
-                          value={startTime}
-                          onChange={(event) => setStartTime(event.target.value)}
-                          required
-                        />
-                      </label>
-                      <label>
-                        {t("endTime")}
-                        <input
-                          name="end_time"
-                          type="time"
-                          min="06:00"
-                          max="22:00"
-                          step="3600"
-                          value={endTime}
-                          onChange={(event) => setEndTime(event.target.value)}
-                          required
-                        />
-                      </label>
-                      <label>
-                        {t("slotHours")}
-                        <input name="slot_hours" value={slotHours} readOnly />
-                      </label>
+                      <div className="form-pair full-span">
+                        <label>
+                          {t("startDate")}
+                          <input
+                            name="start_date"
+                            type="date"
+                            value={subscriptionStartDate}
+                            onChange={(event) => setSubscriptionStartDate(event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          {t("endDate")}
+                          <input
+                            name="end_date"
+                            type="date"
+                            value={subscriptionEndDate}
+                            onChange={(event) => setSubscriptionEndDate(event.target.value)}
+                            required
+                          />
+                        </label>
+                      </div>
+                      <div className="form-time-row full-span">
+                        <label>
+                          {t("startTime")}
+                          <input
+                            name="start_time"
+                            type="time"
+                            min="06:00"
+                            max="22:00"
+                            step="3600"
+                            value={startTime}
+                            onChange={(event) => setStartTime(event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label>
+                          {t("endTime")}
+                          <input
+                            name="end_time"
+                            type="time"
+                            min="06:00"
+                            max="22:00"
+                            step="3600"
+                            value={endTime}
+                            onChange={(event) => setEndTime(event.target.value)}
+                            required
+                          />
+                        </label>
+                        <label className="form-slot-hours">
+                          {t("hoursShort")}
+                          <input name="slot_hours" value={slotHours} readOnly tabIndex={-1} />
+                        </label>
+                      </div>
                       <label>
                         {t("referralCode")}
                         <input name="referral_code" list="referral-codes" />
@@ -11690,44 +11706,11 @@ function PaymentForm({
 
       {paymentFieldsReady ? (
         <>
-          <label>
-            {t("mode")}
-            <select name="mode" value={mode} onChange={(event) => setMode(event.target.value as PaymentMode)}>
-              <option value="cash">{t("cash")}</option>
-              <option value="online">{t("online")}</option>
-              <option value="mixed">{t("mixed")}</option>
-            </select>
-          </label>
+          <input type="hidden" name="mode" value={mode} />
           {mode === "mixed" ? (
             <>
-              <label>
-                {t("cashCollection")}
-                <input
-                  name="cash_collection"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={cashCollection}
-                  onChange={(event) => setCashCollection(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                {t("onlineCollection")}
-                <input
-                  name="online_collection"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={onlineCollection}
-                  onChange={(event) => setOnlineCollection(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                {t("remaining")}
-                <input value={splitRemaining} readOnly />
-              </label>
+              <input type="hidden" name="cash_collection" value={cashCollection} />
+              <input type="hidden" name="online_collection" value={onlineCollection} />
             </>
           ) : null}
           <CompressedImageInput
@@ -11805,7 +11788,7 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
   const { t } = useLanguage();
 
   return (
-    <>
+    <div className="form-pair full-span">
       <label>
         {t("startDate")}
         <input name="start_date" type="date" defaultValue={todayIso()} required />
@@ -11814,7 +11797,7 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
         {t("endDate")}
         <input name="end_date" type="date" defaultValue={subscription ? addMonthsIso() : todayIso()} required />
       </label>
-    </>
+    </div>
   );
 }
 
