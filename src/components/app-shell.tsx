@@ -74,6 +74,7 @@ import {
   refundStudentAdvanceAction,
   saveStudentPhotoAction,
   settleCashAction,
+  updatePaymentDateAction,
   updateRecordAction,
 } from "@/app/actions";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
@@ -120,7 +121,7 @@ type MutationRefreshDetail = {
   patch?: MutationPatch;
 };
 type SettlementDirection = "received_from_user" | "sent_to_user";
-type TransactionActionKind = "detail" | "transfer" | "edit" | "delete";
+type TransactionActionKind = "detail" | "transfer" | "edit" | "date" | "delete";
 type LibraryMemberMode = "new" | "existing";
 type LibraryStudentListMode = "active" | "live" | "inactive" | "all";
 type StudentDrawerView = "details" | "history" | "subscription" | "refund";
@@ -820,6 +821,8 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "To employee",
     today: "Today",
     transactionDate: "Payment date",
+    changePaymentDate: "Change payment date",
+    changePaymentDateHint: "Only the payment date changes. The approval date and cash balances stay the same.",
     dateBasisApproval: "Approval",
     dateBasisPayment: "Payment",
     totalClosing: "Total closing",
@@ -1341,6 +1344,8 @@ const messages: Record<Language, Record<string, string>> = {
     toEmployee: "किस स्टाफ को",
     today: "आज",
     transactionDate: "भुगतान की तारीख",
+    changePaymentDate: "भुगतान की तारीख बदलें",
+    changePaymentDateHint: "सिर्फ भुगतान की तारीख बदलेगी। मंजूरी की तारीख और नकद हिसाब वही रहेंगे।",
     dateBasisApproval: "मंजूरी",
     dateBasisPayment: "भुगतान",
     totalClosing: "कुल बंद हिसाब",
@@ -1490,6 +1495,7 @@ const transactionRefreshActions = new Set<ClientAction>([
   requestPaymentTransferAction,
   respondPaymentTransferAction,
   settleCashAction,
+  updatePaymentDateAction,
   updateRecordAction,
 ]);
 
@@ -5786,6 +5792,8 @@ function TransactionsView({
   }, []);
   const currentUserIsSalesAgent = isSalesAgent(profile.role);
   const canUseProfileFilter = !currentUserIsSalesAgent && (owner || sharedBusinessHistory);
+  // Only the Owner (or support) may correct the payment date, even after approval.
+  const canChangePaymentDate = canVerifyOnlineCollections;
   // Pending records have no approval date yet, so the date filter always applies to their
   // payment date. (Every pending record regardless of dates lives behind the header button.)
   const pendingAwaitingInScope = useCallback((isoDate: string) => dateInRange(isoDate.slice(0, 10), dateRange), [dateRange]);
@@ -6594,6 +6602,12 @@ function TransactionsView({
                             <span>{t("editTransaction")}</span>
                           </button>
                         ) : null}
+                        {record.recordType && canChangePaymentDate && record.recordStatus === "active" ? (
+                          <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("date", `${record.kind}-${record.id}`, event.currentTarget)}>
+                            <CalendarDays size={18} />
+                            <span>{t("changePaymentDate")}</span>
+                          </button>
+                        ) : null}
                         {record.recordType && record.canRequestTransfer ? (
                           <button className="transaction-option-button" type="button" onClick={(event) => openTransactionAction("transfer", `${record.kind}-${record.id}`, event.currentTarget)}>
                             <ArrowUp size={18} />
@@ -6710,7 +6724,7 @@ function TransactionsView({
           className="modal-layer"
           role="dialog"
           aria-modal="true"
-          aria-label={transactionAction.kind === "detail" ? "Transaction details" : transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : t("deleteTransaction")}
+          aria-label={transactionAction.kind === "detail" ? "Transaction details" : transactionAction.kind === "transfer" ? t("transferTransaction") : transactionAction.kind === "edit" ? t("editTransaction") : transactionAction.kind === "date" ? t("changePaymentDate") : t("deleteTransaction")}
         >
           <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={closeTransactionAction} />
           <section className="action-sheet transaction-action-sheet">
@@ -6724,7 +6738,9 @@ function TransactionsView({
                     ? t("transferTransaction")
                     : transactionAction.kind === "edit"
                       ? t("editTransaction")
-                      : t("deleteTransaction")}
+                      : transactionAction.kind === "date"
+                        ? t("changePaymentDate")
+                        : t("deleteTransaction")}
                 </h2>
                 <span>{selectedTransactionActionRecord.meta} · {formatMoney(Math.abs(selectedTransactionActionRecord.amount))}</span>
               </div>
@@ -6856,6 +6872,33 @@ function TransactionsView({
                   <input name="remark" defaultValue={selectedTransactionActionRecord.remark} />
                 </label>
                 <button className="primary-button full-span" type="submit">{t("editTransaction")}</button>
+              </form>
+            ) : null}
+
+            {transactionAction.kind === "date" ? (
+              <form
+                className="form-grid"
+                onSubmit={(event) => submitAndClose(event, updatePaymentDateAction, setTransactionNotice, startTransition, closeTransactionAction)}
+              >
+                {transactionActionNotice ? (
+                  <p className={transactionActionNotice.ok ? "form-success full-span" : "form-error full-span"} role={transactionActionNotice.ok ? "status" : "alert"}>
+                    {transactionActionNotice.message}{transactionActionNotice.errorId ? ` Error ID: ${transactionActionNotice.errorId}.` : ""}
+                  </p>
+                ) : null}
+                <input type="hidden" name="record_type" value={selectedTransactionActionRecord.recordType} />
+                <input type="hidden" name="id" value={selectedTransactionSourceId} />
+                <label className="full-span">
+                  {t("transactionDate")}
+                  <input
+                    name="date"
+                    type="date"
+                    defaultValue={selectedTransactionActionRecord.editDate ?? selectedTransactionActionRecord.transactionDate}
+                    max={todayIso()}
+                    required
+                  />
+                </label>
+                <p className="muted full-span">{t("changePaymentDateHint")}</p>
+                <button className="primary-button full-span" type="submit">{t("changePaymentDate")}</button>
               </form>
             ) : null}
 

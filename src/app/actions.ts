@@ -35,6 +35,7 @@ const financialActions = new Set<LendenActionName>([
   "approveRecord",
   "cancelRecord",
   "updateRecord",
+  "updatePaymentDate",
   "requestCancel",
   "reviewChangeRequest",
   "requestPaymentTransfer",
@@ -373,6 +374,10 @@ export async function cancelRecordAction(formData: FormData): Promise<ActionResu
 
 export async function updateRecordAction(formData: FormData): Promise<ActionResult> {
   return invokeLendenAction("updateRecord", formData);
+}
+
+export async function updatePaymentDateAction(formData: FormData): Promise<ActionResult> {
+  return invokeLendenAction("updatePaymentDate", formData);
 }
 
 export async function requestCancelAction(formData: FormData): Promise<ActionResult> {

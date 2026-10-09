@@ -3637,6 +3637,58 @@ const handlers = {
     return ok("Transaction updated.");
   }),
 
+  // The Owner can correct the payment date of any active transaction, approved or not. Only the
+  // date the money was paid changes; approval dates and cash postings stay as they are.
+  updatePaymentDate: withErrors("Could not change the payment date.", async (formData, { admin, profile, idempotencyKey }) => {
+    if (profile.businessRole !== "primary_owner" && profile.accessMode !== "support") {
+      return fail("Only the Owner can change the payment date.");
+    }
+    const recordType = asString(formData, "record_type");
+    const id = asString(formData, "id");
+    const date = asString(formData, "date");
+    if (!id || (recordType !== "payment" && recordType !== "expense")) return fail("Missing record details.");
+    if (!date || !isIsoDate(date)) return fail("Enter a valid payment date.");
+
+    const table = recordType === "expense" ? "expenses" : "payments";
+    const dateField = recordType === "expense" ? "expense_date" : "payment_date";
+    const recordResponse = await admin.from(table).select("*").eq("id", id).eq("business_id", profile.businessId).single();
+    const record = typedData<Record<string, string | number | null>>(recordResponse);
+    if (recordResponse.error || !record) return fail("Transaction not found.");
+    if (String(record.record_status ?? "active") !== "active") return fail("Only active transactions can be changed.");
+
+    const previousDate = String(record[dateField] ?? "");
+    if (previousDate === date) return ok("No changes to save.");
+
+    const { error } = await admin.from(table).update({ [dateField]: date }).eq("id", id);
+    if (error) throw new Error(error.message);
+
+    await admin.from("audit_events").insert({
+      business_id: profile.businessId,
+      actor_profile_id: profile.id,
+      event_type: "payment_date_changed",
+      entity_type: recordType,
+      entity_id: id,
+      before_data: { [dateField]: previousDate },
+      after_data: { [dateField]: date },
+    });
+
+    const recordOwnerId = recordOwnerProfileId(recordType, record);
+    if (recordOwnerId && recordOwnerId !== profile.id) {
+      await createNotifications(admin, {
+        recipientIds: [recordOwnerId],
+        actorId: profile.id,
+        title: "Payment date changed",
+        body: `${profile.full_name} changed the payment date from ${previousDate} to ${date}.`,
+        category: "approval",
+        tone: "info",
+        eventKey: `payment-date:${recordType}:${id}:${idempotencyKey ?? date}`,
+        metadata: { record_id: id, record_type: recordType },
+      });
+    }
+
+    return ok("Payment date updated.");
+  }),
+
   requestCancel: withErrors("Could not request cancel.", async (formData, { admin, profile, idempotencyKey }) => {
     if (isBusinessSalesAgent(profile.businessRole)) {
       return fail("Sales agents have read-only incentive access.");
