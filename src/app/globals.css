@@ -11555,8 +11555,34 @@ input[readonly][type="time"] { opacity: 0.75; }
 .slot-validity { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .extra-slots { position: relative; }
 
-/* Business setup: per-course expired-students WhatsApp message. */
-.business-course-row { flex-wrap: wrap; }
-.course-message-settings { flex-basis: 100%; margin-top: 6px; }
-.course-message-settings > summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 800; }
-.course-message-settings textarea { width: 100%; }
+/* Business setup: per-course expired-students WhatsApp message (full width under the course). */
+.business-setup-list article.business-course-row > .course-message-settings { grid-column: 1 / -1; min-width: 0; }
+.course-message-settings {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-solid, #fffdf8);
+}
+.course-message-settings > summary {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; list-style: none;
+  color: var(--foreground); font-size: 14px; font-weight: 800;
+}
+.course-message-settings > summary::-webkit-details-marker { display: none; }
+.course-message-settings > summary svg { color: #1ebe5a; flex: 0 0 auto; }
+.course-message-settings > summary em {
+  margin-left: auto; padding: 2px 10px; border-radius: 999px; font-style: normal; font-size: 12px; font-weight: 800;
+  background: rgba(46, 50, 48, 0.08); color: var(--muted);
+}
+.course-message-settings > summary em.is-set { background: rgba(31, 143, 78, 0.14); color: #1f8f4e; }
+.course-message-form { display: grid; gap: 8px; padding: 0 12px 12px; }
+.course-message-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.course-message-form textarea {
+  width: 100%; min-height: 120px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--foreground); font: inherit; font-size: 15px; line-height: 1.5; resize: vertical;
+}
+.course-message-form small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.course-message-form .primary-button { width: 100%; }
+/* Undo the global icon-button summary style for the course message header. */
+.course-message-settings > summary {
+  width: 100%; height: auto; min-height: 44px; place-items: initial;
+  border: 0; border-radius: 12px; background: transparent; box-shadow: none;
+}
+.course-message-settings > summary span { display: inline; }
+.course-message-settings[open] > summary { border-bottom: 1px solid var(--line); border-radius: 12px 12px 0 0; margin-bottom: 10px; }

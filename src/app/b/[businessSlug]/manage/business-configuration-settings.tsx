@@ -4,6 +4,7 @@ import {
   BookOpen,
   GraduationCap,
   Hotel,
+  MessageCircle,
   Plus,
   ReceiptText,
   ShieldCheck,
@@ -313,25 +314,32 @@ export function BusinessSetupSettings({
               />
               <details className="course-message-settings">
                 <summary>
-                  Expired students message {course.expired_message_template ? "· set" : "· not set"}
+                  <MessageCircle size={16} aria-hidden="true" />
+                  <span>Expired students message</span>
+                  <em className={course.expired_message_template ? "is-set" : ""}>
+                    {course.expired_message_template ? "Set" : "Not set"}
+                  </em>
                 </summary>
                 <BusinessMutationForm
                   key={course.expired_message_template ?? ""}
                   action={saveCourseMessageAction}
                   onResult={handleResult}
-                  className="business-setup-form message-templates"
+                  className="course-message-form"
                 >
                   <input type="hidden" name="id" value={course.id} />
                   <label>
-                    WhatsApp text for {course.name} students whose subscription has ended
+                    <span>WhatsApp text for {course.name} students whose subscription has ended</span>
                     <textarea
                       name="expired_message_template"
-                      rows={3}
+                      rows={5}
                       maxLength={1000}
-                      defaultValue={course.expired_message_template ?? ""}
-                      placeholder="Namaste {name}, aapka {course} course {end_date} ko khatam ho gaya hai…"
+                      // Not set yet: start from the suggested Hindi message so it can be edited, then saved.
+                      defaultValue={course.expired_message_template || defaultCourseExpiredMessage}
                     />
                   </label>
+                  <small>
+                    {"{name}"} = student name · {"{course}"} = course · {"{end_date}"} = end date · {"{roll}"} = roll number · {"{days}"} = days since it ended
+                  </small>
                 </BusinessMutationForm>
               </details>
             </article>
@@ -440,6 +448,10 @@ function MessageTemplatesSettings({ templates }: { templates: { student_expired?
     </section>
   );
 }
+
+const defaultCourseExpiredMessage =
+  "नमस्ते {name}, आपके {course} का सब्सक्रिप्शन {end_date} को समाप्त हो गया है। "
+  + "अपना सब्सक्रिप्शन जारी रखने के लिए तुरंत रिन्यू करवाएँ, या पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
 
 const initialBusinessActionState: BusinessUserActionState = {
   ok: false,
