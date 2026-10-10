@@ -813,6 +813,8 @@ export type WorkAttendance = {
   attendance_date: string;
   check_in_at: string;
   check_out_at: string | null;
+  // Closed by the 7 PM automatic check-out rather than by the person.
+  auto_checked_out?: boolean;
 };
 
 export type WorkPage = {

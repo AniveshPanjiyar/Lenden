@@ -490,6 +490,9 @@ const messages: Record<Language, Record<string, string>> = {
     present: "Present",
     absent: "Not in",
     stillIn: "Still in",
+    autoLabel: "auto",
+    autoCheckedOut: "Checked out automatically at 7 PM",
+    autoCheckoutAt7: "Auto check-out at 7 PM",
     postUpdate: "Post update",
     whatDidYouDo: "What did you do today?",
     addPhoto: "Photo",
@@ -1018,6 +1021,9 @@ const messages: Record<Language, Record<string, string>> = {
     present: "मौजूद",
     absent: "मौजूद नहीं",
     stillIn: "अभी मौजूद",
+    autoLabel: "ऑटो",
+    autoCheckedOut: "शाम 7 बजे अपने-आप चेक आउट हुआ",
+    autoCheckoutAt7: "शाम 7 बजे अपने-आप चेक आउट होगा",
     postUpdate: "अपडेट डालें",
     whatDidYouDo: "आज आपने क्या किया?",
     addPhoto: "फ़ोटो",
@@ -12137,7 +12143,10 @@ function WorkView({
   const myStatusDetail = !myAttendance
     ? ""
     : myAttendance.check_out_at || isToday
-      ? `${t("workedFor")} ${formatDuration(myAttendance.check_in_at, myAttendance.check_out_at ?? new Date().toISOString())}`
+      ? [
+          `${t("workedFor")} ${formatDuration(myAttendance.check_in_at, myAttendance.check_out_at ?? new Date().toISOString())}`,
+          myAttendance.auto_checked_out ? t("autoCheckedOut") : !myAttendance.check_out_at ? t("autoCheckoutAt7") : null,
+        ].filter(Boolean).join(" · ")
       : t("noCheckOut");
 
   const openTasks = data.tasks.filter((task) => task.status !== "done");
@@ -12236,7 +12245,7 @@ function WorkView({
                   {row ? (
                     <span className="work-attendance-times">
                       <span>{t("checkIn")} {formatTimeInZone(row.check_in_at, data.timezone)}</span>
-                      <span>{row.check_out_at ? `${t("checkOut")} ${formatTimeInZone(row.check_out_at, data.timezone)}` : isToday ? t("stillIn") : t("noCheckOut")}</span>
+                      <span>{row.check_out_at ? `${t("checkOut")} ${formatTimeInZone(row.check_out_at, data.timezone)}${row.auto_checked_out ? ` (${t("autoLabel")})` : ""}` : isToday ? t("stillIn") : t("noCheckOut")}</span>
                       {row.check_out_at || isToday ? (
                         <small>{formatDuration(row.check_in_at, row.check_out_at ?? new Date().toISOString())}</small>
                       ) : null}

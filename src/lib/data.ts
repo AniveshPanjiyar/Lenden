@@ -1271,9 +1271,12 @@ export async function getWorkPage(businessContext: BusinessContext, requestedDat
   const today = dateIsoInTimeZone(new Date(), timezone);
   const date = requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : today;
   const supabase = await createClient({ businessId });
+  // Close check-ins left open past 7 PM before reading attendance.
+  const autoCheckout = await supabase.rpc("lenden_auto_checkout");
+  if (autoCheckout.error) console.warn("[lenden-work] auto check-out failed", autoCheckout.error.message);
 
   const [attendanceResult, openTasksResult, doneTasksResult, updatesResult] = await Promise.all([
-    supabase.from("work_attendance").select("id,profile_id,attendance_date,check_in_at,check_out_at")
+    supabase.from("work_attendance").select("id,profile_id,attendance_date,check_in_at,check_out_at,auto_checked_out")
       .eq("business_id", businessId).eq("attendance_date", date),
     supabase.from("work_tasks").select("id,title,notes,assigned_to,created_by,due_date,status,completed_at,created_at")
       .eq("business_id", businessId).neq("status", "done").order("due_date", { ascending: true, nullsFirst: false }).order("created_at").limit(300),

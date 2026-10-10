@@ -300,6 +300,18 @@ async function updatePaymentApprovalFields(
   return updateResult;
 }
 
+// 7 PM today in the business timezone, as an instant.
+function sevenPmInZone(now: Date, timeZone: string) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(now).map((part) => [part.type, part.value]),
+  );
+  const localAsUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute));
+  const offsetMs = localAsUtc - Math.floor(now.getTime() / 60_000) * 60_000;
+  return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), 19, 0) - offsetMs);
+}
+
 function approvalPostingDate(profile: LendenActionProfile, approvedAt: string) {
   return dateIsoInTimeZone(approvedAt, profile.businessTimezone || undefined);
 }
@@ -4939,9 +4951,20 @@ const handlers = {
     const row = typedData<{ id: string; check_out_at: string | null }>(response);
     if (!row) return fail("Check in first.");
     if (row.check_out_at) return ok("You are already checked out today.");
-    const { error } = await admin.from("work_attendance").update({ check_out_at: new Date().toISOString() }).eq("id", row.id);
+    // Past 7 PM the day has already ended: record the automatic 7 PM check-out instead.
+    const now = new Date();
+    const sevenPm = sevenPmInZone(now, profile.businessTimezone || "Asia/Kolkata");
+    const checkInResponse = await admin.from("work_attendance").select("check_in_at").eq("id", row.id).single();
+    if (checkInResponse.error) throw new Error(checkInResponse.error.message);
+    const checkedInAt = new Date(String((checkInResponse.data as { check_in_at: string }).check_in_at));
+    const pastSeven = now >= sevenPm && checkedInAt < sevenPm;
+    const { error } = await admin.from("work_attendance").update(
+      pastSeven
+        ? { check_out_at: sevenPm.toISOString(), auto_checked_out: true }
+        : { check_out_at: now.toISOString() },
+    ).eq("id", row.id);
     if (error) throw new Error(error.message);
-    return ok("Checked out.");
+    return ok(pastSeven ? "Checked out at 7 PM." : "Checked out.");
   }),
 
   createWorkTask: withErrors("Could not add task.", async (formData, { admin, profile, idempotencyKey }) => {
