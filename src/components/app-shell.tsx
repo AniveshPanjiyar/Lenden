@@ -12099,7 +12099,9 @@ function WorkView({
 }) {
   const { t } = useLanguage();
   const [date, setDate] = useState<string | null>(null);
-  const [personFilter, setPersonFilter] = useState("all");
+  // Updates show everyone by default; Tasks show your own. The person picker switches either.
+  const [updatesPerson, setUpdatesPerson] = useState("all");
+  const [tasksPerson, setTasksPerson] = useState(profileId);
   const [section, setSection] = useState<"updates" | "tasks">("updates");
   const [taskStage, setTaskStage] = useState<WorkTaskStatus>("todo");
   const [addingTask, setAddingTask] = useState(false);
@@ -12124,7 +12126,10 @@ function WorkView({
 
   const memberName = (id: string) => data.members.find((member) => member.id === id)?.full_name ?? "Member";
   const isToday = data.date === data.today;
-  const matchesPerson = (id: string) => personFilter === "all" || personFilter === id;
+  const personFilter = section === "tasks" ? tasksPerson : updatesPerson;
+  const setPersonFilter = section === "tasks" ? setTasksPerson : setUpdatesPerson;
+  const matchesTaskPerson = (id: string) => tasksPerson === "all" || tasksPerson === id;
+  const matchesUpdatePerson = (id: string) => updatesPerson === "all" || updatesPerson === id;
   const goToDate = (next: string) => setDate(next >= data.today ? null : next);
   const dateLabel = isToday
     ? t("today")
@@ -12150,10 +12155,10 @@ function WorkView({
       : t("noCheckOut");
 
   const openTasks = data.tasks.filter((task) => task.status !== "done");
-  const stageTasks = data.tasks.filter((task) => task.status === taskStage && matchesPerson(task.assigned_to));
-  const stageCount = (stage: WorkTaskStatus) => data.tasks.filter((task) => task.status === stage && matchesPerson(task.assigned_to)).length;
+  const stageTasks = data.tasks.filter((task) => task.status === taskStage && matchesTaskPerson(task.assigned_to));
+  const stageCount = (stage: WorkTaskStatus) => data.tasks.filter((task) => task.status === stage && matchesTaskPerson(task.assigned_to)).length;
   const taskTitle = (id: string | null) => data.tasks.find((task) => task.id === id)?.title ?? null;
-  const visibleUpdates = data.updates.filter((update) => matchesPerson(update.author_id));
+  const visibleUpdates = data.updates.filter((update) => matchesUpdatePerson(update.author_id));
   const updatesByAuthor = visibleUpdates.reduce<Map<string, WorkUpdate[]>>((groups, update) => {
     groups.set(update.author_id, [...(groups.get(update.author_id) ?? []), update]);
     return groups;
@@ -12265,7 +12270,7 @@ function WorkView({
           {t("updates")} <span>{visibleUpdates.length}</span>
         </button>
         <button type="button" role="tab" aria-selected={section === "tasks"} className={section === "tasks" ? "active" : ""} onClick={() => setSection("tasks")}>
-          {t("tasks")} <span>{openTasks.filter((task) => matchesPerson(task.assigned_to)).length}</span>
+          {t("tasks")} <span>{openTasks.filter((task) => matchesTaskPerson(task.assigned_to)).length}</span>
         </button>
       </div>
 
