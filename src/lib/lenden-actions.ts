@@ -5001,15 +5001,17 @@ const handlers = {
     const status = asString(formData, "status");
     if (!id) return fail("Task is required.");
     if (status !== "todo" && status !== "in_progress" && status !== "done") return fail("Choose a valid task stage.");
+    // Only the person a task is assigned to moves it between stages.
     const response = await admin
       .from("work_tasks")
       .update({ status, completed_at: status === "done" ? new Date().toISOString() : null })
       .eq("id", id)
       .eq("business_id", profile.businessId)
+      .eq("assigned_to", profile.id)
       .select("id")
       .maybeSingle();
     if (response.error) throw new Error(response.error.message);
-    if (!response.data) return fail("Task was not found.");
+    if (!response.data) return fail("Only the person this task is assigned to can change its status.");
     return ok(status === "done" ? "Task completed." : status === "in_progress" ? "Task started." : "Task moved to To do.");
   }),
 
@@ -5027,9 +5029,12 @@ const handlers = {
     if (body && body.length > 4000) return fail("Review the update.", { body: "Use 4000 characters or fewer." });
 
     if (taskId) {
-      const taskResponse = await admin.from("work_tasks").select("id").eq("id", taskId).eq("business_id", profile.businessId).maybeSingle();
+      const taskResponse = await admin.from("work_tasks").select("id, assigned_to").eq("id", taskId).eq("business_id", profile.businessId).maybeSingle();
       if (taskResponse.error) throw new Error(taskResponse.error.message);
       if (!taskResponse.data) return fail("The linked task was not found.");
+      if (markDone && (taskResponse.data as { assigned_to: string }).assigned_to !== profile.id) {
+        return fail("Only the person this task is assigned to can mark it done.");
+      }
     }
 
     const existing = await existingByClientRequest<{ id: string }>(

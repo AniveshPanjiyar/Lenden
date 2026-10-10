@@ -11772,3 +11772,34 @@ input[readonly][type="time"] { opacity: 0.75; }
   .form-time-row input[type="time"]::-webkit-calendar-picker-indicator { margin: 0; padding: 0; width: 14px; }
   .form-slot-hours input { padding-inline: 4px; }
 }
+
+/* Work: nothing inside may widen the page (long task names in the linked-task select did). */
+.work-page, .work-page > *, .work-composer > *, .work-composer-row > * { min-width: 0; }
+.work-composer select, .work-composer textarea { width: 100%; max-width: 100%; min-width: 0; text-overflow: ellipsis; }
+@media (max-width: 720px) {
+  .work-composer-tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .work-composer-tools .work-voice { justify-content: flex-start; }
+  .work-composer-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .work-composer-row select { min-height: 48px; font-size: 16px; }
+  .work-composer-actions { display: grid; grid-template-columns: 1fr 2fr; }
+  .work-composer-actions button { min-height: 48px; justify-content: center; }
+  .work-composer textarea { font-size: 16px; }
+}
+
+/* Work: loading placeholders and the Owner's attendance list. */
+.work-skeleton { border-radius: 16px; background: linear-gradient(90deg, rgba(47,111,94,.06), rgba(47,111,94,.12), rgba(47,111,94,.06)); background-size: 200% 100%; animation: work-skeleton 1.2s ease-in-out infinite; }
+.work-skeleton-bar { height: 44px; }
+.work-skeleton-hero { height: 130px; }
+.work-skeleton-line { height: 64px; }
+@keyframes work-skeleton { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .work-skeleton { animation: none; } }
+.work-attendance { display: grid; gap: 8px; padding: 14px; border-radius: 18px; border: 1px solid var(--line); background: var(--panel-solid); }
+.work-attendance h3 { margin: 0; font-size: 13px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.work-attendance ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.work-attendance li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 8px; row-gap: 2px; padding: 8px 10px; border-radius: 12px; background: var(--surface-container-lowest, #fffdf8); border-left: 4px solid var(--outline, #c9cfc9); }
+.work-attendance li.in { border-left-color: var(--good, #1f8f4e); }
+.work-attendance li.done { border-left-color: var(--brand, #2f6f5e); }
+.work-attendance li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-attendance-times { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.work-attendance-times small { font-weight: 800; color: var(--brand-strong, #2f6f5e); }
+.work-attendance li.absent .work-attendance-times { color: var(--bad, #c62828); }

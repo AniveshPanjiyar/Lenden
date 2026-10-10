@@ -489,6 +489,7 @@ const messages: Record<Language, Record<string, string>> = {
     teamToday: "Team attendance",
     present: "Present",
     absent: "Not in",
+    stillIn: "Still in",
     postUpdate: "Post update",
     whatDidYouDo: "What did you do today?",
     addPhoto: "Photo",
@@ -1016,6 +1017,7 @@ const messages: Record<Language, Record<string, string>> = {
     teamToday: "टीम हाज़िरी",
     present: "मौजूद",
     absent: "मौजूद नहीं",
+    stillIn: "अभी मौजूद",
     postUpdate: "अपडेट डालें",
     whatDidYouDo: "आज आपने क्या किया?",
     addPhoto: "फ़ोटो",
@@ -2586,6 +2588,13 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
   const [pending, startTransition] = useTransition();
   const [actionBusyMessageKey, setActionBusyMessageKey] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  useEffect(() => {
+    if (isSalesAgent(data.profile.role)) return;
+    const timeout = window.setTimeout(() => {
+      void queryClient.prefetchQuery(workQueryOptions(businessId, cacheScope, null));
+    }, 1500);
+    return () => window.clearTimeout(timeout);
+  }, [businessId, cacheScope, data.profile.role, queryClient]);
   const initialBootstrapData = useMemo(() => bootstrapFromAppData(data), [data]);
   const dashboardParams = useMemo(
     () => dashboardDataSearchParams(tab, dashboardFilters, transactionFilters, closingFilters, studentFilters).toString(),
@@ -4029,6 +4038,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 businessId={businessId}
                 cacheScope={cacheScope}
                 profileId={appData.profile.id}
+                owner={primaryOwner || supportMode}
                 setNotice={pushNotice}
                 startTransition={startTransition}
               />
@@ -12058,16 +12068,26 @@ function workInitials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
 }
 
+function workQueryOptions(businessId: string, cacheScope: string, date: string | null) {
+  return {
+    queryKey: ["work", cacheScope, date ?? "today"],
+    queryFn: ({ signal }: { signal?: AbortSignal }) => fetchJson<WorkPage>(`/api/businesses/${businessId}/work${date ? `?date=${date}` : ""}`, signal),
+    staleTime: 15_000,
+  };
+}
+
 function WorkView({
   businessId,
   cacheScope,
   profileId,
+  owner,
   setNotice,
   startTransition,
 }: {
   businessId: string;
   cacheScope: string;
   profileId: string;
+  owner: boolean;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
@@ -12079,17 +12099,19 @@ function WorkView({
   const [addingTask, setAddingTask] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [linkedTaskId, setLinkedTaskId] = useState("");
-  const workQuery = useQuery({
-    queryKey: ["work", cacheScope, date ?? "today"],
-    queryFn: ({ signal }) => fetchJson<WorkPage>(`/api/businesses/${businessId}/work${date ? `?date=${date}` : ""}`, signal),
-    staleTime: 15_000,
-  });
+  const workQuery = useQuery(workQueryOptions(businessId, cacheScope, date));
   const data = workQuery.data;
 
   if (!data) {
+    // Same layout as the loaded page, so it does not jump when the data arrives.
     return (
-      <section className="work-page" aria-busy={workQuery.isPending}>
-        <p className="muted">{workQuery.isError ? workQuery.error.message : t("loading")}</p>
+      <section className="work-page" aria-busy={workQuery.isPending} aria-label={t("work")}>
+        {workQuery.isError ? <p className="form-error">{workQuery.error.message}</p> : null}
+        <div className="work-skeleton work-skeleton-bar" />
+        <div className="work-skeleton work-skeleton-hero" />
+        <div className="work-skeleton work-skeleton-bar" />
+        <div className="work-skeleton work-skeleton-line" />
+        <div className="work-skeleton work-skeleton-line" />
       </section>
     );
   }
@@ -12201,6 +12223,34 @@ function WorkView({
         </div>
       </article>
 
+      {owner ? (
+        <section className="work-attendance" aria-label={t("attendance")}>
+          <h3>{t("attendance")}</h3>
+          <ul>
+            {data.members.map((member) => {
+              const row = data.attendance.find((item) => item.profile_id === member.id);
+              return (
+                <li key={member.id} className={row ? (row.check_out_at ? "done" : "in") : "absent"}>
+                  <span className="work-avatar tiny" aria-hidden="true">{workInitials(member.full_name)}</span>
+                  <strong>{member.id === profileId ? `${member.full_name} (${t("me")})` : member.full_name}</strong>
+                  {row ? (
+                    <span className="work-attendance-times">
+                      <span>{t("checkIn")} {formatTimeInZone(row.check_in_at, data.timezone)}</span>
+                      <span>{row.check_out_at ? `${t("checkOut")} ${formatTimeInZone(row.check_out_at, data.timezone)}` : isToday ? t("stillIn") : t("noCheckOut")}</span>
+                      {row.check_out_at || isToday ? (
+                        <small>{formatDuration(row.check_in_at, row.check_out_at ?? new Date().toISOString())}</small>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="work-attendance-times"><span>{t("absent")}</span></span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       <div className="work-segments" role="tablist" aria-label={t("work")}>
         <button type="button" role="tab" aria-selected={section === "updates"} className={section === "updates" ? "active" : ""} onClick={() => setSection("updates")}>
           {t("updates")} <span>{visibleUpdates.length}</span>
@@ -12240,7 +12290,7 @@ function WorkView({
                         <option key={task.id} value={task.id}>{task.title} · {memberName(task.assigned_to)}</option>
                       ))}
                     </select>
-                    {linkedTaskId ? (
+                    {linkedTaskId && data.tasks.find((task) => task.id === linkedTaskId)?.assigned_to === profileId ? (
                       <label className="work-check">
                         <input type="checkbox" name="mark_done" />
                         {t("markTaskDone")}
@@ -12370,14 +12420,16 @@ function WorkView({
                       </small>
                       {task.notes ? <p>{task.notes}</p> : null}
                     </div>
-                    <form onSubmit={(event) => submitWith(event, setWorkTaskStatusAction, setNotice, startTransition, false)}>
-                      <input type="hidden" name="id" value={task.id} />
-                      <input type="hidden" name="status" value={next.status} />
-                      <button className={`work-stage-button to-${next.status}`} type="submit">
-                        {next.status === "done" ? <Check size={15} /> : null}
-                        {t(next.labelKey)}
-                      </button>
-                    </form>
+                    {task.assigned_to === profileId ? (
+                      <form onSubmit={(event) => submitWith(event, setWorkTaskStatusAction, setNotice, startTransition, false)}>
+                        <input type="hidden" name="id" value={task.id} />
+                        <input type="hidden" name="status" value={next.status} />
+                        <button className={`work-stage-button to-${next.status}`} type="submit">
+                          {next.status === "done" ? <Check size={15} /> : null}
+                          {t(next.labelKey)}
+                        </button>
+                      </form>
+                    ) : null}
                   </li>
                 );
               })}
