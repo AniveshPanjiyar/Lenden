@@ -1036,6 +1036,84 @@ async function resyncStudentAfterPaymentCancel(admin: SupabaseAdminClient, payme
   if (error) throw new Error(error.message);
 }
 
+type PaymentRow = Record<string, string | number | null>;
+
+/** Every payment of the subscription this payment belongs to, oldest first. */
+async function subscriptionPayments(admin: SupabaseAdminClient, payment: PaymentRow) {
+  const key = payment.student_subscription_key ? String(payment.student_subscription_key) : null;
+  let query = admin
+    .from("payments")
+    .select("*")
+    .eq("business_id", String(payment.business_id))
+    .eq("business_type", String(payment.business_type));
+  query = key ? query.eq("student_subscription_key", key) : query.eq("id", String(payment.id));
+  const response = await query;
+  if (response.error) throw new Error(response.error.message);
+  return typedDataArray<PaymentRow>(response).sort((a, b) =>
+    String(a.payment_date).localeCompare(String(b.payment_date))
+    || String(a.created_at).localeCompare(String(b.created_at))
+    || String(a.id).localeCompare(String(b.id)));
+}
+
+/**
+ * After a subscription payment's amount or the subscription fee changes, rewrite the running
+ * paid / dues / advance snapshot on each of its payments, and on the student when it is their
+ * current subscription. A fee passed in replaces the fee of every active payment.
+ */
+async function resyncSubscriptionAmounts(admin: SupabaseAdminClient, payment: PaymentRow, nextFee?: number) {
+  const studentType = String(payment.business_type);
+  if (studentType !== "library" && studentType !== "course") return;
+  const payments = await subscriptionPayments(admin, payment);
+  const active = payments.filter((row) => String(row.record_status ?? "active") === "active");
+  const fee = nextFee ?? Math.max(...active.map((row) => Number(row.fee_amount ?? 0)), 0);
+  let cumulativePaid = 0;
+  let latest = { paid: 0, dues: 0, advance: 0 };
+  for (const row of active) {
+    cumulativePaid += Number(row.amount ?? 0);
+    const effectiveFee = fee > 0 ? fee : cumulativePaid;
+    latest = {
+      paid: cumulativePaid,
+      dues: Math.max(effectiveFee - cumulativePaid, 0),
+      advance: Math.max(cumulativePaid - effectiveFee, 0),
+    };
+    const updates: Record<string, unknown> = {
+      paid_amount: latest.paid,
+      dues_amount: latest.dues,
+      advance_amount: latest.advance,
+    };
+    if (nextFee !== undefined) updates.fee_amount = nextFee;
+    if (allUpdatesMatch(row, updates)) continue;
+    const { error } = await admin.from("payments").update(updates).eq("id", row.id);
+    if (error) throw new Error(error.message);
+  }
+
+  const studentColumn = studentType === "library" ? "library_student_id" : "course_student_id";
+  const studentId = payment[studentColumn] ? String(payment[studentColumn]) : null;
+  if (!studentId) return;
+  const table = studentType === "library" ? "library_students" : "course_students";
+  const studentResponse = await admin
+    .from(table)
+    .select("id,current_subscription_key,last_payment_id")
+    .eq("id", studentId)
+    .maybeSingle();
+  if (studentResponse.error) throw new Error(studentResponse.error.message);
+  const student = typedData<{ id: string; current_subscription_key: string | null; last_payment_id: string | null }>(studentResponse);
+  const key = payment.student_subscription_key ? String(payment.student_subscription_key) : null;
+  const isCurrent = Boolean(student) && (
+    (Boolean(key) && student?.current_subscription_key === key)
+    || payments.some((row) => row.id === student?.last_payment_id)
+  );
+  if (!student || !isCurrent) return;
+  const studentUpdates: Record<string, unknown> = {
+    paid_amount: latest.paid,
+    dues_amount: latest.dues,
+    advance_amount: latest.advance,
+  };
+  if (nextFee !== undefined) studentUpdates.fee_amount = nextFee;
+  const { error } = await admin.from(table).update(studentUpdates).eq("id", student.id);
+  if (error) throw new Error(error.message);
+}
+
 /**
  * Mode + amounts for editing an unapproved payment. Mixed takes a cash and an online part (both
  * above zero) and the amount is their sum; cash / online take a single amount. Component statuses
@@ -2783,8 +2861,26 @@ const handlers = {
       }
     }
 
+    // The fee (the subscription's total value) can change while none of its payments is approved.
+    const currentFee = Math.max(...payments.map((payment) => Number(payment.fee_amount ?? 0)), 0);
+    const requestedFee = asNumber(formData, "fee_amount");
+    const feeChanged = requestedFee !== null && moneyToCents(requestedFee) !== moneyToCents(currentFee);
+    if (feeChanged) {
+      if (requestedFee < 0) return fail("Enter a valid fee.");
+      for (const payment of payments) {
+        if (payment.record_status !== "active") continue;
+        if ((await recordIsEffectivelyApproved(admin, "payment", payment)) || paymentHasApprovedComponent(payment)) {
+          return fail("The fee is locked once a payment of this subscription is approved.");
+        }
+        if (!(await canManageBusinessRecord(admin, profile, studentType, recordOwnerProfileId("payment", payment)))) {
+          return fail("You can edit your own transactions, or Staff transactions when you are a Manager.");
+        }
+        updatesFor(String(payment.id)).fee_amount = requestedFee;
+      }
+    }
+
     // Keep each payment's paid / dues / advance snapshot in step with the amounts.
-    const fee = Math.max(...payments.map((payment) => Number(payment.fee_amount ?? 0)), 0);
+    const fee = feeChanged ? requestedFee : currentFee;
     let cumulativePaid = 0;
     let latestSnapshot = { paid: 0, dues: 0, advance: 0 };
     payments.forEach((payment) => {
@@ -2842,6 +2938,7 @@ const handlers = {
         dues_amount: latestSnapshot.dues,
         advance_amount: latestSnapshot.advance,
       };
+      if (feeChanged) studentUpdates.fee_amount = fee;
       if (extraSlots !== undefined && studentType === "library") studentUpdates.extra_time_slots = extraSlots;
       const { error } = await admin.from(studentTable).update(studentUpdates).eq("id", student.id);
       if (error) throw new Error(error.message);
@@ -3628,10 +3725,26 @@ const handlers = {
       if (expenseMode === "cash" || expenseMode === "online") updates.mode = expenseMode;
     }
 
-    if (allUpdatesMatch(record, updates)) return ok("No changes to save.");
+    // A student subscription's fee (its total value) can change while none of its payments is approved.
+    const requestedFee = recordType === "payment" ? asNumber(formData, "fee_amount") : null;
+    let nextFee: number | undefined;
+    if (requestedFee !== null && moneyToCents(requestedFee) !== moneyToCents(Number(record.fee_amount ?? 0))) {
+      if (requestedFee < 0) return fail("Enter a valid fee.");
+      if (recordBusinessType !== "library" && recordBusinessType !== "course") return fail("Only student payments have a fee.");
+      for (const row of await subscriptionPayments(admin, record)) {
+        if (row.id === id || String(row.record_status ?? "active") !== "active") continue;
+        if ((await recordIsEffectivelyApproved(admin, "payment", row)) || paymentHasApprovedComponent(row)) {
+          return fail("The fee is locked once a payment of this subscription is approved.");
+        }
+      }
+      nextFee = requestedFee;
+    }
+
+    if (allUpdatesMatch(record, updates) && nextFee === undefined) return ok("No changes to save.");
 
     const { error } = await admin.from(table).update(updates).eq("id", id);
     if (error) throw new Error(error.message);
+    if (recordType === "payment") await resyncSubscriptionAmounts(admin, { ...record, ...updates } as PaymentRow, nextFee);
 
     await createNotifications(admin, {
       recipientIds: recordOwnerId === profile.id

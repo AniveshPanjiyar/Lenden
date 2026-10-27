@@ -7047,6 +7047,12 @@ function TransactionsView({
                   initialOnline={Number(selectedPayment?.online_collection ?? 0)}
                   names={{ mode: "mode", amount: "amount", cash: "cash_collection", online: "online_collection" }}
                 />
+                {selectedPayment && (selectedPayment.business_type === "library" || selectedPayment.business_type === "course") ? (
+                  <label>
+                    {t("fee")}
+                    <input name="fee_amount" type="number" min="0" step="1" defaultValue={Number(selectedPayment.fee_amount ?? 0)} required />
+                  </label>
+                ) : null}
                 <label>
                   {selectedTransactionActionRecord.recordType === "payment" ? t("paymentDate") : t("expenseDate")}
                   <input name="date" type="date" defaultValue={selectedTransactionActionRecord.editDate} required />
@@ -8838,6 +8844,20 @@ function SubscriptionHistoryTimeline({
                   endTime={subscription.endTime?.slice(0, 5) ?? ""}
                   extraSlots={editTarget.studentType === "library" ? subscription.extraSlots ?? [] : null}
                 />
+                {subscription.transactions.some((transaction) => transaction.recordStatus === "active" && (
+                  transaction.approvalStatus === "approved"
+                  || transaction.cashApprovalStatus === "approved"
+                  || transaction.onlineApprovalStatus === "approved"
+                )) ? (
+                  <p className="full-span student-subscription-edit-locked">
+                    {t("fee")} {formatMoney(subscription.feeAmount)} · {t("amountLockedAfterApproval")}
+                  </p>
+                ) : (
+                  <label className="full-span">
+                    {t("fee")}
+                    <input type="number" name="fee_amount" min="0" step="1" defaultValue={subscription.feeAmount} required />
+                  </label>
+                )}
                 {subscription.transactions.filter((transaction) => transaction.recordStatus === "active").map((transaction) => {
                   const approved = transaction.approvalStatus === "approved"
                     || transaction.cashApprovalStatus === "approved"
