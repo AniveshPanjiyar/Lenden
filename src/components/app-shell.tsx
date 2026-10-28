@@ -2,6 +2,7 @@
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
+import { contactPhone, defaultCoursePrefix, shareContactsFile, studentContactName, studentContactsVCard, type StudentContact } from "@/lib/contact-names";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +17,7 @@ import {
   CalendarDays,
   Camera,
   Check,
+  Contact,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
@@ -586,6 +588,14 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
+    saveContacts: "Save contacts to phone",
+    contactPrefix: "Prefix",
+    contactCompany: "Company",
+    selectAll: "Select all",
+    clearSelection: "Clear selection",
+    noPhone: "No phone number",
+    saveNContacts: "Save {count} contacts",
+    contactsReady: "{count} contacts sent to your phone. In Contacts, tap Add all.",
     filters: "Filters",
     filterResults: "Filter results",
     applyFilters: "Apply filters",
@@ -1117,6 +1127,14 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
+    saveContacts: "फ़ोन में कॉन्टैक्ट सेव करें",
+    contactPrefix: "प्रीफ़िक्स",
+    contactCompany: "कंपनी",
+    selectAll: "सभी चुनें",
+    clearSelection: "चयन हटाएँ",
+    noPhone: "फ़ोन नंबर नहीं",
+    saveNContacts: "{count} कॉन्टैक्ट सेव करें",
+    contactsReady: "{count} कॉन्टैक्ट फ़ोन को भेजे गए। Contacts में Add all दबाएँ।",
     filters: "फ़िल्टर",
     filterResults: "नतीजे फ़िल्टर करें",
     applyFilters: "फ़िल्टर लागू करें",
@@ -9076,6 +9094,12 @@ function LibraryStudentsView({
   const [rosterFlags, setRosterFlags] = useState<StudentRosterFlag[]>([]);
   const [rosterSort, setRosterSort] = useState<StudentRosterSortKey>("expiry");
   const [rosterFilterOpen, setRosterFilterOpen] = useState(false);
+  // Save-to-phone mode: tick students, then one tap hands a contacts file to the phone.
+  const [contactMode, setContactMode] = useState(false);
+  const [contactIds, setContactIds] = useState<Set<string>>(() => new Set());
+  const [contactPrefix, setContactPrefix] = useState("");
+  const [contactCompany, setContactCompany] = useState("");
+  const [contactNotice, setContactNotice] = useState<string | null>(null);
   const rosterFlagKey = [...rosterFlags].sort().join(",");
   const rosterQuery = useInfiniteQuery({
     queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize, rosterFlagKey, rosterSort],
@@ -9214,6 +9238,52 @@ function LibraryStudentsView({
             ? comparePausedThenInactive(a, b)
             : 0)
       || compareCourseStudentRecordsByExpiry(a, b, t));
+  const contactCandidates: StudentContact[] = contactMode
+    ? [
+      ...visibleStudents.map((student) => ({ id: student.id, roll: student.roll_number, name: student.student_name, phone: student.phone_number })),
+      ...visibleCourseStudents.map((record) => ({ id: record.id, roll: record.rollNumber, name: record.displayName, phone: record.phoneNumber })),
+    ]
+    : [];
+  const selectableContactCount = contactCandidates.filter((student) => contactPhone(student.phone)).length;
+  const selectedContacts = contactCandidates.filter((student) => contactIds.has(student.id) && contactPhone(student.phone));
+  const allContactsSelected = selectableContactCount > 0 && selectedContacts.length === selectableContactCount;
+  const contactPrefixKey = `lenden-contact-prefix:${businessId}:${selectedSource.id}`;
+  const contactCompanyKey = `lenden-contact-company:${businessId}`;
+  async function openContactMode() {
+    let savedPrefix: string | null = null;
+    let savedCompany: string | null = null;
+    try {
+      savedPrefix = window.localStorage.getItem(contactPrefixKey);
+      savedCompany = window.localStorage.getItem(contactCompanyKey);
+    } catch {
+      // Private mode: start from the defaults.
+    }
+    setContactPrefix(savedPrefix ?? (selectedSource.type === "library" ? "Lb." : defaultCoursePrefix(selectedSource.label)));
+    setContactCompany(savedCompany ?? "");
+    setContactIds(new Set());
+    setContactNotice(null);
+    setContactMode(true);
+    // "Select all" covers the whole roster, not just the first page.
+    let page = rosterQuery.hasNextPage ? await rosterQuery.fetchNextPage() : null;
+    while (page?.hasNextPage) page = await rosterQuery.fetchNextPage();
+  }
+  function closeContactMode() {
+    setContactMode(false);
+    setContactIds(new Set());
+    setContactNotice(null);
+  }
+  async function saveSelectedContacts() {
+    if (selectedContacts.length === 0) return;
+    try {
+      window.localStorage.setItem(contactPrefixKey, contactPrefix);
+      window.localStorage.setItem(contactCompanyKey, contactCompany);
+    } catch {
+      // Not remembered in private mode.
+    }
+    const fileName = `${(contactPrefix.replace(/[^\p{L}\p{N}]+/gu, "") || "students").toLowerCase()}-contacts.vcf`;
+    const shared = await shareContactsFile(studentContactsVCard(selectedContacts, contactPrefix, contactCompany), fileName);
+    if (shared) setContactNotice(t("contactsReady").replace("{count}", String(selectedContacts.length)));
+  }
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -9430,6 +9500,21 @@ function LibraryStudentsView({
                 {rosterFlags.length > 0 ? <span className="header-filter-count">{rosterFlags.length}</span> : null}
               </button>
             ) : null}
+            {variant !== "collection" ? (
+              <button
+                className={`student-filter-button${contactMode ? " active" : ""}`}
+                type="button"
+                aria-label={t("saveContacts")}
+                aria-pressed={contactMode}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (contactMode) closeContactMode();
+                  else void openContactMode();
+                }}
+              >
+                <Contact size={18} />
+              </button>
+            ) : null}
           </span>
         </label>
         {rosterFlags.length > 0 || rosterSort !== "expiry" ? (
@@ -9446,6 +9531,36 @@ function LibraryStudentsView({
             ))}
           </div>
         ) : null}
+        {contactMode ? (
+          <div className="student-contact-panel">
+            <div className="form-pair">
+              <label>
+                {t("contactPrefix")}
+                <input value={contactPrefix} onChange={(event) => setContactPrefix(event.target.value)} maxLength={20} />
+              </label>
+              <label>
+                {t("contactCompany")}
+                <input value={contactCompany} onChange={(event) => setContactCompany(event.target.value)} placeholder="MSS" maxLength={80} />
+              </label>
+            </div>
+            <p className="student-contact-preview">
+              {studentContactName(contactPrefix, contactCandidates.find((student) => contactIds.has(student.id)) ?? contactCandidates[0] ?? { roll: "1", name: t("name") }).displayName}
+              {contactCompany.trim() ? ` · ${contactCompany.trim()}` : ""}
+            </p>
+            <div className="student-contact-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={rosterQuery.isFetchingNextPage}
+                onClick={() => setContactIds(allContactsSelected ? new Set() : new Set(contactCandidates.filter((student) => contactPhone(student.phone)).map((student) => student.id)))}
+              >
+                {rosterQuery.isFetchingNextPage ? t("loading") : allContactsSelected ? t("clearSelection") : `${t("selectAll")} (${selectableContactCount})`}
+              </button>
+              <button className="secondary-button" type="button" onClick={closeContactMode}>{t("cancel")}</button>
+            </div>
+            {contactNotice ? <p className="form-success" role="status">{contactNotice}</p> : null}
+          </div>
+        ) : null}
         {rosterFilterOpen ? (
           <StudentRosterFilterSheet
             flags={rosterFlags}
@@ -9460,7 +9575,30 @@ function LibraryStudentsView({
           />
         ) : null}
         <div className={`library-student-list-scroll ${listMode === "live" && showingLibraryStudents ? "library-live-student-grid" : "space-y-4"}`}>
-          {visibleStudents.map((student) => {
+          {contactMode ? contactCandidates.map((student) => {
+            const phone = contactPhone(student.phone);
+            return (
+              <label key={student.id} className={`student-contact-row${phone ? "" : " disabled"}`}>
+                <input
+                  type="checkbox"
+                  checked={contactIds.has(student.id)}
+                  disabled={!phone}
+                  onChange={() => setContactIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(student.id)) next.delete(student.id);
+                    else next.add(student.id);
+                    return next;
+                  })}
+                />
+                <span className="student-contact-roll">#{student.roll || "-"}</span>
+                <span className="student-contact-name">
+                  <strong>{student.name || t("unknown")}</strong>
+                  <small>{phone ?? t("noPhone")}</small>
+                </span>
+              </label>
+            );
+          }) : null}
+          {contactMode ? null : visibleStudents.map((student) => {
             if (listMode === "live") {
               const displayName = studentDisplayName(student, t);
               const rollNumber = studentDisplayRollNumber(student);
@@ -9524,7 +9662,7 @@ function LibraryStudentsView({
               />
             );
           })}
-          {visibleCourseStudents.map((record) => {
+          {contactMode ? null : visibleCourseStudents.map((record) => {
             const displayName = courseStudentDisplayName(record, t);
             const courseExpired = Boolean(record.subscriptionEndDate && record.subscriptionEndDate < today);
             const coursePause = studentPauseState(record.active, record.pausedAt);
@@ -9607,6 +9745,14 @@ function LibraryStudentsView({
             </div>
           ) : null}
         </div>
+        {contactMode ? (
+          <div className="student-contact-bar">
+            <button className="primary-button" type="button" disabled={selectedContacts.length === 0} onClick={() => void saveSelectedContacts()}>
+              <Contact size={18} aria-hidden="true" />
+              {t("saveNContacts").replace("{count}", String(selectedContacts.length))}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       {drawerKind ? (

@@ -11499,7 +11499,7 @@ html, body { overflow-x: clip; overscroll-behavior: none; }
 input[readonly][type="time"] { opacity: 0.75; }
 
 /* Students page: search + filter button, active filter chips, tab counts. */
-.student-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.student-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; }
 .student-filter-button {
   position: relative; display: inline-grid; place-items: center; width: 46px; height: 46px;
   border: 1px solid var(--line); border-radius: 12px; background: var(--panel-solid, #fffdf8);
@@ -11803,3 +11803,92 @@ input[readonly][type="time"] { opacity: 0.75; }
 .work-attendance-times { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; font-weight: 700; color: var(--muted); }
 .work-attendance-times small { font-weight: 800; color: var(--brand-strong, #2f6f5e); }
 .work-attendance li.absent .work-attendance-times { color: var(--bad, #c62828); }
+
+/* Save students to the phone's contacts */
+.student-contact-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-solid, #fffdf8);
+}
+.student-contact-panel label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 0;
+}
+.student-contact-panel input {
+  min-width: 0;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-solid, #fffdf8);
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+}
+.student-contact-preview {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.student-contact-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.student-contact-actions .secondary-button {
+  flex: 1 1 auto;
+}
+.student-contact-row {
+  display: grid;
+  grid-template-columns: 24px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-solid, #fffdf8);
+  cursor: pointer;
+}
+.student-contact-row input {
+  width: 22px;
+  height: 22px;
+}
+.student-contact-row.disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.student-contact-roll {
+  font-weight: 800;
+}
+.student-contact-name {
+  display: grid;
+  min-width: 0;
+}
+.student-contact-name strong,
+.student-contact-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.student-contact-bar {
+  position: sticky;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 5;
+  padding: 10px 0 4px;
+}
+.student-contact-bar .primary-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
