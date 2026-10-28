@@ -11848,7 +11848,7 @@ input[readonly][type="time"] { opacity: 0.75; }
 }
 .student-contact-row {
   display: grid;
-  grid-template-columns: 24px auto minmax(0, 1fr);
+  grid-template-columns: 24px auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 56px;
@@ -11891,4 +11891,12 @@ input[readonly][type="time"] { opacity: 0.75; }
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+.student-contact-saved {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft, #e3efe9);
+  color: var(--brand, #2f6f5e);
+  font-size: 12px;
+  font-weight: 800;
 }

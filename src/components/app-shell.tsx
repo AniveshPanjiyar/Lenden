@@ -591,9 +591,13 @@ const messages: Record<Language, Record<string, string>> = {
     saveContacts: "Save contacts to phone",
     contactPrefix: "Prefix",
     contactCompany: "Company",
-    selectAll: "Select all",
     clearSelection: "Clear selection",
     noPhone: "No phone number",
+    selectNew: "Select new",
+    allSaved: "All saved",
+    savedTag: "Saved",
+    markSaved: "Mark as saved",
+    markedSaved: "{count} marked as already saved on this phone.",
     saveNContacts: "Save {count} contacts",
     contactsReady: "{count} contacts sent to your phone. In Contacts, tap Add all.",
     filters: "Filters",
@@ -1130,9 +1134,13 @@ const messages: Record<Language, Record<string, string>> = {
     saveContacts: "फ़ोन में कॉन्टैक्ट सेव करें",
     contactPrefix: "प्रीफ़िक्स",
     contactCompany: "कंपनी",
-    selectAll: "सभी चुनें",
     clearSelection: "चयन हटाएँ",
     noPhone: "फ़ोन नंबर नहीं",
+    selectNew: "नए चुनें",
+    allSaved: "सभी सेव हैं",
+    savedTag: "सेव है",
+    markSaved: "सेव हुआ मानें",
+    markedSaved: "{count} को इस फ़ोन पर सेव हुआ माना गया।",
     saveNContacts: "{count} कॉन्टैक्ट सेव करें",
     contactsReady: "{count} कॉन्टैक्ट फ़ोन को भेजे गए। Contacts में Add all दबाएँ।",
     filters: "फ़िल्टर",
@@ -9100,6 +9108,8 @@ function LibraryStudentsView({
   const [contactPrefix, setContactPrefix] = useState("");
   const [contactCompany, setContactCompany] = useState("");
   const [contactNotice, setContactNotice] = useState<string | null>(null);
+  // Students this phone already saved through Lenden ("<id>:<phone>"), so later saves skip them.
+  const [savedContactKeys, setSavedContactKeys] = useState<Set<string>>(() => new Set());
   const rosterFlagKey = [...rosterFlags].sort().join(",");
   const rosterQuery = useInfiniteQuery({
     queryKey: ["student-roster", cacheScope, selectedSource.id, listMode, debouncedQuery, rosterPageSize, rosterFlagKey, rosterSort],
@@ -9244,22 +9254,39 @@ function LibraryStudentsView({
       ...visibleCourseStudents.map((record) => ({ id: record.id, roll: record.rollNumber, name: record.displayName, phone: record.phoneNumber })),
     ]
     : [];
-  const selectableContactCount = contactCandidates.filter((student) => contactPhone(student.phone)).length;
+  const savedContactKey = (student: StudentContact) => `${student.id}:${contactPhone(student.phone)}`;
+  const newContacts = contactCandidates.filter((student) => contactPhone(student.phone) && !savedContactKeys.has(savedContactKey(student)));
   const selectedContacts = contactCandidates.filter((student) => contactIds.has(student.id) && contactPhone(student.phone));
-  const allContactsSelected = selectableContactCount > 0 && selectedContacts.length === selectableContactCount;
+  const allNewSelected = newContacts.length > 0 && newContacts.every((student) => contactIds.has(student.id));
   const contactPrefixKey = `lenden-contact-prefix:${businessId}:${selectedSource.id}`;
   const contactCompanyKey = `lenden-contact-company:${businessId}`;
+  const savedContactsStorageKey = `lenden-saved-contacts:${businessId}`;
+  function rememberSavedContacts(students: StudentContact[]) {
+    const next = new Set(savedContactKeys);
+    students.forEach((student) => next.add(savedContactKey(student)));
+    setSavedContactKeys(next);
+    setContactIds(new Set());
+    try {
+      window.localStorage.setItem(savedContactsStorageKey, JSON.stringify([...next]));
+    } catch {
+      // Private mode: not remembered after this visit.
+    }
+  }
   async function openContactMode() {
     let savedPrefix: string | null = null;
     let savedCompany: string | null = null;
+    let savedKeys: string[] = [];
     try {
       savedPrefix = window.localStorage.getItem(contactPrefixKey);
       savedCompany = window.localStorage.getItem(contactCompanyKey);
+      const stored: unknown = JSON.parse(window.localStorage.getItem(savedContactsStorageKey) ?? "[]");
+      if (Array.isArray(stored)) savedKeys = stored.filter((key): key is string => typeof key === "string");
     } catch {
       // Private mode: start from the defaults.
     }
     setContactPrefix(savedPrefix ?? (selectedSource.type === "library" ? "Lb." : defaultCoursePrefix(selectedSource.label)));
     setContactCompany(savedCompany ?? "");
+    setSavedContactKeys(new Set(savedKeys));
     setContactIds(new Set());
     setContactNotice(null);
     setContactMode(true);
@@ -9282,7 +9309,9 @@ function LibraryStudentsView({
     }
     const fileName = `${(contactPrefix.replace(/[^\p{L}\p{N}]+/gu, "") || "students").toLowerCase()}-contacts.vcf`;
     const shared = await shareContactsFile(studentContactsVCard(selectedContacts, contactPrefix, contactCompany), fileName);
-    if (shared) setContactNotice(t("contactsReady").replace("{count}", String(selectedContacts.length)));
+    if (!shared) return;
+    setContactNotice(t("contactsReady").replace("{count}", String(selectedContacts.length)));
+    rememberSavedContacts(selectedContacts);
   }
 
   useEffect(() => {
@@ -9552,10 +9581,24 @@ function LibraryStudentsView({
                 className="secondary-button"
                 type="button"
                 disabled={rosterQuery.isFetchingNextPage}
-                onClick={() => setContactIds(allContactsSelected ? new Set() : new Set(contactCandidates.filter((student) => contactPhone(student.phone)).map((student) => student.id)))}
+                onClick={() => setContactIds(allNewSelected ? new Set() : new Set(newContacts.map((student) => student.id)))}
               >
-                {rosterQuery.isFetchingNextPage ? t("loading") : allContactsSelected ? t("clearSelection") : `${t("selectAll")} (${selectableContactCount})`}
+                {rosterQuery.isFetchingNextPage
+                  ? t("loading")
+                  : allNewSelected ? t("clearSelection") : newContacts.length > 0 ? `${t("selectNew")} (${newContacts.length})` : t("allSaved")}
               </button>
+              {selectedContacts.length > 0 ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    rememberSavedContacts(selectedContacts);
+                    setContactNotice(t("markedSaved").replace("{count}", String(selectedContacts.length)));
+                  }}
+                >
+                  {t("markSaved")}
+                </button>
+              ) : null}
               <button className="secondary-button" type="button" onClick={closeContactMode}>{t("cancel")}</button>
             </div>
             {contactNotice ? <p className="form-success" role="status">{contactNotice}</p> : null}
@@ -9595,6 +9638,7 @@ function LibraryStudentsView({
                   <strong>{student.name || t("unknown")}</strong>
                   <small>{phone ?? t("noPhone")}</small>
                 </span>
+                {phone && savedContactKeys.has(savedContactKey(student)) ? <span className="student-contact-saved">{t("savedTag")}</span> : null}
               </label>
             );
           }) : null}
