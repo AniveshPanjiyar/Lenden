@@ -39,6 +39,7 @@ export async function GET(
           search: url.searchParams.get("studentSearch"),
           flags: url.searchParams.get("studentFlags"),
           sort: url.searchParams.get("studentSort"),
+          sortDir: url.searchParams.get("studentSortDir"),
           limit: Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100,
         })
       : operationalPagePayload(tab, await getDashboardData(context, identity, viewState));

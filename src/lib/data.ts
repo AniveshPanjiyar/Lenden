@@ -792,8 +792,10 @@ function sortRosterRows<T>(
   rows: T[],
   sort: StudentRosterSort,
   fields: (row: T) => { roll: string | null | undefined; name: string | null | undefined; seat: string | null | undefined },
+  descending = false,
 ) {
   if (sort === "expiry") return rows;
+  const direction = descending ? -1 : 1;
   const keyed = rows.map((row, index) => ({ row, index, ...fields(row) }));
   keyed.sort((a, b) => {
     const primary = sort === "roll"
@@ -801,7 +803,7 @@ function sortRosterRows<T>(
       : sort === "name"
         ? compareNatural(a.name, b.name)
         : compareNatural(a.seat, b.seat);
-    return primary || compareNatural(a.roll, b.roll) || a.index - b.index;
+    return direction * (primary || compareNatural(a.roll, b.roll)) || a.index - b.index;
   });
   return keyed.map((entry) => entry.row);
 }
@@ -1034,7 +1036,7 @@ function applyStudentRosterFlags<Q extends {
 export async function getStudentRosterPage(
   businessContext: BusinessContext,
   viewState: AppViewState,
-  options: { cursor?: string | null; search?: string | null; limit?: number; flags?: string | null; sort?: string | null } = {},
+  options: { cursor?: string | null; search?: string | null; limit?: number; flags?: string | null; sort?: string | null; sortDir?: string | null } = {},
 ): Promise<StudentRosterPayload> {
   const sourceId = viewState.studentFilters.sourceId;
   const status = viewState.studentFilters.status;
@@ -1047,6 +1049,7 @@ export async function getStudentRosterPage(
   const active = status !== "inactive";
   const flags = parseStudentRosterFlags(options.flags);
   const sort: StudentRosterSort = options.sort === "roll" || options.sort === "name" || options.sort === "seat" ? options.sort : "expiry";
+  const descending = options.sortDir === "desc";
   // Roll / name / seat order is applied in memory (natural number order), so page after sorting.
   const inMemory = Boolean(search) || sort !== "expiry";
   const fetchCap = search ? rosterSearchCap : rosterSortCap;
@@ -1125,18 +1128,18 @@ export async function getStudentRosterPage(
     if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
     if (status === "all") query = query.order("active", { ascending: false });
     if (status === "inactive" && sort === "expiry") {
-      query = query.order("paused_at", { ascending: false, nullsFirst: false }).order("inactive_at", { ascending: true, nullsFirst: false });
+      query = query.order("paused_at", { ascending: descending, nullsFirst: false }).order("inactive_at", { ascending: !descending, nullsFirst: false });
     }
     const result = await query
-      .order("subscription_end_date")
-      .order("roll_number")
+      .order("subscription_end_date", { ascending: !descending })
+      .order("roll_number", { ascending: !descending })
       .range(inMemory ? 0 : offset, inMemory ? fetchCap - 1 : offset + limit - 1);
     if (result.error && !isMissingLibraryStudentSchemaError(result.error)) throw new Error(result.error.message);
     const fetchedItems = sortRosterRows((result.data ?? []) as LibraryStudent[], sort, (student) => ({
       roll: collectionDisplayRollNumber(student),
       name: student.student_name,
       seat: student.seat_number,
-    }));
+    }), descending);
     const searchPage = inMemory
       ? rankedSearchPage(fetchedItems, search, collectionDisplayRollNumber, offset, limit, status === "all" ? (student) => student.active : null)
       : null;
@@ -1170,18 +1173,18 @@ export async function getStudentRosterPage(
   if (search) query = query.or(`student_name.ilike.%${search}%,roll_number.ilike.%${search}%,phone_number.ilike.%${search}%`);
   if (status === "all") query = query.order("active", { ascending: false });
   if (status === "inactive" && sort === "expiry") {
-    query = query.order("paused_at", { ascending: false, nullsFirst: false }).order("inactive_at", { ascending: true, nullsFirst: false });
+    query = query.order("paused_at", { ascending: descending, nullsFirst: false }).order("inactive_at", { ascending: !descending, nullsFirst: false });
   }
   const result = await query
-    .order("subscription_end_date")
-    .order("roll_number")
+    .order("subscription_end_date", { ascending: !descending })
+    .order("roll_number", { ascending: !descending })
     .range(inMemory ? 0 : offset, inMemory ? fetchCap - 1 : offset + limit - 1);
   if (result.error && !isMissingCourseStudentSchemaError(result.error)) throw new Error(result.error.message);
   const fetchedItems = sortRosterRows((result.data ?? []) as CourseStudent[], sort, (student) => ({
     roll: student.roll_number,
     name: student.student_name,
     seat: null,
-  }));
+  }), descending);
   const searchPage = inMemory
     ? rankedSearchPage(fetchedItems, search, (student) => student.roll_number, offset, limit, status === "all" ? (student) => student.active : null)
     : null;
