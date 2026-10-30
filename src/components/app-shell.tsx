@@ -2784,6 +2784,16 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
         staleTime: page === "students" ? 300_000 : 30_000,
       }));
   }, [businessId, cacheScope, queryClient, studentFilters]);
+  // Closing and Transactions load in the background once the open page has settled, so the first
+  // tap on either shows data at once (stale data still refreshes behind it after 30 s).
+  useEffect(() => {
+    if (isSalesAgent(data.profile.role)) return;
+    const timeout = window.setTimeout(() => {
+      if (tab !== "closing") void prefetchOperationalFilters("closing", dashboardFilters, transactionFilters, closingFilters);
+      if (tab !== "payments") void prefetchOperationalFilters("payments", dashboardFilters, transactionFilters, closingFilters);
+    }, 2000);
+    return () => window.clearTimeout(timeout);
+  }, [closingFilters, dashboardFilters, data.profile.role, prefetchOperationalFilters, tab, transactionFilters]);
   const emptyOperationalData = useMemo(() => emptyDashboardPayload(), []);
   const appData = useMemo(
     () => mergeCachedAppData(
