@@ -61,17 +61,16 @@ export async function GET(
       "Cache-Control": "private, no-store",
       "Content-Type": "application/json; charset=utf-8",
     });
-    if (process.env.NODE_ENV === "development") {
-      responseHeaders.set(
-        "Server-Timing",
-        [
-          `access;dur=${accessDuration.toFixed(1)}`,
-          `database;dur=${readDuration.toFixed(1)}`,
-          `serialization;dur=${serializationDuration.toFixed(1)}`,
-          `total;dur=${totalDuration.toFixed(1)}`,
-        ].join(", "),
-      );
-    }
+    // Durations only (no data), so slow pages can be diagnosed from the browser in production too.
+    responseHeaders.set(
+      "Server-Timing",
+      [
+        `access;dur=${accessDuration.toFixed(1)}`,
+        `database;dur=${readDuration.toFixed(1)}`,
+        `serialization;dur=${serializationDuration.toFixed(1)}`,
+        `total;dur=${totalDuration.toFixed(1)}`,
+      ].join(", "),
+    );
     return new NextResponse(body, { headers: responseHeaders });
   } catch (error) {
     if (error instanceof BusinessAccessError) {
