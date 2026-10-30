@@ -2404,13 +2404,15 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   grid-template-columns: 34px minmax(0, 1fr);
 }
 
+/* A spinning ring: reads as "working" even on a slow network. */
 .saving-dot::before {
   content: "";
-  width: 11px;
-  height: 11px;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid currentColor;
+  border-right-color: transparent;
   border-radius: 999px;
-  background: currentColor;
-  animation: pulse-dot 900ms ease-in-out infinite;
+  animation: network-spin 750ms linear infinite;
 }
 
 @keyframes pulse-dot {
@@ -12021,4 +12023,58 @@ input[readonly][type="time"] { opacity: 0.75; }
 }
 .student-sms-sheet .form-warning p {
   margin: 6px 0 0;
+}
+
+/* The tapped button shows a spinner while its action runs (set by setFormSubmitting). */
+button[data-loading="true"] {
+  position: relative;
+  cursor: progress;
+}
+button[data-loading="true"]:disabled {
+  opacity: 0.9;
+}
+button[data-loading="true"]::after {
+  content: "";
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-left: 8px;
+  vertical-align: -2px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: network-spin 750ms linear infinite;
+}
+/* Icon-only buttons swap their icon for the spinner. */
+button.icon-mini-action[data-loading="true"] > svg,
+button.icon-button[data-loading="true"] > svg {
+  display: none;
+}
+button.icon-mini-action[data-loading="true"]::after,
+button.icon-button[data-loading="true"]::after {
+  margin-left: 0;
+  width: 16px;
+  height: 16px;
+}
+@media (prefers-reduced-motion: reduce) {
+  button[data-loading="true"]::after {
+    animation-duration: 2s;
+  }
+}
+.review-done-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft, #e3efe9);
+  color: var(--brand, #2f6f5e);
+  font-size: 12px;
+  font-weight: 800;
+}
+.review-done-badge.rejected {
+  background: rgba(186, 26, 26, 0.1);
+  color: #ba1a1a;
 }

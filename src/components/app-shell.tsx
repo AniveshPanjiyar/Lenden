@@ -823,6 +823,16 @@ const messages: Record<Language, Record<string, string>> = {
     save: "Save",
     saving: "Saving...",
     savingChanges: "Saving changes...",
+    approvingTransaction: "Approving transaction...",
+    rejectingTransaction: "Rejecting transaction...",
+    deletingTransaction: "Deleting transaction...",
+    updatingTransaction: "Updating transaction...",
+    transferringTransaction: "Transferring transaction...",
+    transferringCash: "Transferring cash...",
+    savingStudent: "Saving student...",
+    updatingSubscription: "Updating subscription...",
+    checkingIn: "Checking in...",
+    checkingOut: "Checking out...",
     savingTransaction: "Saving transaction...",
     select: "Select",
     selectAgent: "Select agent",
@@ -1393,6 +1403,16 @@ const messages: Record<Language, Record<string, string>> = {
     save: "सेव",
     saving: "सेव हो रहा है...",
     savingChanges: "बदलाव सेव हो रहे हैं...",
+    approvingTransaction: "लेनदेन पक्का हो रहा है...",
+    rejectingTransaction: "लेनदेन अस्वीकार हो रहा है...",
+    deletingTransaction: "लेनदेन हटाया जा रहा है...",
+    updatingTransaction: "लेनदेन अपडेट हो रहा है...",
+    transferringTransaction: "लेनदेन ट्रांसफ़र हो रहा है...",
+    transferringCash: "कैश ट्रांसफ़र हो रहा है...",
+    savingStudent: "छात्र सेव हो रहा है...",
+    updatingSubscription: "सब्सक्रिप्शन अपडेट हो रहा है...",
+    checkingIn: "चेक-इन हो रहा है...",
+    checkingOut: "चेक-आउट हो रहा है...",
     savingTransaction: "लेनदेन सेव हो रहा है...",
     select: "चुनें",
     selectAgent: "एजेंट चुनें",
@@ -1628,7 +1648,26 @@ function documentAppBusy() {
   return typeof document !== "undefined" && document.body.dataset.lendenBusy === "true";
 }
 
+/** What the "working" overlay says while an action runs, e.g. "Approving transaction…". */
+function actionSavingMessageKey(action: ClientAction, formData: FormData) {
+  if (action === approveRecordAction) return formData.get("decision") === "rejected" ? "rejectingTransaction" : "approvingTransaction";
+  if (action === cancelRecordAction) return "deletingTransaction";
+  if (action === updateRecordAction || action === updatePaymentDateAction) return "updatingTransaction";
+  if (action === requestPaymentTransferAction || action === respondPaymentTransferAction) return "transferringTransaction";
+  if (action === settleCashAction) return "transferringCash";
+  if (action === saveLibraryStudentAction || action === saveCourseStudentAction) return "savingStudent";
+  if (action === updateSubscriptionAction) return "updatingSubscription";
+  if (action === checkInAction) return "checkingIn";
+  if (action === checkOutAction) return "checkingOut";
+  return null;
+}
+
 function mutationRefreshDetail(action: ClientAction, formData: FormData): MutationRefreshDetail {
+  const detail = mutationRefreshScope(action, formData);
+  return { ...detail, savingMessageKey: actionSavingMessageKey(action, formData) ?? detail.savingMessageKey };
+}
+
+function mutationRefreshScope(action: ClientAction, formData: FormData): MutationRefreshDetail {
   const isStudentPayment = action === createPaymentAction
     && (formData.get("business_type") === "library" || formData.get("business_type") === "course");
   if (libraryRefreshActions.has(action) || isStudentPayment) {
@@ -1791,9 +1830,21 @@ function disableNumberInputWheelChange(event: WheelEvent<HTMLElement>) {
   }
 }
 
-function setFormSubmitting(form: HTMLFormElement, submitting: boolean) {
+/**
+ * Locks a form while its action runs. The button that was tapped (else the form's submit button)
+ * shows a small spinner, so a slow network still reads as "working".
+ */
+function setFormSubmitting(form: HTMLFormElement, submitting: boolean, submitter?: HTMLElement | null) {
   form.dataset.submitting = submitting ? "true" : "false";
   form.setAttribute("aria-busy", submitting ? "true" : "false");
+  if (submitting) {
+    const loadingButton = submitter instanceof HTMLButtonElement && form.contains(submitter)
+      ? submitter
+      : form.querySelector<HTMLButtonElement>('button[type="submit"], button:not([type])');
+    loadingButton?.setAttribute("data-loading", "true");
+  } else {
+    form.querySelectorAll("[data-loading]").forEach((element) => element.removeAttribute("data-loading"));
+  }
   const controls = form.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
     "button, input, select, textarea",
   );
@@ -1892,7 +1943,7 @@ function submitWith(
   const refreshDetail = mutationRefreshDetail(action, formData);
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
-  setFormSubmitting(form, true);
+  setFormSubmitting(form, true, (event.nativeEvent as SubmitEvent).submitter);
   startTransition(async () => {
     try {
       await waitForPendingFilePreparations(form);
@@ -1949,7 +2000,7 @@ function submitAndClose(
   const refreshDetail = mutationRefreshDetail(action, formData);
   setDocumentAppBusy(true);
   window.dispatchEvent(new CustomEvent<MutationRefreshDetail>(actionStartedEvent, { detail: refreshDetail }));
-  setFormSubmitting(form, true);
+  setFormSubmitting(form, true, (event.nativeEvent as SubmitEvent).submitter);
   startTransition(async () => {
     try {
       await waitForPendingFilePreparations(form);
@@ -4368,7 +4419,27 @@ function PendingReviewSheet({
   startTransition: ReturnType<typeof useTransition>[1];
 }) {
   const { t } = useLanguage();
-  const sortedRecords = [...records].sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
+  // Records approved or rejected here stay in the list, marked done, until the sheet is closed.
+  const [reviewedRecords, setReviewedRecords] = useState<Map<string, PendingReviewRecord>>(() => new Map());
+  const reviewKey = (record: Pick<PendingReviewRecord, "recordType" | "id">) => `${record.recordType}-${record.id}`;
+  const markReviewed = (record: PendingReviewRecord, fields: Record<string, string>) => {
+    const decision = (fields.decision === "rejected" ? "rejected" : "approved") as ApprovalStatus;
+    const component = fields.payment_component ?? null;
+    const cashStatus = record.cashStatus != null && (component === null || component === "cash") ? decision : record.cashStatus;
+    const onlineStatus = record.onlineStatus != null && (component === null || component === "online") ? decision : record.onlineStatus;
+    const stillOpen = [cashStatus, onlineStatus].some((status) => status != null && canApproveRecordStatus(status));
+    const status = stillOpen ? record.status : decision;
+    setReviewedRecords((current) => new Map(current).set(reviewKey(record), {
+      ...record,
+      status,
+      statusLabel: labelForStatus(status, t),
+      cashStatus,
+      onlineStatus,
+    }));
+  };
+  const listedKeys = new Set(records.map(reviewKey));
+  const sortedRecords = [...records, ...[...reviewedRecords.values()].filter((record) => !listedKeys.has(reviewKey(record)))]
+    .sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
   const sortedContextRecords = [...contextRecords].sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
   const totalAmount =
     records.reduce((sum, record) => sum + Math.abs(record.amount), 0) +
@@ -4416,6 +4487,7 @@ function PendingReviewSheet({
                       <>
                         <MiniAction
                           hidden={{ record_type: record.recordType, id: record.id, decision: "rejected" }}
+                          onDone={(fields) => markReviewed(record, fields)}
                           label={t("reject")}
                           tone="reject"
                           icon={<X size={18} />}
@@ -4425,6 +4497,7 @@ function PendingReviewSheet({
                         />
                         <MiniAction
                           hidden={{ record_type: record.recordType, id: record.id, decision: "approved" }}
+                          onDone={(fields) => markReviewed(record, fields)}
                           label={t("approve")}
                           tone="approve"
                           icon={<Check size={18} />}
@@ -4445,6 +4518,7 @@ function PendingReviewSheet({
                           ) : (
                             <MiniAction
                               hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "cash" }}
+                              onDone={(fields) => markReviewed(record, fields)}
                               label={`${t("approve")} ${t("cash")}`}
                               tone="approve"
                               icon={<Banknote size={17} />}
@@ -4460,6 +4534,7 @@ function PendingReviewSheet({
                           ) : canVerifyOnlineCollections && !record.hasPendingTransfer ? (
                             <MiniAction
                               hidden={{ record_type: record.recordType, id: record.id, decision: "approved", payment_component: "online" }}
+                              onDone={(fields) => markReviewed(record, fields)}
                               label={t("verifyOnline")}
                               tone="approve"
                               icon={<Landmark size={17} />}
@@ -13349,6 +13424,7 @@ function MiniAction({
   action,
   setNotice,
   startTransition,
+  onDone,
 }: {
   hidden: Record<string, string>;
   label: string;
@@ -13359,11 +13435,13 @@ function MiniAction({
   action: ClientAction;
   setNotice: (notice: ActionResult | null) => void;
   startTransition: ReturnType<typeof useTransition>[1];
+  /** Runs after the action succeeds, with the submitted hidden fields. */
+  onDone?: (hidden: Record<string, string>) => void;
 }) {
   const { t } = useLanguage();
 
   return (
-    <form onSubmit={(event) => submitWith(event, action, setNotice, startTransition, false)}>
+    <form onSubmit={(event) => submitWith(event, action, setNotice, startTransition, false, onDone ? () => onDone(hidden) : undefined)}>
       {Object.entries(hidden).map(([key, value]) => (
         <input key={key} type="hidden" name={key} value={value} />
       ))}
@@ -13788,6 +13866,12 @@ function ClosingReviewDetail({
   const { t } = useLanguage();
   const [reviewFilter, setReviewFilter] = useState<ClosingReviewFilter>(initialFilter);
   const [reviewMode, setReviewMode] = useState<ClosingReviewMode>(initialMode);
+  // Records approved or rejected on this page stay in the Pending list, marked done, until the
+  // page is left; a card vanishing the moment it is approved reads as if it was lost.
+  const [reviewedRecords, setReviewedRecords] = useState<Map<string, { record: ClosingReviewRecord; fields: Record<string, string> }>>(() => new Map());
+  const reviewKey = (record: Pick<ClosingReviewRecord, "recordType" | "id">) => `${record.recordType}-${record.id}`;
+  const markReviewed = (record: ClosingReviewRecord, fields: Record<string, string>) =>
+    setReviewedRecords((current) => new Map(current).set(reviewKey(record), { record, fields }));
   type ClosingReviewRecord = {
     id: string;
     sourceId: string;
@@ -14051,7 +14135,26 @@ function ClosingReviewDetail({
   ].sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
   // ALL / IN / OUT stay on the closing date (ALL includes that day's pending records);
   // PENDING carries every record still awaiting approval up to the closing date.
-  const pendingRecords = reviewRecords.filter((record) => record.canReview);
+  const stillPending = reviewRecords.filter((record) => record.canReview);
+  const stillPendingKeys = new Set(stillPending.map(reviewKey));
+  const doneRecords = [...reviewedRecords.values()]
+    .filter(({ record }) => !stillPendingKeys.has(reviewKey(record)))
+    .map(({ record, fields }) => {
+      const current = reviewRecords.find((item) => reviewKey(item) === reviewKey(record));
+      if (current) return { ...current, canReview: false };
+      // Approved onto another date: keep the last copy, with the decision applied.
+      const decision = (fields.decision === "rejected" ? "rejected" : "approved") as ApprovalStatus;
+      const component = fields.payment_component ?? null;
+      return {
+        ...record,
+        canReview: false,
+        status: decision,
+        cashStatus: record.cashStatus !== null && (component === null || component === "cash") ? decision : record.cashStatus,
+        onlineStatus: record.onlineStatus !== null && (component === null || component === "online") ? decision : record.onlineStatus,
+      };
+    });
+  const pendingRecords = [...stillPending, ...doneRecords]
+    .sort((a, b) => a.recordDate.localeCompare(b.recordDate) || a.createdAt.localeCompare(b.createdAt));
   // Cash / Online narrows every chip (set when a closing card's Cash or Online figure is tapped).
   const matchesMode = (record: { cashAmount: number; onlineAmount: number }) =>
     reviewMode === "all" || (reviewMode === "cash" ? record.cashAmount > 0 : record.onlineAmount > 0);
@@ -14096,7 +14199,7 @@ function ClosingReviewDetail({
               onClick={() => setReviewFilter(option.value)}
               type="button"
             >
-              {option.label} · {option.records.length}
+              {option.label} · {option.value === "pending" ? option.records.filter((record) => record.canReview).length : option.records.length}
             </button>
           ))}
           {reviewMode !== "all" ? (
@@ -14117,6 +14220,12 @@ function ClosingReviewDetail({
                 <div className="history-card-icon">{record.icon}</div>
                 <div className="history-card-main">
                   <strong>{record.title}</strong>
+                  {!record.canReview && reviewedRecords.has(reviewKey(record)) ? (
+                    <span className={`review-done-badge ${record.status === "rejected" ? "rejected" : ""}`} role="status">
+                      {record.status === "rejected" ? <X size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                      {labelForStatus(record.status === "rejected" ? "rejected" : "approved", t)}
+                    </span>
+                  ) : null}
                   <span className="history-business-badge">{record.businessLabel}</span>
                   {record.approvalDate && record.transactionDate !== record.approvalDate ? (
                     <small className="history-date-context">
@@ -14148,6 +14257,7 @@ function ClosingReviewDetail({
                     {canReview && record.recordType === "expense" ? (
                       <MiniAction
                         hidden={{ record_type: record.recordType, id: record.sourceId, decision: "rejected" }}
+                        onDone={(fields) => markReviewed(record, fields)}
                         label={t("reject")}
                         tone="reject"
                         action={approveRecordAction}
@@ -14172,6 +14282,7 @@ function ClosingReviewDetail({
                             ) : canReview && canApproveRecordStatus(record.cashStatus ?? record.status) ? (
                               <MiniAction
                                 hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "cash" }}
+                                onDone={(fields) => markReviewed(record, fields)}
                                 label={`${t("approve")} ${t("cash")}`}
                                 tone="approve"
                                 action={approveRecordAction}
@@ -14190,6 +14301,7 @@ function ClosingReviewDetail({
                             ) : canVerifyOnlineCollections && canReview && canApproveRecordStatus(record.onlineStatus ?? record.status) ? (
                               <MiniAction
                                 hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved", payment_component: "online" }}
+                                onDone={(fields) => markReviewed(record, fields)}
                                 label={t("verifyOnline")}
                                 tone="approve"
                                 action={approveRecordAction}
@@ -14209,6 +14321,7 @@ function ClosingReviewDetail({
                         ) : (
                           <MiniAction
                             hidden={{ record_type: record.recordType, id: record.sourceId, decision: "approved" }}
+                            onDone={(fields) => markReviewed(record, fields)}
                             label={t("approve")}
                             tone="approve"
                             action={approveRecordAction}
