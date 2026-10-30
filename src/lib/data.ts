@@ -1057,9 +1057,15 @@ export async function getStudentRosterPage(
   const today = dateIsoInTimeZone(new Date(), timeZone);
   const nowTime = timeOfDayInZone(timeZone);
   const supabase = await createClient({ businessId: businessContext.business.id });
-  // Pauses older than 45 days become inactive before the roster is read.
-  const expired = await supabase.rpc("lenden_expire_paused_students");
-  if (expired.error && !/lenden_expire_paused_students/.test(expired.error.message)) throw new Error(expired.error.message);
+  // Pauses older than 45 days become inactive. That only moves students within the Inactive list
+  // (paused → inactive), so the Inactive / All lists wait for it and the others read alongside it.
+  const expiring = (async () => {
+    const expired = await supabase.rpc("lenden_expire_paused_students");
+    if (expired.error && !/lenden_expire_paused_students/.test(expired.error.message)) throw new Error(expired.error.message);
+  })();
+  // Early returns below skip waiting for it; a failure still surfaces where the roster awaits it.
+  expiring.catch(() => undefined);
+  if (status === "inactive" || status === "all") await expiring;
 
   // Tab badges: Active / Live (inside today's time slot now) / Inactive, honouring the filter chips.
   const rosterCounts = async (table: "library_students" | "course_students", source: "library" | "course", scope: (query: ReturnType<typeof countQuery>) => ReturnType<typeof countQuery>) => {
@@ -1118,6 +1124,8 @@ export async function getStudentRosterPage(
     if (isBusinessSalesAgent(role) || (!ownerish && !accessible.has("library")) || !businessContext.enabledModules.includes("library")) {
       return { page: "students", sourceId, status, result: { items: [], nextCursor: null, total: 0 }, libraryStudents: [], courseStudents: [], payments: [], notifications: [] };
     }
+    // Tab badge counts only show from the first page, and run alongside the roster read.
+    const countsPromise = offset === 0 ? rosterCounts("library_students", "library", libraryScope) : Promise.resolve(undefined);
     let query = supabase
       .from("library_students")
       .select("id,business_id,roll_number,phone_number,address,aadhar_number,student_name,photo_url,seat_number,locker_number,start_time,end_time,slot_hours,subscription_start_date,subscription_end_date,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,extra_time_slots,placeholder,last_payment_id,last_payment_date,created_at,updated_at", { count: "exact" })
@@ -1155,7 +1163,7 @@ export async function getStudentRosterPage(
     }));
     const total = searchPage ? searchPage.total : result.count ?? items.length;
     const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
-    const counts = await rosterCounts("library_students", "library", libraryScope);
+    const [counts] = await Promise.all([countsPromise, expiring]);
     return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: items, courseStudents: [], payments: [], notifications: [] };
   }
 
@@ -1163,6 +1171,10 @@ export async function getStudentRosterPage(
   if (!sourceCourseId || isBusinessSalesAgent(role) || (!ownerish && !accessible.has("course")) || !businessContext.enabledModules.includes("course")) {
     return { page: "students", sourceId, status, result: { items: [], nextCursor: null, total: 0 }, libraryStudents: [], courseStudents: [], payments: [], notifications: [] };
   }
+  scopeCourseId = sourceCourseId;
+  const countsPromise = offset === 0
+    ? rosterCounts("course_students", "course", (countBase) => countBase.eq("source_course_id", sourceCourseId))
+    : Promise.resolve(undefined);
   let query = supabase
     .from("course_students")
     .select("id,business_id,source_course_id,identity_key,roll_number,student_name,phone_number,address,aadhar_number,photo_url,subscription_start_date,subscription_end_date,start_time,end_time,slot_hours,fee_amount,paid_amount,dues_amount,advance_amount,active,paused_at,inactive_at,last_payment_id,created_at,updated_at", { count: "exact" })
@@ -1198,8 +1210,7 @@ export async function getStudentRosterPage(
   }));
   const total = searchPage ? searchPage.total : result.count ?? items.length;
   const nextCursor = offset + items.length < total ? String(offset + items.length) : null;
-  scopeCourseId = sourceCourseId;
-  const counts = await rosterCounts("course_students", "course", (countBase) => countBase.eq("source_course_id", sourceCourseId));
+  const [counts] = await Promise.all([countsPromise, expiring]);
   return { page: "students", sourceId, status, counts, result: { items, nextCursor, total }, libraryStudents: [], courseStudents: items, payments: [], notifications: [] };
 }
 
