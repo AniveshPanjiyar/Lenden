@@ -2,7 +2,7 @@
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
-import { contactPhone, defaultCoursePrefix, shareContactsFile, studentContactName, studentContactsVCard, type StudentContact } from "@/lib/contact-names";
+import { bulkSmsHref, contactPhone, defaultCoursePrefix, shareContactsFile, smsHref, studentContactName, studentContactsVCard, type StudentContact } from "@/lib/contact-names";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,6 +31,7 @@ import {
   Images,
   Landmark,
   MessageCircle,
+  MessageSquareText,
   RotateCw,
   Scale,
   LogOut,
@@ -51,6 +52,7 @@ import {
   UserPlus,
   UserX,
   WalletCards,
+  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -588,6 +590,30 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
+    smsOneByOne: "One by one",
+    smsSendAll: "Send to all ({count})",
+    smsBulkPlaceholderNote: "Send to all sends the same text to everyone. Remove {name}, {roll}, {end_date} and {days} to use it, or send personal messages One by one.",
+    smsMassTextTitle: "Before the first send, turn on separate texts so no one sees other numbers:",
+    smsMassTextAndroid: "Android (Messages): Settings → Advanced → Group messaging → \"Send an SMS reply to all recipients and get individual replies (mass text)\".",
+    smsMassTextIphone: "iPhone: Settings → Messages → turn off Group Messaging and MMS Messaging. Test with 2 numbers first.",
+    smsBatch: "Open SMS · batch {batch} of {total} ({count})",
+    smsDailyLimit: "Most SIM plans allow about 100 SMS a day. Send larger lists over a few days.",
+    studentTools: "Student tools",
+    saveContactsHint: "Add selected students to this phone",
+    sendSms: "Send SMS",
+    sendSmsHint: "Free SMS from your SIM, to all at once or one by one",
+    smsMessage: "Message",
+    smsMessagePlaceholder: "Hello {name}, your subscription ended on {end_date}. Please renew.",
+    smsPrivacyNote: "Each student gets a separate SMS from your phone, so no one sees other numbers. Free with your SIM plan (most SIMs allow about 100 SMS a day).",
+    selectAllStudents: "Select all",
+    smsStart: "Send SMS to {count}",
+    smsSentShort: "sent",
+    smsAllDone: "All done",
+    smsOpenApp: "Open SMS app",
+    skip: "Skip",
+    smsHowTo: "Tap Open SMS app, press Send there, then come back here for the next student.",
+    smsSentSummary: "SMS opened for {count} students.",
+    student: "Student",
     sortAscending: "ascending",
     sortDescending: "descending",
     sortDirectionHint: "Tap the selected sort again to switch ↑ ascending / ↓ descending.",
@@ -1134,6 +1160,30 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
+    smsOneByOne: "एक-एक करके",
+    smsSendAll: "सभी को भेजें ({count})",
+    smsBulkPlaceholderNote: "सभी को भेजें में सबको एक ही मैसेज जाता है। इसके लिए {name}, {roll}, {end_date} और {days} हटाएँ, या निजी मैसेज एक-एक करके भेजें।",
+    smsMassTextTitle: "पहली बार भेजने से पहले अलग-अलग SMS चालू करें ताकि किसी को दूसरों का नंबर न दिखे:",
+    smsMassTextAndroid: "Android (Messages): Settings → Advanced → Group messaging → \"Send an SMS reply to all recipients and get individual replies (mass text)\"।",
+    smsMassTextIphone: "iPhone: Settings → Messages → Group Messaging और MMS Messaging बंद करें। पहले 2 नंबर पर जाँच लें।",
+    smsBatch: "SMS खोलें · बैच {batch} / {total} ({count})",
+    smsDailyLimit: "ज़्यादातर सिम प्लान में दिन में लगभग 100 SMS मिलते हैं। बड़ी लिस्ट कुछ दिनों में भेजें।",
+    studentTools: "छात्र टूल",
+    saveContactsHint: "चुने गए छात्र इस फ़ोन में जोड़ें",
+    sendSms: "SMS भेजें",
+    sendSmsHint: "अपने सिम से मुफ़्त SMS, सभी को एक साथ या एक-एक करके",
+    smsMessage: "मैसेज",
+    smsMessagePlaceholder: "नमस्ते {name}, आपका सब्सक्रिप्शन {end_date} को समाप्त हो गया है। कृपया रिन्यू करें।",
+    smsPrivacyNote: "हर छात्र को आपके फ़ोन से अलग SMS जाएगा, इसलिए किसी को दूसरों का नंबर नहीं दिखेगा। आपके सिम प्लान से मुफ़्त (ज़्यादातर सिम पर दिन में लगभग 100 SMS)।",
+    selectAllStudents: "सभी चुनें",
+    smsStart: "{count} को SMS भेजें",
+    smsSentShort: "भेजे",
+    smsAllDone: "सब हो गया",
+    smsOpenApp: "SMS ऐप खोलें",
+    skip: "छोड़ें",
+    smsHowTo: "SMS ऐप खोलें दबाएँ, वहाँ Send करें, फिर अगले छात्र के लिए यहाँ लौटें।",
+    smsSentSummary: "{count} छात्रों के लिए SMS खोला गया।",
+    student: "छात्र",
     sortAscending: "बढ़ते क्रम में",
     sortDescending: "घटते क्रम में",
     sortDirectionHint: "चुने गए क्रम को दोबारा दबाएँ: ↑ बढ़ता / ↓ घटता।",
@@ -9126,8 +9176,17 @@ function LibraryStudentsView({
   const rosterSortSign = rosterSortDir === "desc" ? -1 : 1;
   const rosterSortChanged = rosterSort !== "expiry" || rosterSortDir === "desc";
   const [rosterFilterOpen, setRosterFilterOpen] = useState(false);
-  // Save-to-phone mode: tick students, then one tap hands a contacts file to the phone.
-  const [contactMode, setContactMode] = useState(false);
+  // Student tools: tick students, then save them to the phone's contacts or text them one by one.
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [toolMode, setToolMode] = useState<"contacts" | "sms" | null>(null);
+  const contactMode = toolMode !== null;
+  const [smsMessage, setSmsMessage] = useState("");
+  const [smsQueue, setSmsQueue] = useState<Array<{ id: string; roll: string | null; name: string; phone: string; text: string }> | null>(null);
+  const [smsIndex, setSmsIndex] = useState(0);
+  const [smsSentIds, setSmsSentIds] = useState<Set<string>>(() => new Set());
+  // Send-to-all: batches of numbers that share one text (no per-student placeholders).
+  const [smsBatches, setSmsBatches] = useState<string[][] | null>(null);
+  const [smsBatchesOpened, setSmsBatchesOpened] = useState<Set<number>>(() => new Set());
   const [contactIds, setContactIds] = useState<Set<string>>(() => new Set());
   const [contactPrefix, setContactPrefix] = useState("");
   const [contactCompany, setContactCompany] = useState("");
@@ -9275,8 +9334,8 @@ function LibraryStudentsView({
       || compareCourseStudentRecordsByExpiry(a, b, t)));
   const contactCandidates: StudentContact[] = contactMode
     ? [
-      ...visibleStudents.map((student) => ({ id: student.id, roll: student.roll_number, name: student.student_name, phone: student.phone_number })),
-      ...visibleCourseStudents.map((record) => ({ id: record.id, roll: record.rollNumber, name: record.displayName, phone: record.phoneNumber })),
+      ...visibleStudents.map((student) => ({ id: student.id, roll: student.roll_number, name: student.student_name, phone: student.phone_number, endDate: student.subscription_end_date })),
+      ...visibleCourseStudents.map((record) => ({ id: record.id, roll: record.rollNumber, name: record.displayName, phone: record.phoneNumber, endDate: record.subscriptionEndDate, course: record.courseName })),
     ]
     : [];
   const savedContactKey = (student: StudentContact) => `${student.id}:${contactPhone(student.phone)}`;
@@ -9297,6 +9356,88 @@ function LibraryStudentsView({
       // Private mode: not remembered after this visit.
     }
   }
+  const withPhone = contactCandidates.filter((student) => contactPhone(student.phone));
+  const allWithPhoneSelected = withPhone.length > 0 && withPhone.every((student) => contactIds.has(student.id));
+  const smsMessageKey = `lenden-sms-message:${businessId}:${selectedSource.id}`;
+  const smsTextFor = (student: StudentContact) => fillStudentMessageTemplate(smsMessage, {
+    name: student.name?.trim() || t("student"),
+    roll: student.roll ?? "",
+    end_date: displayDate(student.endDate ?? null),
+    days: String(Math.abs(daysBetweenIsoDates(today, student.endDate ?? null) ?? 0)),
+    business: businessName,
+    course: student.course ?? (selectedSource.type === "course" ? selectedSource.label : ""),
+  });
+  async function openToolMode(mode: "contacts" | "sms") {
+    setToolsMenuOpen(false);
+    if (mode === "sms") {
+      let savedMessage: string | null = null;
+      try {
+        savedMessage = window.localStorage.getItem(smsMessageKey);
+      } catch {
+        // Private mode: start from the business template.
+      }
+      setSmsMessage(savedMessage
+        ?? ((selectedSource.type === "course" ? selectedSource.course.expired_message_template : null) || messageTemplates?.student_expired || ""));
+      setContactIds(new Set());
+      setContactNotice(null);
+      setToolMode("sms");
+      let page = rosterQuery.hasNextPage ? await rosterQuery.fetchNextPage() : null;
+      while (page?.hasNextPage) page = await rosterQuery.fetchNextPage();
+      return;
+    }
+    await openContactMode();
+  }
+  function startSmsQueue() {
+    const queue = withPhone
+      .filter((student) => contactIds.has(student.id))
+      .map((student) => ({
+        id: student.id,
+        roll: student.roll,
+        name: student.name?.trim() || t("unknown"),
+        phone: contactPhone(student.phone) as string,
+        text: smsTextFor(student),
+      }));
+    if (queue.length === 0 || !smsMessage.trim()) return;
+    try {
+      window.localStorage.setItem(smsMessageKey, smsMessage);
+    } catch {
+      // Not remembered in private mode.
+    }
+    setSmsSentIds(new Set());
+    setSmsIndex(0);
+    setSmsQueue(queue);
+  }
+  const smsBulkBatchSize = 50;
+  // One text for everyone: only shared placeholders work, so personal ones block Send to all.
+  const smsHasPersonalPlaceholders = /\{(name|roll|end_date|days)\}/.test(smsMessage);
+  const smsBulkText = fillStudentMessageTemplate(smsMessage, {
+    business: businessName,
+    course: selectedSource.type === "course" ? selectedSource.label : "",
+  });
+  function startSmsBulk() {
+    const phones = withPhone.filter((student) => contactIds.has(student.id)).map((student) => contactPhone(student.phone) as string);
+    if (phones.length === 0 || !smsBulkText.trim() || smsHasPersonalPlaceholders) return;
+    try {
+      window.localStorage.setItem(smsMessageKey, smsMessage);
+    } catch {
+      // Not remembered in private mode.
+    }
+    setSmsBatchesOpened(new Set());
+    setSmsBatches(Array.from({ length: Math.ceil(phones.length / smsBulkBatchSize) }, (_, index) =>
+      phones.slice(index * smsBulkBatchSize, (index + 1) * smsBulkBatchSize)));
+  }
+  function finishSmsBulk() {
+    const opened = (smsBatches ?? []).filter((_, index) => smsBatchesOpened.has(index)).reduce((sum, batch) => sum + batch.length, 0);
+    setSmsBatches(null);
+    setContactIds(new Set());
+    setContactNotice(t("smsSentSummary").replace("{count}", String(opened)));
+  }
+  function finishSmsQueue() {
+    const sent = smsSentIds.size;
+    setSmsQueue(null);
+    setContactIds(new Set());
+    setContactNotice(t("smsSentSummary").replace("{count}", String(sent)));
+  }
   async function openContactMode() {
     let savedPrefix: string | null = null;
     let savedCompany: string | null = null;
@@ -9314,13 +9455,13 @@ function LibraryStudentsView({
     setSavedContactKeys(new Set(savedKeys));
     setContactIds(new Set());
     setContactNotice(null);
-    setContactMode(true);
+    setToolMode("contacts");
     // "Select all" covers the whole roster, not just the first page.
     let page = rosterQuery.hasNextPage ? await rosterQuery.fetchNextPage() : null;
     while (page?.hasNextPage) page = await rosterQuery.fetchNextPage();
   }
   function closeContactMode() {
-    setContactMode(false);
+    setToolMode(null);
     setContactIds(new Set());
     setContactNotice(null);
   }
@@ -9555,19 +9696,37 @@ function LibraryStudentsView({
               </button>
             ) : null}
             {variant !== "collection" ? (
-              <button
-                className={`student-filter-button${contactMode ? " active" : ""}`}
-                type="button"
-                aria-label={t("saveContacts")}
-                aria-pressed={contactMode}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (contactMode) closeContactMode();
-                  else void openContactMode();
-                }}
-              >
-                <Contact size={18} />
-              </button>
+              <span className="student-tools">
+                <button
+                  className={`student-filter-button${contactMode ? " active" : ""}`}
+                  type="button"
+                  aria-label={t("studentTools")}
+                  aria-haspopup="menu"
+                  aria-expanded={toolsMenuOpen}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (contactMode) closeContactMode();
+                    else setToolsMenuOpen((open) => !open);
+                  }}
+                >
+                  {contactMode ? <X size={18} /> : <Wrench size={18} />}
+                </button>
+                {toolsMenuOpen ? (
+                  <>
+                    <button className="student-tools-dismiss" type="button" aria-label={t("closeModal")} onClick={(event) => { event.preventDefault(); setToolsMenuOpen(false); }} />
+                    <span className="student-tools-menu" role="menu">
+                      <button type="button" role="menuitem" onClick={(event) => { event.preventDefault(); void openToolMode("contacts"); }}>
+                        <Contact size={18} aria-hidden="true" />
+                        <span><strong>{t("saveContacts")}</strong><small>{t("saveContactsHint")}</small></span>
+                      </button>
+                      <button type="button" role="menuitem" onClick={(event) => { event.preventDefault(); void openToolMode("sms"); }}>
+                        <MessageSquareText size={18} aria-hidden="true" />
+                        <span><strong>{t("sendSms")}</strong><small>{t("sendSmsHint")}</small></span>
+                      </button>
+                    </span>
+                  </>
+                ) : null}
+              </span>
             ) : null}
           </span>
         </label>
@@ -9587,7 +9746,40 @@ function LibraryStudentsView({
             ))}
           </div>
         ) : null}
-        {contactMode ? (
+        {toolMode === "sms" ? (
+          <div className="student-contact-panel">
+            <label>
+              {t("smsMessage")}
+              <textarea
+                className="student-sms-message"
+                rows={4}
+                maxLength={1000}
+                value={smsMessage}
+                onChange={(event) => setSmsMessage(event.target.value)}
+                placeholder={t("smsMessagePlaceholder")}
+              />
+            </label>
+            <small className="date-filter-note">{"{name}"} · {"{roll}"} · {"{end_date}"} · {"{days}"} · {"{course}"} · {"{business}"}</small>
+            {smsMessage.trim() ? (
+              <p className="student-sms-preview">{smsTextFor(withPhone.find((student) => contactIds.has(student.id)) ?? withPhone[0] ?? { id: "", roll: "1", name: t("name"), phone: null })}</p>
+            ) : null}
+            <p className="date-filter-note">{t("smsPrivacyNote")}</p>
+            {smsHasPersonalPlaceholders ? <p className="form-warning">{t("smsBulkPlaceholderNote")}</p> : null}
+            <div className="student-contact-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={rosterQuery.isFetchingNextPage}
+                onClick={() => setContactIds(allWithPhoneSelected ? new Set() : new Set(withPhone.map((student) => student.id)))}
+              >
+                {rosterQuery.isFetchingNextPage ? t("loading") : allWithPhoneSelected ? t("clearSelection") : `${t("selectAllStudents")} (${withPhone.length})`}
+              </button>
+              <button className="secondary-button" type="button" onClick={closeContactMode}>{t("cancel")}</button>
+            </div>
+            {contactNotice ? <p className="form-success" role="status">{contactNotice}</p> : null}
+          </div>
+        ) : null}
+        {toolMode === "contacts" ? (
           <div className="student-contact-panel">
             <div className="form-pair">
               <label>
@@ -9667,7 +9859,7 @@ function LibraryStudentsView({
                   <strong>{student.name || t("unknown")}</strong>
                   <small>{phone ?? t("noPhone")}</small>
                 </span>
-                {phone && savedContactKeys.has(savedContactKey(student)) ? <span className="student-contact-saved">{t("savedTag")}</span> : null}
+                {toolMode === "contacts" && phone && savedContactKeys.has(savedContactKey(student)) ? <span className="student-contact-saved">{t("savedTag")}</span> : null}
               </label>
             );
           }) : null}
@@ -9818,13 +10010,119 @@ function LibraryStudentsView({
             </div>
           ) : null}
         </div>
-        {contactMode ? (
+        {toolMode === "contacts" ? (
           <div className="student-contact-bar">
             <button className="primary-button" type="button" disabled={selectedContacts.length === 0} onClick={() => void saveSelectedContacts()}>
               <Contact size={18} aria-hidden="true" />
               {t("saveNContacts").replace("{count}", String(selectedContacts.length))}
             </button>
           </div>
+        ) : null}
+        {toolMode === "sms" ? (
+          <div className="student-contact-bar">
+            <div className="student-sms-bar-actions">
+              <button className="secondary-button" type="button" disabled={selectedContacts.length === 0 || !smsMessage.trim()} onClick={startSmsQueue}>
+                {t("smsOneByOne")}
+              </button>
+              <button className="primary-button" type="button" disabled={selectedContacts.length === 0 || !smsBulkText.trim() || smsHasPersonalPlaceholders} onClick={startSmsBulk}>
+                <MessageSquareText size={18} aria-hidden="true" />
+                {t("smsSendAll").replace("{count}", String(selectedContacts.length))}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {smsBatches && typeof document !== "undefined" ? createPortal(
+          <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("sendSms")}>
+            <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={finishSmsBulk} />
+            <section className="action-sheet student-sms-sheet">
+              <header className="sheet-header">
+                <div>
+                  <p className="eyebrow">{t("sendSms")}</p>
+                  <h2>{t("smsSendAll").replace("{count}", String(smsBatches.reduce((sum, batch) => sum + batch.length, 0)))}</h2>
+                </div>
+                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={finishSmsBulk}>
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="form-warning">
+                <strong>{t("smsMassTextTitle")}</strong>
+                <p>{t("smsMassTextAndroid")}</p>
+                <p>{t("smsMassTextIphone")}</p>
+              </div>
+              <p className="student-sms-preview">{smsBulkText}</p>
+              {smsBatches.map((batch, index) => (
+                <a
+                  key={index}
+                  className={`${smsBatchesOpened.has(index) ? "secondary-button" : "primary-button"} student-sms-open`}
+                  href={bulkSmsHref(batch, smsBulkText)}
+                  onClick={() => setSmsBatchesOpened((opened) => new Set(opened).add(index))}
+                >
+                  {smsBatchesOpened.has(index) ? <Check size={18} aria-hidden="true" /> : <MessageSquareText size={18} aria-hidden="true" />}
+                  {t("smsBatch")
+                    .replace("{batch}", String(index + 1))
+                    .replace("{total}", String(smsBatches.length))
+                    .replace("{count}", String(batch.length))}
+                </a>
+              ))}
+              <p className="date-filter-note">{t("smsDailyLimit")}</p>
+              <button className="secondary-button" type="button" onClick={finishSmsBulk}>{t("done")}</button>
+            </section>
+          </div>,
+          document.body,
+        ) : null}
+        {smsQueue && typeof document !== "undefined" ? createPortal(
+          <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("sendSms")}>
+            <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={finishSmsQueue} />
+            <section className="action-sheet student-sms-sheet">
+              <header className="sheet-header">
+                <div>
+                  <p className="eyebrow">{t("sendSms")} · {smsSentIds.size}/{smsQueue.length} {t("smsSentShort")}</p>
+                  <h2>{smsIndex < smsQueue.length ? `${smsIndex + 1} / ${smsQueue.length}` : t("smsAllDone")}</h2>
+                </div>
+                <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={finishSmsQueue}>
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="student-sms-progress" aria-hidden="true">
+                <span style={{ width: `${Math.round((Math.min(smsIndex, smsQueue.length) / smsQueue.length) * 100)}%` }} />
+              </div>
+              {smsIndex < smsQueue.length ? (() => {
+                const current = smsQueue[smsIndex];
+                return (
+                  <>
+                    <div className="student-sms-current">
+                      <strong>#{current.roll || "-"} · {current.name}</strong>
+                      <small>{current.phone}</small>
+                      <p>{current.text}</p>
+                    </div>
+                    <a
+                      className="primary-button student-sms-open"
+                      href={smsHref(current.phone, current.text)}
+                      onClick={() => {
+                        // The SMS app opens; when they come back, the next student is ready.
+                        setSmsSentIds((sent) => new Set(sent).add(current.id));
+                        window.setTimeout(() => setSmsIndex((index) => index + 1), 400);
+                      }}
+                    >
+                      <MessageSquareText size={18} aria-hidden="true" />
+                      {t("smsOpenApp")}
+                    </a>
+                    <div className="student-subscription-edit-actions">
+                      <button className="secondary-button" type="button" disabled={smsIndex === 0} onClick={() => setSmsIndex((index) => Math.max(index - 1, 0))}>{t("back")}</button>
+                      <button className="secondary-button" type="button" onClick={() => setSmsIndex((index) => index + 1)}>{t("skip")}</button>
+                    </div>
+                    <p className="date-filter-note">{t("smsHowTo")}</p>
+                  </>
+                );
+              })() : (
+                <>
+                  <p className="form-success" role="status">{t("smsSentSummary").replace("{count}", String(smsSentIds.size))}</p>
+                  <button className="primary-button" type="button" onClick={finishSmsQueue}>{t("done")}</button>
+                </>
+              )}
+            </section>
+          </div>,
+          document.body,
         ) : null}
       </section>
 

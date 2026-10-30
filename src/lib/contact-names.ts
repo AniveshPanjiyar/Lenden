@@ -3,7 +3,15 @@
  * "Lb. 001 Aakash Mishra · MSS". Saved through one .vcf file that the phone's Contacts app imports.
  */
 
-export type StudentContact = { id: string; roll: string | null; name: string | null; phone: string | null };
+export type StudentContact = {
+  id: string;
+  roll: string | null;
+  name: string | null;
+  phone: string | null;
+  /** For SMS placeholders: subscription end date and course name. */
+  endDate?: string | null;
+  course?: string | null;
+};
 
 /** "+91XXXXXXXXXX" for Indian mobile numbers (10 digits, or 11 with a leading 0); null if unusable. */
 export function contactPhone(phone: string | null | undefined) {
@@ -89,4 +97,25 @@ export async function shareContactsFile(vcard: string, fileName: string) {
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   return true;
+}
+
+function isApplePhone() {
+  return typeof navigator !== "undefined" && (/iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+}
+
+/** Opens the phone's SMS app to one number with the text filled in (iPhone uses "&body", others "?body"). */
+export function smsHref(phone: string, body: string) {
+  return `sms:${phone}${isApplePhone() ? "&" : "?"}body=${encodeURIComponent(body)}`;
+}
+
+/**
+ * Opens the SMS app with many numbers and one text. With the phone's "mass text" setting on, each
+ * number gets its own SMS, so students never see each other's numbers. Samsung Messages separates
+ * numbers with ";", other Android apps and iPhone with ",".
+ */
+export function bulkSmsHref(phones: string[], body: string) {
+  if (isApplePhone()) return `sms:/open?addresses=${phones.join(",")}&body=${encodeURIComponent(body)}`;
+  const separator = typeof navigator !== "undefined" && /SAMSUNG|SM-[A-Z]/i.test(navigator.userAgent) ? ";" : ",";
+  return `sms:${phones.join(separator)}?body=${encodeURIComponent(body)}`;
 }

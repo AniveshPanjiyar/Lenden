@@ -11900,3 +11900,125 @@ input[readonly][type="time"] { opacity: 0.75; }
   font-size: 12px;
   font-weight: 800;
 }
+
+/* Student tools menu and SMS sending */
+.student-tools {
+  position: relative;
+  display: inline-grid;
+}
+.student-tools-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  border: 0;
+  background: transparent;
+}
+.student-tools-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 31;
+  display: grid;
+  gap: 4px;
+  width: min(280px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-solid, #fffdf8);
+  box-shadow: 0 12px 32px rgba(29, 41, 34, 0.18);
+}
+.student-tools-menu button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.student-tools-menu button:hover,
+.student-tools-menu button:focus-visible {
+  background: var(--brand-soft, #e3efe9);
+}
+.student-tools-menu span {
+  display: grid;
+  gap: 2px;
+}
+.student-tools-menu small {
+  color: var(--muted, #5f6b63);
+  font-size: 12px;
+}
+.student-sms-message {
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-solid, #fffdf8);
+  color: var(--foreground);
+  font-size: 16px;
+  resize: vertical;
+}
+.student-sms-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--brand-soft, #e3efe9);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.student-sms-sheet {
+  display: grid;
+  gap: 12px;
+}
+.student-sms-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.student-sms-progress span {
+  display: block;
+  height: 100%;
+  background: var(--brand, #2f6f5e);
+  transition: width 200ms ease;
+}
+.student-sms-current {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.student-sms-current p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.student-sms-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 52px;
+  text-decoration: none;
+}
+.student-sms-bar-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+.student-sms-bar-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.student-sms-sheet .form-warning p {
+  margin: 6px 0 0;
+}
