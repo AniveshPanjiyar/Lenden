@@ -23,6 +23,7 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  await supabase.auth.getUser();
+  // Refreshes an expiring session cookie; the token is verified locally against the signing key.
+  await supabase.auth.getClaims();
   return response;
 }

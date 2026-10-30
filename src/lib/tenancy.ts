@@ -1,3 +1,4 @@
+import type { UserIdentity } from "@supabase/supabase-js";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
@@ -59,16 +60,32 @@ export function isBusinessSalesAgent(role: BusinessRole | null | undefined) {
   return role === "sales_agent";
 }
 
-export async function requireIdentity(options: { allowPasswordChange?: boolean } = {}) {
+type IdentityUser = { id: string; email: string; identities?: UserIdentity[] };
+
+/**
+ * The signed-in user and their profile. The session token is verified on the server against the
+ * project's signing key (no Auth round trip); Supabase only issues sessions to verified emails, and
+ * the profile check below still blocks deactivated accounts on every request. `fullUser` asks the
+ * Auth server for the whole user (linked sign-in methods) where a page needs it.
+ */
+export async function requireIdentity(options: { allowPasswordChange?: boolean; fullUser?: boolean } = {}) {
   const supabase = await createClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-  if (userError || !user) redirect("/login");
-  if (!user.email || !user.email_confirmed_at) {
-    redirect("/login?error=Verify%20your%20email%20before%20opening%20Lenden.");
+  let user: IdentityUser | null = null;
+  if (options.fullUser) {
+    const { data, error } = await supabase.auth.getUser();
+    if (!error && data.user?.email && data.user.email_confirmed_at) {
+      user = { id: data.user.id, email: data.user.email, identities: data.user.identities };
+    } else if (!error && data.user) {
+      redirect("/login?error=Verify%20your%20email%20before%20opening%20Lenden.");
+    }
+  } else {
+    const { data, error } = await supabase.auth.getClaims();
+    const claims = data?.claims;
+    if (!error && claims?.sub && typeof claims.email === "string" && claims.email) {
+      user = { id: claims.sub, email: claims.email };
+    }
   }
+  if (!user) redirect("/login");
 
   const { data, error } = await supabase
     .from("profiles")

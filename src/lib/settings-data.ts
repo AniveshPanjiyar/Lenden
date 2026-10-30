@@ -57,7 +57,8 @@ export async function loadUserSettings(): Promise<{
   payload: UserSettingsPayload;
   hasActiveBusiness: boolean;
 }> {
-  const { user, profile } = await requireIdentity();
+  // Settings lists linked sign-in methods, so it needs the full user from Auth.
+  const { user, profile } = await requireIdentity({ fullUser: true });
   const admin = createAdminClient();
   const [allAccesses, invitationResult, requestResult, avatarUrl] = await Promise.all([
     loadAllBusinessAccesses(user.id),
