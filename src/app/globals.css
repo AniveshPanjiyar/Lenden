@@ -4134,6 +4134,27 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   color: #155d33;
 }
 
+/* Online money stays blue through the whole chain, including the final Approved / Verified step. */
+.transaction-journey-lane.online .transaction-journey-step.verified,
+.transaction-journey-lane.online .transaction-journey-step.received {
+  border-color: rgba(30, 104, 196, 0.5);
+  background: rgba(226, 239, 255, 0.95);
+  box-shadow: 0 4px 12px rgba(30, 104, 196, 0.12);
+}
+
+.transaction-journey-lane.online .transaction-journey-step.verified .transaction-journey-icon,
+.transaction-journey-lane.online .transaction-journey-step.received .transaction-journey-icon {
+  background: #1e68c4;
+  color: #fff;
+}
+
+.transaction-journey-lane.online .transaction-journey-step.verified .transaction-journey-copy strong,
+.transaction-journey-lane.online .transaction-journey-step.verified .transaction-journey-copy small,
+.transaction-journey-lane.online .transaction-journey-step.received .transaction-journey-copy strong,
+.transaction-journey-lane.online .transaction-journey-step.received .transaction-journey-copy small {
+  color: #185aa5;
+}
+
 .history-transfer-actions {
   display: flex;
   align-items: center;
