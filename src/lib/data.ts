@@ -258,7 +258,7 @@ async function loadDashboard(
     ? viewState?.transactionFilters.dateFilterKey ?? "approval"
     : activeTab === "closing"
       ? viewState?.closingFilters.dateFilterKey ?? "approval"
-      : viewState?.dashboardFilters.dateFilterKey ?? "approval";
+      : viewState?.dashboardFilters.dateFilterKey ?? "transaction";
   const businessTypeFilter = activeTab === "payments"
     ? viewState?.transactionFilters.businessType ?? "all"
     : activeTab === "home"

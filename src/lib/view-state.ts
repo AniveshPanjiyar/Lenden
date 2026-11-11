@@ -114,7 +114,8 @@ export function rangeForPreset(preset: DateRangePreset, current?: DateRangeState
 }
 
 export function defaultDashboardFilters(): DashboardFilterState {
-  return { dateRange: rangeForPreset("today"), dateFilterKey: "approval", businessType: "all", profileId: "all" };
+  // The Dashboard counts money by the day it was paid unless Approval is chosen.
+  return { dateRange: rangeForPreset("today"), dateFilterKey: "transaction", businessType: "all", profileId: "all" };
 }
 
 export function defaultTransactionFilters(defaultProfileId: string): TransactionFilterState {
@@ -194,7 +195,7 @@ export function parseAppViewState(
     tab,
     dashboardFilters: {
       dateRange: parseRange(params, { preset: "dashRange", from: "dashFrom", to: "dashTo" }, dashboardLegacyRange),
-      dateFilterKey: oneOf(singleParam(params, "dashDateKey") ?? (tab === "home" ? legacyDateKey : undefined), dateFilterKeys, "approval"),
+      dateFilterKey: oneOf(singleParam(params, "dashDateKey") ?? (tab === "home" ? singleParam(params, "dateKey") : undefined), dateFilterKeys, "transaction"),
       businessType: oneOf(singleParam(params, "dashBusiness"), businessTypes, "all"),
       profileId: validProfileId(singleParam(params, "dashUser")) ?? "all",
     },
@@ -243,7 +244,7 @@ export function applyAppViewStateToSearchParams(
   params.set("tab", state.tab);
 
   setRangeParams(params, "dash", state.dashboardFilters.dateRange);
-  if (state.dashboardFilters.dateFilterKey !== "approval") params.set("dashDateKey", state.dashboardFilters.dateFilterKey);
+  if (state.dashboardFilters.dateFilterKey !== "transaction") params.set("dashDateKey", state.dashboardFilters.dateFilterKey);
   if (state.dashboardFilters.businessType !== "all") params.set("dashBusiness", state.dashboardFilters.businessType);
   if (state.dashboardFilters.profileId !== "all") params.set("dashUser", state.dashboardFilters.profileId);
 
