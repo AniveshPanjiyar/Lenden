@@ -12099,3 +12099,128 @@ button.icon-button[data-loading="true"]::after {
   background: rgba(186, 26, 26, 0.1);
   color: #ba1a1a;
 }
+
+/* Overstay dues: settle due days with a new subscription */
+.overstay-dues-panel {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(183, 119, 28, 0.35);
+  border-radius: 14px;
+  background: rgba(255, 245, 220, 0.72);
+  min-width: 0;
+}
+.overstay-dues-panel legend {
+  padding: 0 6px;
+  font-weight: 900;
+  color: #8a5a10;
+}
+.overstay-dues-panel p {
+  margin: 0;
+  font-size: 13px;
+}
+.overstay-dues-choices {
+  display: grid;
+  gap: 8px;
+}
+.overstay-dues-choices label {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-solid, #fffdf8);
+  cursor: pointer;
+}
+.overstay-dues-choices label.active {
+  border-color: var(--brand, #2f6f5e);
+  box-shadow: 0 0 0 1px var(--brand, #2f6f5e) inset;
+}
+.overstay-dues-choices input {
+  grid-row: span 2;
+  width: 18px;
+  height: 18px;
+}
+.overstay-dues-choices small {
+  color: var(--muted, #5f6b63);
+  font-size: 12px;
+}
+.overstay-dues-result {
+  font-weight: 800;
+}
+.student-status-note,
+.student-status-waive label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.student-status-waive {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.student-status-history {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.student-status-history h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 900;
+}
+.student-status-history ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.student-status-history li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-solid, #fffdf8);
+}
+.student-status-history li p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.student-status-history li small {
+  color: var(--muted, #5f6b63);
+  font-size: 12px;
+}
+.student-status-history li.paused,
+.student-status-history li.pause_scheduled,
+.student-status-history li.dues_recorded {
+  border-left-color: #b7771c;
+}
+.student-status-history li.inactive {
+  border-left-color: #ba1a1a;
+}
+.student-status-history li.reactivated,
+.student-status-history li.dues_merged,
+.student-status-history li.dues_settled,
+.student-status-history li.dues_waived,
+.student-status-history li.pause_cancelled {
+  border-left-color: var(--brand, #2f6f5e);
+}
+.student-status-note input,
+.student-status-waive input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-solid, #fffdf8);
+  color: var(--foreground);
+  font-size: 16px;
+}

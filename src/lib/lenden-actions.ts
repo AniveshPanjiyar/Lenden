@@ -1114,6 +1114,170 @@ async function resyncSubscriptionAmounts(admin: SupabaseAdminClient, payment: Pa
   if (error) throw new Error(error.message);
 }
 
+function shiftIsoDate(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function isoDaysBetween(from: string, to: string) {
+  return Math.round((Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86_400_000);
+}
+
+type StudentStatusRecord = {
+  active: boolean;
+  paused_at?: string | null;
+  subscription_end_date?: string | null;
+  overstay_days?: number | null;
+  overstay_from?: string | null;
+  pause_scheduled_on?: string | null;
+};
+
+type StudentStatusEventInput = {
+  eventType:
+    | "pause_scheduled" | "pause_cancelled" | "paused" | "inactive" | "reactivated"
+    | "dues_recorded" | "dues_merged" | "dues_settled" | "dues_waived";
+  eventDate: string;
+  effectiveDate?: string | null;
+  days?: number | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  amount?: number | null;
+  note?: string | null;
+  paymentId?: string | null;
+};
+
+async function recordStudentStatusEvents(
+  admin: SupabaseAdminClient,
+  profile: LendenActionProfile,
+  studentType: "library" | "course",
+  studentId: string,
+  events: StudentStatusEventInput[],
+) {
+  if (events.length === 0) return;
+  const { error } = await admin.from("student_status_events").insert(events.map((event) => ({
+    business_id: profile.businessId,
+    student_type: studentType,
+    student_id: studentId,
+    event_type: event.eventType,
+    event_date: event.eventDate,
+    effective_date: event.effectiveDate ?? null,
+    days: event.days ?? null,
+    from_date: event.fromDate ?? null,
+    to_date: event.toDate ?? null,
+    amount: event.amount ?? null,
+    note: event.note ?? null,
+    payment_id: event.paymentId ?? null,
+    created_by: profile.id,
+  })));
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * What a status change does to a student:
+ * - Pause while the subscription still runs: scheduled for the day after it ends (the 45-day
+ *   pause window starts then); the student stays active until that day.
+ * - Pause or inactive after the subscription ended: takes effect today, and the days used since
+ *   the end date become overstay dues the next subscription must settle.
+ * - Reactivate only once those dues are settled or waived.
+ */
+function planStudentStatusChange(
+  record: StudentStatusRecord,
+  status: "active" | "paused" | "inactive" | "cancel_pause",
+  today: string,
+  note: string | null,
+): { ok: false; message: string } | {
+  ok: true;
+  updates: Record<string, unknown>;
+  events: StudentStatusEventInput[];
+  message: string;
+} {
+  const nowIso = new Date().toISOString();
+  const endDate = record.subscription_end_date ?? null;
+  const pendingDays = Math.max(Number(record.overstay_days ?? 0), 0);
+
+  if (status === "cancel_pause") {
+    if (!record.pause_scheduled_on) return { ok: false, message: "No pause is scheduled for this student." };
+    return {
+      ok: true,
+      updates: { pause_scheduled_on: null },
+      events: [{ eventType: "pause_cancelled", eventDate: today, effectiveDate: record.pause_scheduled_on, note }],
+      message: "Scheduled pause cancelled.",
+    };
+  }
+
+  if (status === "active") {
+    if (pendingDays > 0) {
+      return {
+        ok: false,
+        message: `${pendingDays} due days are pending. Add a subscription to settle them, or waive them.`,
+      };
+    }
+    return {
+      ok: true,
+      updates: { active: true, paused_at: null, inactive_at: null, pause_scheduled_on: null },
+      events: [{ eventType: "reactivated", eventDate: today, effectiveDate: today, note }],
+      message: "Student reactivated.",
+    };
+  }
+
+  if (status === "paused" && !record.active) return { ok: false, message: "Only active students can be paused." };
+
+  if (status === "paused" && endDate && endDate >= today) {
+    const startsOn = shiftIsoDate(endDate, 1);
+    return {
+      ok: true,
+      updates: { pause_scheduled_on: startsOn },
+      events: [{ eventType: "pause_scheduled", eventDate: today, effectiveDate: startsOn, note }],
+      message: `Pause starts on ${startsOn}, after the current subscription ends.`,
+    };
+  }
+
+  // Stopping now: days used after the subscription ended become dues (active students only;
+  // a paused student moved to inactive owes nothing new).
+  const overstayDays = record.active && endDate && endDate < today ? isoDaysBetween(endDate, today) : 0;
+  const overstayFrom = overstayDays > 0 ? record.overstay_from ?? shiftIsoDate(endDate as string, 1) : null;
+  const updates: Record<string, unknown> = status === "paused"
+    ? { active: false, paused_at: nowIso, inactive_at: null, pause_scheduled_on: null }
+    : { active: false, paused_at: null, inactive_at: nowIso, pause_scheduled_on: null };
+  const events: StudentStatusEventInput[] = [
+    { eventType: status === "paused" ? "paused" : "inactive", eventDate: today, effectiveDate: today, note },
+  ];
+  if (overstayDays > 0) {
+    Object.assign(updates, { overstay_days: pendingDays + overstayDays, overstay_from: overstayFrom, overstay_to: today });
+    events.push({
+      eventType: "dues_recorded",
+      eventDate: today,
+      days: overstayDays,
+      fromDate: shiftIsoDate(endDate as string, 1),
+      toDate: today,
+    });
+  }
+  return {
+    ok: true,
+    updates,
+    events,
+    message: overstayDays > 0
+      ? `Student ${status === "paused" ? "paused" : "moved to inactive"}. ${overstayDays} days after the subscription ended are added as dues.`
+      : status === "paused" ? "Student paused." : "Student moved to inactive.",
+  };
+}
+
+/** Overstay dues as they must be settled by the next subscription. */
+function readOverstayResolution(formData: FormData, pendingDays: number, canWaive: boolean):
+  | { ok: false; message: string }
+  | { ok: true; resolution: "merge" | "settle" | "waive" | null; amount: number } {
+  if (pendingDays <= 0) return { ok: true, resolution: null, amount: 0 };
+  const resolution = asString(formData, "overstay_resolution");
+  if (resolution !== "merge" && resolution !== "settle" && resolution !== "waive") {
+    return { ok: false, message: `${pendingDays} due days are pending. Choose Merge, Settle or Waive.` };
+  }
+  if (resolution === "waive" && !canWaive) return { ok: false, message: "Only the Owner or a Manager can waive dues." };
+  const amount = asNumber(formData, "overstay_amount") ?? 0;
+  if (resolution === "settle" && !(amount > 0)) return { ok: false, message: "Enter the amount for the due days." };
+  return { ok: true, resolution, amount: resolution === "settle" ? amount : 0 };
+}
+
 /**
  * Mode + amounts for editing an unapproved payment. Mixed takes a cash and an online part (both
  * above zero) and the amount is their sum; cash / online take a single amount. Component statuses
@@ -2026,6 +2190,16 @@ const handlers = {
     let courseStudent: CourseStudent | null = null;
     let savedLibraryStudent: LibraryStudent | null = null;
     let studentSubscriptionKey: string | null = null;
+    // Overstay dues (days used after a past subscription ended) settled by this new subscription.
+    const canWaiveDues = isBusinessOwner(profile.businessRole) || profile.accessMode === "support";
+    let overstaySettlement: {
+      days: number;
+      from: string | null;
+      to: string | null;
+      resolution: "merge" | "settle" | "waive";
+      amount: number;
+    } | null = null;
+    let studentWasInactive = false;
 
     if (business === "library" || business === "course") {
       const [uploadedAadharPhoto, uploadedAadharBackPhoto] = await Promise.all([
@@ -2101,15 +2275,34 @@ const handlers = {
         if (libraryStudentId) {
           const existingStudentResponse = await admin
             .from("library_students")
-            .select("id,active")
+            .select("id,active,overstay_days,overstay_from,overstay_to")
             .eq("business_id", profile.businessId)
             .eq("id", libraryStudentId)
             .maybeSingle();
           if (existingStudentResponse.error && !isMissingLibraryStudentSchemaError(existingStudentResponse.error)) {
             throw new Error(existingStudentResponse.error.message);
           }
-          const existingStudent = typedData<{ id: string; active: boolean }>(existingStudentResponse);
+          const existingStudent = typedData<{
+            id: string;
+            active: boolean;
+            overstay_days?: number | null;
+            overstay_from?: string | null;
+            overstay_to?: string | null;
+          }>(existingStudentResponse);
           if (!existingStudent) return fail("The selected library student was not found.");
+          studentWasInactive = !existingStudent.active;
+          const overstayDays = Math.max(Number(existingStudent.overstay_days ?? 0), 0);
+          const resolved = readOverstayResolution(formData, overstayDays, canWaiveDues);
+          if (!resolved.ok) return fail(resolved.message);
+          if (resolved.resolution) {
+            overstaySettlement = {
+              days: overstayDays,
+              from: existingStudent.overstay_from ?? null,
+              to: existingStudent.overstay_to ?? null,
+              resolution: resolved.resolution,
+              amount: resolved.amount,
+            };
+          }
         }
         const uploadedStudentPhoto = await uploadLibraryStudentPhoto(admin, profile.businessId, profile.id, formData.get("student_photo"), requestKey);
         if (uploadedStudentPhoto && typeof uploadedStudentPhoto === "object" && "ok" in uploadedStudentPhoto && !uploadedStudentPhoto.ok) {
@@ -2204,6 +2397,21 @@ const handlers = {
         studentSubscriptionKey = existingCourseStudent.current_subscription_key ?? crypto.randomUUID();
       } else {
         studentSubscriptionKey = crypto.randomUUID();
+        if (existingCourseStudent) {
+          studentWasInactive = !existingCourseStudent.active;
+          const overstayDays = Math.max(Number(existingCourseStudent.overstay_days ?? 0), 0);
+          const resolved = readOverstayResolution(formData, overstayDays, canWaiveDues);
+          if (!resolved.ok) return fail(resolved.message);
+          if (resolved.resolution) {
+            overstaySettlement = {
+              days: overstayDays,
+              from: existingCourseStudent.overstay_from ?? null,
+              to: existingCourseStudent.overstay_to ?? null,
+              resolution: resolved.resolution,
+              amount: resolved.amount,
+            };
+          }
+        }
       }
 
       courseStudent = await upsertCourseStudentRecord(admin, {
@@ -2286,6 +2494,8 @@ const handlers = {
       metadata: {
         ...((asNumber(formData, "admission_fee") ?? 0) > 0 ? { admission_fee: asNumber(formData, "admission_fee") } : {}),
         ...(libraryStudentFields?.extraSlots?.length ? { extra_time_slots: libraryStudentFields.extraSlots } : {}),
+        // Overstay dues settled here: merged (subscription shortened), paid (in fee_amount) or waived.
+        ...(overstaySettlement ? { overstay: overstaySettlement } : {}),
       },
       photo_path: photoPath,
       collected_by: profile.id,
@@ -2467,6 +2677,45 @@ const handlers = {
       courseStudent = await signedCourseStudentPatch(admin, courseStudent);
     }
 
+    const settledStudent = business === "library" && libraryStudentId && !libraryStudentSyncSkipped
+      ? { type: "library" as const, id: libraryStudentId }
+      : business === "course" && courseStudent
+        ? { type: "course" as const, id: courseStudent.id }
+        : null;
+    if (settledStudent && (overstaySettlement || studentWasInactive)) {
+      const today = dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
+      const events: StudentStatusEventInput[] = [];
+      if (overstaySettlement) {
+        const cleared = await admin
+          .from(settledStudent.type === "course" ? "course_students" : "library_students")
+          .update({ overstay_days: 0, overstay_from: null, overstay_to: null })
+          .eq("id", settledStudent.id);
+        if (cleared.error) throw new Error(cleared.error.message);
+        events.push({
+          eventType: overstaySettlement.resolution === "merge"
+            ? "dues_merged"
+            : overstaySettlement.resolution === "settle" ? "dues_settled" : "dues_waived",
+          eventDate: today,
+          days: overstaySettlement.days,
+          fromDate: overstaySettlement.from,
+          toDate: overstaySettlement.to,
+          amount: overstaySettlement.amount || null,
+          paymentId: payment.id,
+          note: asString(formData, "overstay_note")?.slice(0, 300) ?? null,
+        });
+      }
+      if (studentWasInactive && String(payment.end_date ?? "") >= today) {
+        events.push({ eventType: "reactivated", eventDate: today, effectiveDate: payment.start_date ?? today, note: "New subscription", paymentId: payment.id });
+      }
+      await recordStudentStatusEvents(admin, profile, settledStudent.type, settledStudent.id, events);
+      if (settledStudent.type === "library" && savedLibraryStudent && overstaySettlement) {
+        savedLibraryStudent = { ...savedLibraryStudent, overstay_days: 0, overstay_from: null, overstay_to: null };
+      }
+      if (settledStudent.type === "course" && courseStudent && overstaySettlement) {
+        courseStudent = { ...courseStudent, overstay_days: 0, overstay_from: null, overstay_to: null };
+      }
+    }
+
     if (ownerCreated && cashCollection > 0) {
       await ensureLedgerEntry(admin, {
         accountProfileId: profile.id,
@@ -2612,17 +2861,13 @@ const handlers = {
   setStudentStatus: withErrors("Could not update student status.", async (formData, { admin, profile, idempotencyKey }) => {
     const studentType = asString(formData, "student_type") === "course" ? "course" : "library";
     let id = asString(formData, "id");
-    const active = asBool(formData, "active");
-    // "paused": inactive for now, admission fee waived if they return within 45 days.
-    const paused = !active && asString(formData, "status") === "paused";
-    const nowIso = new Date().toISOString();
-    const statusDates = active
-      ? { paused_at: null, inactive_at: null }
-      : paused
-        ? { paused_at: nowIso, inactive_at: null }
-        : { paused_at: null, inactive_at: nowIso };
-    const statusMessage = (kind: "Course" | "Library") =>
-      active ? `${kind} student reactivated.` : paused ? `${kind} student paused.` : `${kind} student moved to inactive.`;
+    const rawStatus = asString(formData, "status");
+    // "paused": admission fee waived if they return within 45 days; "cancel_pause" drops a scheduled pause.
+    const status = rawStatus === "cancel_pause" || rawStatus === "paused" || rawStatus === "inactive"
+      ? rawStatus
+      : asBool(formData, "active") ? "active" as const : "inactive" as const;
+    const note = asString(formData, "note")?.slice(0, 300) ?? null;
+    const today = dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined);
     const previousId = id;
     if (!id) return fail("Choose a student.");
 
@@ -2636,16 +2881,19 @@ const handlers = {
       }
       const existing = typedData<CourseStudent>(courseResponse);
       if (courseResponse.error || !existing) throw new Error(courseResponse.error?.message ?? "Course student not found.");
+      const plan = planStudentStatusChange(existing, status, today, note);
+      if (!plan.ok) return fail(plan.message);
       const updateResponse = await admin
         .from("course_students")
-        .update({ active, ...statusDates })
+        .update(plan.updates)
         .eq("id", id)
         .select("*")
         .single();
       const updated = typedData<CourseStudent>(updateResponse);
       if (updateResponse.error || !updated) throw new Error(updateResponse.error?.message ?? "Could not update student status.");
+      await recordStudentStatusEvents(admin, profile, "course", updated.id, plan.events);
       const signedUpdated = await signedCourseStudentPatch(admin, updated);
-      return ok(statusMessage("Course"), {
+      return ok(plan.message, {
         type: "student",
         studentType: "course",
         student: signedUpdated,
@@ -2695,10 +2943,13 @@ const handlers = {
       return fail("Apply the library student migration before updating student status.");
     }
     if (response.error || !student) throw new Error(response.error?.message ?? "Library student not found.");
+    const plan = planStudentStatusChange(student, status, today, note);
+    if (!plan.ok) return fail(plan.message);
+    const nextActive = typeof plan.updates.active === "boolean" ? plan.updates.active : student.active;
 
     const updateResponse = await admin
       .from("library_students")
-      .update({ active, ...statusDates, placeholder: active ? false : Boolean(student.placeholder) })
+      .update({ ...plan.updates, placeholder: nextActive ? false : Boolean(student.placeholder) })
       .eq("id", id)
       .select("*")
       .single();
@@ -2707,24 +2958,73 @@ const handlers = {
       return fail("Apply the library student migration before updating student status.");
     }
     if (updateResponse.error || !updated) throw new Error(updateResponse.error?.message ?? "Could not update student status.");
+    await recordStudentStatusEvents(admin, profile, "library", updated.id, plan.events);
 
-    await upsertLibraryStudentEvent(admin, {
-      studentId: id,
-      eventKey: `library-student-status:${id}:${idempotencyKey ?? crypto.randomUUID()}`,
-      eventType: "status_change",
-      eventDate: dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
-      source: "student_status",
-      fields: fieldsFromLibraryStudentRecord(updated as unknown as Record<string, string | number | boolean | null>),
-      active,
-      createdBy: profile.id,
-    });
+    if (nextActive !== student.active) {
+      await upsertLibraryStudentEvent(admin, {
+        studentId: id,
+        eventKey: `library-student-status:${id}:${idempotencyKey ?? crypto.randomUUID()}`,
+        eventType: "status_change",
+        eventDate: today,
+        source: "student_status",
+        fields: fieldsFromLibraryStudentRecord(updated as unknown as Record<string, string | number | boolean | null>),
+        active: nextActive,
+        createdBy: profile.id,
+      });
+    }
 
     const signedUpdated = await signedLibraryStudentPatch(admin, updated);
-    return ok(statusMessage("Library"), {
+    return ok(plan.message, {
       type: "student",
       studentType: "library",
       student: signedUpdated,
       previousId: previousId !== id ? previousId : null,
+    });
+  }),
+
+  // Owners and Managers can waive overstay dues outright (reason required).
+  waiveStudentDues: withErrors("Could not waive the dues.", async (formData, { admin, profile }) => {
+    if (!isBusinessOwner(profile.businessRole) && profile.accessMode !== "support") {
+      return fail("Only the Owner or a Manager can waive dues.");
+    }
+    const studentType = asString(formData, "student_type") === "course" ? "course" : "library";
+    const id = asString(formData, "id");
+    const note = asString(formData, "note")?.slice(0, 300) ?? null;
+    if (!id) return fail("Choose a student.");
+    if (!note) return fail("Write why the dues are waived.");
+    const table = studentType === "course" ? "course_students" : "library_students";
+    const response = await admin.from(table).select("*").eq("id", id).eq("business_id", profile.businessId).single();
+    const student = typedData<StudentStatusRecord & { id: string; overstay_to?: string | null }>(response);
+    if (response.error || !student) throw new Error(response.error?.message ?? "Student not found.");
+    const days = Math.max(Number(student.overstay_days ?? 0), 0);
+    if (days === 0) return fail("No dues are pending for this student.");
+    const updateResponse = await admin
+      .from(table)
+      .update({ overstay_days: 0, overstay_from: null, overstay_to: null })
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (updateResponse.error || !updateResponse.data) throw new Error(updateResponse.error?.message ?? "Could not waive the dues.");
+    await recordStudentStatusEvents(admin, profile, studentType, id, [{
+      eventType: "dues_waived",
+      eventDate: dateIsoInTimeZone(new Date(), profile.businessTimezone || undefined),
+      days,
+      fromDate: student.overstay_from ?? null,
+      toDate: student.overstay_to ?? null,
+      note,
+    }]);
+    if (studentType === "course") {
+      return ok(`${days} due days waived.`, {
+        type: "student",
+        studentType: "course",
+        student: await signedCourseStudentPatch(admin, updateResponse.data as CourseStudent),
+      });
+    }
+    return ok(`${days} due days waived.`, {
+      type: "student",
+      studentType: "library",
+      student: await signedLibraryStudentPatch(admin, updateResponse.data as LibraryStudent),
+      previousId: null,
     });
   }),
 

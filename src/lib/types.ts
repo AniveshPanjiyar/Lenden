@@ -263,6 +263,12 @@ export type LibraryStudent = {
   /** Paused (inactive, may return within 45 days without an admission fee). */
   paused_at?: string | null;
   inactive_at?: string | null;
+  /** Days used after the subscription ended, owed when the student was paused / made inactive. */
+  overstay_days?: number | null;
+  overstay_from?: string | null;
+  overstay_to?: string | null;
+  /** A pause asked for mid-subscription starts on this day (the day after it ends). */
+  pause_scheduled_on?: string | null;
   business_id: string;
   roll_number: string;
   phone_number: string | null;
@@ -324,6 +330,12 @@ export type CourseStudent = {
   /** Paused (inactive, may return within 45 days without an admission fee). */
   paused_at?: string | null;
   inactive_at?: string | null;
+  /** Days used after the subscription ended, owed when the student was paused / made inactive. */
+  overstay_days?: number | null;
+  overstay_from?: string | null;
+  overstay_to?: string | null;
+  /** A pause asked for mid-subscription starts on this day (the day after it ends). */
+  pause_scheduled_on?: string | null;
   business_id: string;
   source_course_id: string;
   identity_key: string;
@@ -401,7 +413,26 @@ export type StudentSubscriptionHistoryItem = {
   transactions: StudentSubscriptionTransaction[];
 };
 
+export type StudentStatusEvent = {
+  id: string;
+  event_type:
+    | "pause_scheduled" | "pause_cancelled" | "paused" | "inactive" | "reactivated"
+    | "dues_recorded" | "dues_merged" | "dues_settled" | "dues_waived";
+  event_date: string;
+  effective_date: string | null;
+  days: number | null;
+  from_date: string | null;
+  to_date: string | null;
+  amount: number | null;
+  note: string | null;
+  created_by: string | null;
+  created_by_name?: string | null;
+  created_at: string;
+};
+
 export type StudentSubscriptionHistoryPage = {
+  /** Pause, reactivation and dues events (first page only), newest first. */
+  statusEvents?: StudentStatusEvent[];
   items: StudentSubscriptionHistoryItem[];
   nextPage: number | null;
   totalSubscriptions: number;

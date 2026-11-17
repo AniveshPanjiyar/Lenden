@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
+  loadStudentStatusEvents,
   studentSubscriptionHistoryPage,
   type StudentSubscriptionHistoryRow,
 } from "@/lib/student-subscription-history";
@@ -96,6 +97,10 @@ export async function GET(
           return withSlots ? { ...item, extraSlots: slotsByPayment.get(withSlots.id) } : item;
         });
       }
+    }
+
+    if (page === 0 && uuidPattern.test(id)) {
+      historyPage.statusEvents = await loadStudentStatusEvents(supabase, context.business.id, "library", id);
     }
 
     return NextResponse.json(historyPage);

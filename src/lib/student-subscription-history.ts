@@ -1,6 +1,8 @@
+import type { createClient } from "@/lib/supabase/server";
 import type {
   ApprovalStatus,
   PaymentMode,
+  StudentStatusEvent,
   StudentSubscriptionHistoryItem,
   StudentSubscriptionHistoryPage,
   StudentSubscriptionTransaction,
@@ -110,4 +112,31 @@ export function studentSubscriptionHistoryPage(
     totalSubscriptions,
     totalTransactions,
   };
+}
+
+/**
+ * Pause / reactivation / dues events for one student, newest first, with who did each. A missing
+ * table (before the migration) reads as no events.
+ */
+export async function loadStudentStatusEvents(
+  client: Awaited<ReturnType<typeof createClient>>,
+  businessId: string,
+  studentType: "library" | "course",
+  studentId: string,
+): Promise<StudentStatusEvent[]> {
+  const result = await client
+    .from("student_status_events")
+    .select("id,event_type,event_date,effective_date,days,from_date,to_date,amount,note,created_by,created_at,creator:profiles!student_status_events_created_by_fkey(full_name)")
+    .eq("business_id", businessId)
+    .eq("student_type", studentType)
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (result.error) return [];
+  type Creator = { full_name: string | null };
+  return ((result.data ?? []) as unknown as Array<StudentStatusEvent & { creator?: Creator | Creator[] | null }>).map(({ creator, ...event }) => ({
+    ...event,
+    amount: event.amount === null ? null : Number(event.amount),
+    created_by_name: (Array.isArray(creator) ? creator[0] : creator)?.full_name ?? null,
+  }));
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
+  loadStudentStatusEvents,
   studentSubscriptionHistoryPage,
   type StudentSubscriptionHistoryRow,
 } from "@/lib/student-subscription-history";
@@ -50,9 +51,11 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      studentSubscriptionHistoryPage((historyResult.data ?? []) as StudentSubscriptionHistoryRow[], page, pageSize),
-    );
+    const historyPage = studentSubscriptionHistoryPage((historyResult.data ?? []) as StudentSubscriptionHistoryRow[], page, pageSize);
+    if (page === 0) {
+      historyPage.statusEvents = await loadStudentStatusEvents(supabase, context.business.id, "course", id);
+    }
+    return NextResponse.json(historyPage);
   } catch (error) {
     if (error instanceof BusinessAccessError) {
       return NextResponse.json({ message: error.message }, { status: error.status });

@@ -74,6 +74,7 @@ import {
   saveLibraryStudentAction,
   respondPaymentTransferAction,
   setStudentStatusAction,
+  waiveStudentDuesAction,
   updateSubscriptionAction,
   refundStudentAdvanceAction,
   saveStudentPhotoAction,
@@ -87,7 +88,7 @@ import { clearPersistedQueryCache, QueryProvider } from "@/components/query-prov
 import { normalizeActionError } from "@/lib/action-errors";
 import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
-import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, StudentRosterFlag, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
+import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, StudentRosterFlag, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentStatusEvent, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
   applyAppViewStateToSearchParams,
   defaultDashboardFilters,
@@ -137,6 +138,10 @@ type CourseStudentRecord = {
   id: string;
   pausedAt?: string | null;
   inactiveAt?: string | null;
+  overstayDays?: number | null;
+  overstayFrom?: string | null;
+  overstayTo?: string | null;
+  pauseScheduledOn?: string | null;
   paymentId: string | null;
   identityKey: string;
   displayName: string;
@@ -590,6 +595,38 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
+    overstayDuesTitle: "{days} due days pending",
+    overstayDuesHelp: "Used the library from {from} to {to} after the last subscription ended. Settle these before the new subscription.",
+    overstayMerge: "Merge into this subscription",
+    overstayMergeHelp: "This subscription ends {days} days earlier.",
+    overstaySettle: "Settle dues",
+    overstaySettleHelp: "Collect an amount for those days with this payment.",
+    overstayWaive: "Waive",
+    overstayWaiveHelp: "Owner / Manager only. A reason is saved in history.",
+    overstayMergeResult: "New end date: {date}",
+    overstayAmount: "Amount for the due days",
+    overstayAmountSuggested: "Suggested from this fee: {amount}",
+    overstayWaiveReason: "Reason for waiving",
+    cancelScheduledPause: "Cancel scheduled pause",
+    pauseFrom: "Pause from {date}",
+    dueDaysChip: "{days} due days",
+    reactivateNeedsDues: "{days} due days are pending ({from} – {to}). Add a subscription to settle them (merge or collect), or waive them.",
+    waiveDueDays: "Waive {days} due days",
+    pauseWaitsForEnd: "The subscription is still running, so the pause starts on {date}. The 45-day pause period starts then.",
+    overstayWillBeAdded: "Subscription ended. {days} days used ({from} – {to}) will be added as dues for the next subscription.",
+    statusReason: "Reason / note",
+    pauseAfterEnd: "Pause from {date}",
+    statusHistory: "Status history",
+    by: "by",
+    eventPauseScheduled: "Pause scheduled from {date}",
+    eventPauseCancelled: "Scheduled pause cancelled",
+    eventPaused: "Paused",
+    eventInactive: "Moved to inactive",
+    eventReactivated: "Reactivated",
+    eventDuesRecorded: "{days} due days added",
+    eventDuesMerged: "{days} due days merged into the new subscription",
+    eventDuesSettled: "{days} due days settled",
+    eventDuesWaived: "{days} due days waived",
     smsOneByOne: "One by one",
     smsSendAll: "Send to all ({count})",
     smsBulkPlaceholderNote: "Send to all sends the same text to everyone. Remove {name}, {roll}, {end_date} and {days} to use it, or send personal messages One by one.",
@@ -1170,6 +1207,38 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
+    overstayDuesTitle: "{days} दिन का बकाया",
+    overstayDuesHelp: "पिछला सब्सक्रिप्शन खत्म होने के बाद {from} से {to} तक लाइब्रेरी इस्तेमाल की। नया सब्सक्रिप्शन से पहले इसे सेटल करें।",
+    overstayMerge: "इसी सब्सक्रिप्शन में जोड़ें",
+    overstayMergeHelp: "यह सब्सक्रिप्शन {days} दिन पहले खत्म होगा।",
+    overstaySettle: "बकाया सेटल करें",
+    overstaySettleHelp: "इन दिनों की रकम इसी पेमेंट के साथ लें।",
+    overstayWaive: "माफ़ करें",
+    overstayWaiveHelp: "सिर्फ़ Owner / Manager। कारण History में सेव होगा।",
+    overstayMergeResult: "नई end date: {date}",
+    overstayAmount: "बकाया दिनों की रकम",
+    overstayAmountSuggested: "इस फ़ीस के हिसाब से सुझाव: {amount}",
+    overstayWaiveReason: "माफ़ करने का कारण",
+    cancelScheduledPause: "तय पॉज़ रद्द करें",
+    pauseFrom: "{date} से पॉज़",
+    dueDaysChip: "{days} दिन बकाया",
+    reactivateNeedsDues: "{days} दिन का बकाया है ({from} – {to})। सब्सक्रिप्शन जोड़कर सेटल करें (जोड़ें या रकम लें), या माफ़ करें।",
+    waiveDueDays: "{days} दिन का बकाया माफ़ करें",
+    pauseWaitsForEnd: "सब्सक्रिप्शन अभी चल रहा है, इसलिए पॉज़ {date} से शुरू होगा। 45 दिन की गिनती भी तभी से।",
+    overstayWillBeAdded: "सब्सक्रिप्शन खत्म हो चुका है। {days} दिन ({from} – {to}) अगले सब्सक्रिप्शन के बकाया में जुड़ेंगे।",
+    statusReason: "कारण / नोट",
+    pauseAfterEnd: "{date} से पॉज़",
+    statusHistory: "स्टेटस हिस्ट्री",
+    by: "द्वारा",
+    eventPauseScheduled: "{date} से पॉज़ तय हुआ",
+    eventPauseCancelled: "तय पॉज़ रद्द हुआ",
+    eventPaused: "पॉज़ हुआ",
+    eventInactive: "बंद (Inactive) हुआ",
+    eventReactivated: "फिर से चालू हुआ",
+    eventDuesRecorded: "{days} दिन का बकाया जुड़ा",
+    eventDuesMerged: "{days} दिन का बकाया नए सब्सक्रिप्शन में जोड़ा",
+    eventDuesSettled: "{days} दिन का बकाया चुकाया",
+    eventDuesWaived: "{days} दिन का बकाया माफ़",
     smsOneByOne: "एक-एक करके",
     smsSendAll: "सभी को भेजें ({count})",
     smsBulkPlaceholderNote: "सभी को भेजें में सबको एक ही मैसेज जाता है। इसके लिए {name}, {roll}, {end_date} और {days} हटाएँ, या निजी मैसेज एक-एक करके भेजें।",
@@ -1536,6 +1605,9 @@ function profileRoleLabel(profile: Profile, t: (key: string) => string) {
   return t(membershipRoleLabelKeys[profile.membership_role]);
 }
 
+/** Owners, Managers and support sessions may waive a student's overstay dues. */
+const DuesWaiverContext = createContext(false);
+
 const LanguageContext = createContext<{
   language: Language;
   setLanguage: (language: Language) => void;
@@ -1621,6 +1693,7 @@ const libraryRefreshActions = new Set<ClientAction>([
   saveCourseStudentAction,
   saveLibraryStudentAction,
   setStudentStatusAction,
+  waiveStudentDuesAction,
   updateSubscriptionAction,
   refundStudentAdvanceAction,
   saveStudentPhotoAction,
@@ -2624,9 +2697,14 @@ function LogoutButton({ label }: { label: string }) {
 // The query client lives with its consumers: providing it from the root layout let the
 // webpack dev server's first compile hand the layout and page separate React Query instances.
 export function AppShell(props: { data: AppData; initialViewState: AppViewState }) {
+  const canWaiveDues = props.data.businessContext.accessMode === "support"
+    || props.data.profile.membership_role === "primary_owner"
+    || props.data.profile.membership_role === "co_owner";
   return (
     <QueryProvider>
-      <AppShellContent {...props} />
+      <DuesWaiverContext.Provider value={canWaiveDues}>
+        <AppShellContent {...props} />
+      </DuesWaiverContext.Provider>
     </QueryProvider>
   );
 }
@@ -8944,6 +9022,34 @@ function StudentSubscriptionTransactionSummary({
   );
 }
 
+/** One line for a pause / reactivation / dues event, e.g. "12 due days added (01/11–12/11)". */
+function studentStatusEventLabel(event: StudentStatusEvent, t: (key: string) => string) {
+  const days = String(event.days ?? 0);
+  const range = event.from_date && event.to_date ? ` (${displayDate(event.from_date)} – ${displayDate(event.to_date)})` : "";
+  switch (event.event_type) {
+    case "pause_scheduled":
+      return t("eventPauseScheduled").replace("{date}", displayDate(event.effective_date));
+    case "pause_cancelled":
+      return t("eventPauseCancelled");
+    case "paused":
+      return t("eventPaused");
+    case "inactive":
+      return t("eventInactive");
+    case "reactivated":
+      return t("eventReactivated");
+    case "dues_recorded":
+      return `${t("eventDuesRecorded").replace("{days}", days)}${range}`;
+    case "dues_merged":
+      return t("eventDuesMerged").replace("{days}", days);
+    case "dues_settled":
+      return `${t("eventDuesSettled").replace("{days}", days)} · ${formatMoney(Number(event.amount ?? 0))}`;
+    case "dues_waived":
+      return t("eventDuesWaived").replace("{days}", days);
+    default:
+      return event.event_type;
+  }
+}
+
 function SubscriptionHistoryTimeline({
   subscriptions,
   totalSubscriptions,
@@ -8955,7 +9061,10 @@ function SubscriptionHistoryTimeline({
   editTarget,
   setNotice,
   startTransition,
+  statusEvents = [],
 }: {
+  /** Pause, reactivation and dues events, newest first. */
+  statusEvents?: StudentStatusEvent[];
   subscriptions: StudentSubscriptionHistoryItem[];
   totalSubscriptions: number;
   totalTransactions: number;
@@ -8982,6 +9091,25 @@ function SubscriptionHistoryTimeline({
         </div>
       </div>
       {error ? <p className="student-history-error">{error}</p> : null}
+      {statusEvents.length > 0 ? (
+        <section className="student-status-history" aria-label={t("statusHistory")}>
+          <h4>{t("statusHistory")}</h4>
+          <ol>
+            {statusEvents.map((event) => (
+              <li key={event.id} className={`status-event ${event.event_type}`}>
+                <strong>{studentStatusEventLabel(event, t)}</strong>
+                <small>
+                  {[
+                    displayDate(event.event_date),
+                    event.created_by_name ? `${t("by")} ${event.created_by_name}` : null,
+                  ].filter(Boolean).join(" · ")}
+                </small>
+                {event.note ? <p>{event.note}</p> : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
       <div className="student-history-timeline">
         {subscriptions.map((subscription) => (
           <article key={subscription.subscriptionKey} className="student-subscription-history-card">
@@ -9156,6 +9284,10 @@ function courseStudentRecordFromStudent(student: CourseStudent, source: CourseSt
     active: student.active,
     pausedAt: student.paused_at ?? null,
     inactiveAt: student.inactive_at ?? null,
+    overstayDays: student.overstay_days ?? 0,
+    overstayFrom: student.overstay_from ?? null,
+    overstayTo: student.overstay_to ?? null,
+    pauseScheduledOn: student.pause_scheduled_on ?? null,
   };
 }
 
@@ -9720,6 +9852,18 @@ function LibraryStudentsView({
   const drawerStatusClass = drawerPause.state === "paused"
     ? "status-pending"
     : !drawerActive ? "status-rejected" : drawerExpired ? "status-pending" : "status-approved";
+  // Pause rules: a running subscription pauses the day after it ends; stopping an expired one
+  // turns the days since it ended into dues that the next subscription must settle.
+  const canWaiveDues = useContext(DuesWaiverContext);
+  const [statusNote, setStatusNote] = useState("");
+  const drawerOverstayDays = Math.max(Number(selectedStudent?.overstay_days ?? selectedCourseStudent?.overstayDays ?? 0), 0);
+  const drawerOverstayFrom = selectedStudent?.overstay_from ?? selectedCourseStudent?.overstayFrom ?? null;
+  const drawerOverstayTo = selectedStudent?.overstay_to ?? selectedCourseStudent?.overstayTo ?? null;
+  const drawerPauseScheduledOn = selectedStudent?.pause_scheduled_on ?? selectedCourseStudent?.pauseScheduledOn ?? null;
+  const drawerPauseWaitsForEnd = drawerActive && Boolean(drawerSubscriptionEnd && drawerSubscriptionEnd >= today);
+  const drawerDaysOverStay = drawerActive && drawerSubscriptionEnd && drawerSubscriptionEnd < today
+    ? Math.max(daysBetweenIsoDates(drawerSubscriptionEnd, today) ?? 0, 0)
+    : 0;
   const showSourceSelector = variant === "page" || studentSources.length > 1;
   const showStatusFilters = variant === "page";
   const allowCallActions = variant === "page";
@@ -10259,6 +10403,22 @@ function LibraryStudentsView({
                           {drawerActive ? <UserX size={16} /> : <UserCheck size={16} />}
                           {drawerActive ? t("markInactive") : t("reactivate")}
                         </button>
+                        {drawerPauseScheduledOn ? (
+                          <form
+                            onSubmit={(event) => {
+                              const menu = event.currentTarget.closest("details");
+                              submitWith(event, setStudentStatusAction, setNotice, startTransition, false, () => menu?.removeAttribute("open"));
+                            }}
+                          >
+                            <input type="hidden" name="student_type" value={drawerKind ?? ""} />
+                            <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                            <input type="hidden" name="status" value="cancel_pause" />
+                            <button type="submit" className="positive">
+                              <X size={16} />
+                              {t("cancelScheduledPause")}
+                            </button>
+                          </form>
+                        ) : null}
                       </div>
                     </details>
                   ) : null}
@@ -10271,6 +10431,12 @@ function LibraryStudentsView({
                 <StudentAvatar displayName={drawerName} imageUrl={drawerPhotoUrl} className="drawer" />
                 <div className="student-drawer-identity">
                   <span className={`status-chip ${drawerStatusClass}`}>{drawerStatusLabel}</span>
+                  {drawerPauseScheduledOn ? (
+                    <span className="status-chip status-pending">{t("pauseFrom").replace("{date}", displayDate(drawerPauseScheduledOn))}</span>
+                  ) : null}
+                  {drawerOverstayDays > 0 ? (
+                    <span className="status-chip status-rejected">{t("dueDaysChip").replace("{days}", String(drawerOverstayDays))}</span>
+                  ) : null}
                   <h2>{drawerName}</h2>
                   <p>#{drawerRollNumber} · {drawerSourceLabel}</p>
                 </div>
@@ -10317,42 +10483,108 @@ function LibraryStudentsView({
             <div className="student-drawer-body">
               {confirmingStatus ? (
                 <section className="student-status-confirmation" role="alertdialog" aria-label={drawerActive ? t("markInactive") : t("reactivate")}>
-                  <div>
-                    <strong>{drawerActive ? t("changeStatus") : `${t("reactivate")}?`}</strong>
-                    <p>
-                      {drawerActive
-                        ? t("pauseOrInactiveHelp")
-                        : "The student returns to Active with the same profile and subscription history."}
-                    </p>
-                  </div>
-                  <div className="student-status-confirmation-actions">
-                    <button className="secondary-button" type="button" onClick={() => setConfirmingStatus(false)}>{t("cancel")}</button>
-                    {(drawerActive ? (["paused", "inactive"] as const) : (["active"] as const)).map((nextStatus) => (
-                      <form
-                        key={nextStatus}
-                        onSubmit={(event) => submitAndClose(
-                          event,
-                          setStudentStatusAction,
-                          setNotice,
-                          startTransition,
-                          () => {
-                            setQuery("");
-                            setListMode(nextStatus === "active" ? "active" : "inactive");
-                            closeStudentDetails();
-                          },
-                        )}
-                      >
-                        <input type="hidden" name="student_type" value={drawerKind ?? ""} />
-                        <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
-                        {selectedStudent ? <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} /> : null}
-                        <input type="hidden" name="active" value={nextStatus === "active" ? "true" : "false"} />
-                        <input type="hidden" name="status" value={nextStatus} />
-                        <button className={nextStatus === "active" ? "primary-button" : nextStatus === "paused" ? "secondary-button tone-pause" : "secondary-button tone-cancel"} type="submit">
-                          {nextStatus === "active" ? t("reactivate") : nextStatus === "paused" ? t("markPaused") : t("markInactive")}
+                  {!drawerActive && drawerOverstayDays > 0 ? (
+                    <>
+                      <div>
+                        <strong>{`${t("reactivate")}?`}</strong>
+                        <p>
+                          {t("reactivateNeedsDues")
+                            .replace("{days}", String(drawerOverstayDays))
+                            .replace("{from}", displayDate(drawerOverstayFrom))
+                            .replace("{to}", displayDate(drawerOverstayTo))}
+                        </p>
+                      </div>
+                      <div className="student-status-confirmation-actions">
+                        <button className="secondary-button" type="button" onClick={() => setConfirmingStatus(false)}>{t("cancel")}</button>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => {
+                            setConfirmingStatus(false);
+                            setDrawerView("subscription");
+                          }}
+                        >
+                          {t("addSubscription")}
                         </button>
-                      </form>
-                    ))}
-                  </div>
+                      </div>
+                      {canWaiveDues ? (
+                        <form
+                          className="student-status-waive"
+                          onSubmit={(event) => submitWith(event, waiveStudentDuesAction, setNotice, startTransition, true, () => setConfirmingStatus(false))}
+                        >
+                          <input type="hidden" name="student_type" value={drawerKind ?? ""} />
+                          <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                          <label>
+                            {t("overstayWaiveReason")}
+                            <input name="note" required maxLength={300} />
+                          </label>
+                          <button className="secondary-button tone-cancel" type="submit">{t("waiveDueDays").replace("{days}", String(drawerOverstayDays))}</button>
+                        </form>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <strong>{drawerActive ? t("changeStatus") : `${t("reactivate")}?`}</strong>
+                        <p>
+                          {!drawerActive
+                            ? "The student returns to Active with the same profile and subscription history."
+                            : drawerPauseWaitsForEnd && drawerSubscriptionEnd
+                              ? t("pauseWaitsForEnd").replace("{date}", displayDate(addDaysIsoDate(drawerSubscriptionEnd, 1)))
+                              : t("pauseOrInactiveHelp")}
+                        </p>
+                        {drawerDaysOverStay > 0 && drawerSubscriptionEnd ? (
+                          <p className="form-warning">
+                            {t("overstayWillBeAdded")
+                              .replace("{days}", String(drawerDaysOverStay))
+                              .replace("{from}", displayDate(addDaysIsoDate(drawerSubscriptionEnd, 1)))
+                              .replace("{to}", displayDate(today))}
+                          </p>
+                        ) : null}
+                      </div>
+                      <label className="student-status-note">
+                        {t("statusReason")}
+                        <input value={statusNote} onChange={(event) => setStatusNote(event.target.value)} maxLength={300} placeholder={t("optional")} />
+                      </label>
+                      <div className="student-status-confirmation-actions">
+                        <button className="secondary-button" type="button" onClick={() => setConfirmingStatus(false)}>{t("cancel")}</button>
+                        {(drawerActive ? (["paused", "inactive"] as const) : (["active"] as const)).map((nextStatus) => (
+                          <form
+                            key={nextStatus}
+                            onSubmit={(event) => submitAndClose(
+                              event,
+                              setStudentStatusAction,
+                              setNotice,
+                              startTransition,
+                              () => {
+                                setStatusNote("");
+                                setQuery("");
+                                // A scheduled pause keeps the student active until their subscription ends.
+                                setListMode(nextStatus === "active" || (nextStatus === "paused" && drawerPauseWaitsForEnd) ? "active" : "inactive");
+                                closeStudentDetails();
+                              },
+                            )}
+                          >
+                            <input type="hidden" name="student_type" value={drawerKind ?? ""} />
+                            <input type="hidden" name="id" value={selectedStudent?.id ?? selectedCourseStudent?.id ?? ""} />
+                            {selectedStudent ? <input type="hidden" name="payment_id" value={selectedStudent.last_payment_id ?? ""} /> : null}
+                            <input type="hidden" name="active" value={nextStatus === "active" ? "true" : "false"} />
+                            <input type="hidden" name="status" value={nextStatus} />
+                            <input type="hidden" name="note" value={statusNote} />
+                            <button className={nextStatus === "active" ? "primary-button" : nextStatus === "paused" ? "secondary-button tone-pause" : "secondary-button tone-cancel"} type="submit">
+                              {nextStatus === "active"
+                                ? t("reactivate")
+                                : nextStatus === "paused"
+                                  ? drawerPauseWaitsForEnd && drawerSubscriptionEnd
+                                    ? t("pauseAfterEnd").replace("{date}", displayDate(addDaysIsoDate(drawerSubscriptionEnd, 1)))
+                                    : t("markPaused")
+                                  : t("markInactive")}
+                            </button>
+                          </form>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </section>
               ) : null}
 
@@ -10450,6 +10682,7 @@ function LibraryStudentsView({
                   hasMore={drawerHasMoreHistory}
                   loadingMore={drawerLoadingMoreHistory}
                   onLoadOlder={() => void drawerHistoryQuery.fetchNextPage()}
+                  statusEvents={drawerHistoryQuery.data?.pages[0]?.statusEvents ?? []}
                   editTarget={drawerKind && (selectedStudent?.id ?? selectedCourseStudent?.id)
                     ? { studentType: drawerKind, studentId: (selectedStudent?.id ?? selectedCourseStudent?.id) as string }
                     : null}
@@ -10945,6 +11178,11 @@ function PaymentForm({
   const [libraryMemberMode, setLibraryMemberMode] = useState<LibraryMemberMode | null>(initialLibraryPrefill ? "existing" : initialMemberMode ?? null);
   const [fee, setFee] = useState(initialLibraryPrefill?.fee ?? initialCoursePrefill?.fee ?? "");
   const [admissionFee, setAdmissionFee] = useState("");
+  // How this subscription settles overstay dues (days used after a past subscription ended).
+  const canWaiveDues = useContext(DuesWaiverContext);
+  const [overstayChoice, setOverstayChoice] = useState<{ studentId: string; value: "merge" | "settle" | "waive" } | null>(null);
+  const [overstayAmount, setOverstayAmount] = useState("");
+  const [overstayNote, setOverstayNote] = useState("");
   const [paid, setPaid] = useState(
     initialLibraryDueAmount > 0
       ? String(initialLibraryDueAmount)
@@ -11223,7 +11461,26 @@ function PaymentForm({
     : null;
   const admissionApplies = libraryReturnState?.state === "new" || libraryReturnState?.state === "inactive";
   const admissionFeeNumber = admissionApplies ? Number(admissionFee || 0) : 0;
-  const feeNumber = Number(fee || 0) + admissionFeeNumber;
+  const overstayStudent = type === "library" && libraryMemberMode === "existing" && selectedLibraryStudent && !collectingLibraryDues
+    ? { id: selectedLibraryStudent.id, days: selectedLibraryStudent.overstay_days, from: selectedLibraryStudent.overstay_from, to: selectedLibraryStudent.overstay_to }
+    : type === "course" && courseMemberMode === "existing" && selectedCourseStudent && !collectingCourseDues
+      ? { id: selectedCourseStudent.id, days: selectedCourseStudent.overstayDays, from: selectedCourseStudent.overstayFrom, to: selectedCourseStudent.overstayTo }
+      : null;
+  const overstayDays = Math.max(Number(overstayStudent?.days ?? 0), 0);
+  const overstayResolution = overstayDays > 0 && overstayChoice && overstayChoice.studentId === overstayStudent?.id ? overstayChoice.value : null;
+  const overstaySettleNumber = overstayResolution === "settle" ? Number(overstayAmount || 0) : 0;
+  // A fair price for the due days: this subscription's fee per day.
+  const subscriptionDayCount = Math.abs(daysBetweenIsoDates(subscriptionStartDate, subscriptionEndDate) ?? 29) + 1;
+  const suggestedOverstayAmount = Math.round((Number(fee || 0) / Math.max(subscriptionDayCount, 1)) * overstayDays);
+  function chooseOverstayResolution(next: "merge" | "settle" | "waive") {
+    if (!overstayStudent || overstayResolution === next) return;
+    // Merge shortens this subscription by the due days; switching away gives them back.
+    if (overstayResolution === "merge") setSubscriptionEndDate((current) => addDaysIsoDate(current, overstayDays) ?? current);
+    if (next === "merge") setSubscriptionEndDate((current) => addDaysIsoDate(current, -overstayDays) ?? current);
+    if (next === "settle" && !overstayAmount) setOverstayAmount(suggestedOverstayAmount > 0 ? String(suggestedOverstayAmount) : "");
+    setOverstayChoice({ studentId: overstayStudent.id, value: next });
+  }
+  const feeNumber = Number(fee || 0) + admissionFeeNumber + overstaySettleNumber;
   const paidNumber = Number(paid || 0);
   const amountNumber = Number(amount || 0);
   const splitCollectionNumber = Number(cashCollection || 0) + Number(onlineCollection || 0);
@@ -12288,11 +12545,69 @@ function PaymentForm({
               <input name="admission_fee" type="number" min="0" step="1" value={admissionFee} onChange={(event) => setAdmissionFee(event.target.value)} placeholder="0" />
             </label>
           ) : null}
-          {/* Fee sent with the payment = subscription fee + admission fee. */}
+          {overstayDays > 0 ? (
+            <fieldset className="overstay-dues-panel full-span">
+              <legend>{t("overstayDuesTitle").replace("{days}", String(overstayDays))}</legend>
+              <p>
+                {t("overstayDuesHelp")
+                  .replace("{from}", displayDate(overstayStudent?.from ?? null))
+                  .replace("{to}", displayDate(overstayStudent?.to ?? null))}
+              </p>
+              <div className="overstay-dues-choices" role="radiogroup" aria-label={t("overstayDuesTitle").replace("{days}", String(overstayDays))}>
+                {(["merge", "settle", ...(canWaiveDues ? ["waive" as const] : [])] as const).map((choice) => (
+                  <label key={choice} className={overstayResolution === choice ? "active" : ""}>
+                    <input
+                      type="radio"
+                      name="overstay_resolution"
+                      value={choice}
+                      checked={overstayResolution === choice}
+                      onChange={() => chooseOverstayResolution(choice)}
+                      required
+                    />
+                    <strong>{t(choice === "merge" ? "overstayMerge" : choice === "settle" ? "overstaySettle" : "overstayWaive")}</strong>
+                    <small>
+                      {choice === "merge"
+                        ? t("overstayMergeHelp").replace("{days}", String(overstayDays))
+                        : choice === "settle"
+                          ? t("overstaySettleHelp")
+                          : t("overstayWaiveHelp")}
+                    </small>
+                  </label>
+                ))}
+              </div>
+              {overstayResolution === "merge" ? (
+                <p className="overstay-dues-result">{t("overstayMergeResult").replace("{date}", displayDate(subscriptionEndDate))}</p>
+              ) : null}
+              {overstayResolution === "settle" ? (
+                <label>
+                  {t("overstayAmount")}
+                  <input
+                    name="overstay_amount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={overstayAmount}
+                    onChange={(event) => setOverstayAmount(event.target.value)}
+                    required
+                  />
+                  {suggestedOverstayAmount > 0 ? (
+                    <small>{t("overstayAmountSuggested").replace("{amount}", formatMoney(suggestedOverstayAmount))}</small>
+                  ) : null}
+                </label>
+              ) : null}
+              {overstayResolution === "waive" ? (
+                <label>
+                  {t("overstayWaiveReason")}
+                  <input name="overstay_note" value={overstayNote} onChange={(event) => setOverstayNote(event.target.value)} required maxLength={300} />
+                </label>
+              ) : null}
+            </fieldset>
+          ) : null}
+          {/* Fee sent with the payment = subscription fee + admission fee + settled due days. */}
           <input type="hidden" name="fee_amount" value={feeNumber} />
           <div className="form-pair full-span">
             <label>
-              {admissionFeeNumber > 0 ? `${t("fee")} (${t("total")} ${formatMoney(feeNumber)})` : t("fee")}
+              {admissionFeeNumber > 0 || overstaySettleNumber > 0 ? `${t("fee")} (${t("total")} ${formatMoney(feeNumber)})` : t("fee")}
               <input type="number" min="0" step="1" value={fee} onChange={(event) => setFee(event.target.value)} />
             </label>
             {mode === "mixed" ? (
