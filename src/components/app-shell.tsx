@@ -2,6 +2,7 @@
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, useTransition, WheelEvent, type Dispatch, type SetStateAction } from "react";
 import { createPortal, flushSync, useFormStatus } from "react-dom";
+import { defaultCourseExpiredMessage, defaultLibraryExpiredMessage } from "@/lib/message-templates";
 import { bulkSmsHref, contactPhone, defaultCoursePrefix, shareContactsFile, smsHref, studentContactName, studentContactsVCard, type StudentContact } from "@/lib/contact-names";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7620,10 +7621,18 @@ function displayTextValue(value: string | number | null | undefined) {
   return text || "-";
 }
 
-/** Fills the owner's template: {name}, {roll}, {end_date}, {days}, {business}, {course}. */
+/** Late fine starts this many days after a subscription ends ({fine_date} in templates). */
+const studentLateFineGraceDays = 10;
+
+/** {fine_date}: the last day to pay without the late fine. */
+function studentFineDate(endDate: string | null | undefined) {
+  return endDate ? displayDate(addDaysIsoDate(endDate, studentLateFineGraceDays)) : "";
+}
+
+/** Fills the owner's template: {name}, {roll}, {end_date}, {fine_date}, {days}, {business}, {course}. */
 function fillStudentMessageTemplate(template: string | null | undefined, values: Record<string, string>) {
   if (!template?.trim()) return "";
-  return template.replace(/\{(name|roll|end_date|days|business|course)\}/g, (_, key: string) => values[key] ?? "");
+  return template.replace(/\{(name|roll|end_date|fine_date|days|business|course)\}/g, (_, key: string) => values[key] ?? "");
 }
 
 /** Opens the student's WhatsApp chat (Indian numbers get +91), with the message prefilled if any. */
@@ -7641,18 +7650,27 @@ function studentStatusWhatsAppMessage(input: {
   dueFrom: string | null;
   dueTo: string | null;
 }) {
-  const lines = [`नमस्ते ${input.name},`];
-  if (input.status === "paused" && input.runsUntil) {
-    lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.runsUntil)} तक चलेगा। उसके बाद ${displayDate(input.startsOn)} से इसे पॉज़ कर दिया जाएगा।`);
-  } else if (input.status === "paused") {
-    lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.startsOn)} से पॉज़ कर दिया गया है।`);
+  const lines = [`नमस्ते ${input.name},`, ""];
+  // The pause window: back within 45 days of the pause start keeps the admission fee waived.
+  const graceLastDay = addDaysIsoDate(input.startsOn, studentPauseGraceDays - 1);
+  if (input.status === "paused") {
+    lines.push(input.runsUntil
+      ? `आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.runsUntil)} तक पहले की तरह चलता रहेगा। उसके बाद ${displayDate(input.startsOn)} से इसे पॉज़ कर दिया जाएगा।`
+      : `आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.startsOn)} से पॉज़ कर दिया गया है।`);
+    lines.push("", "पॉज़ के नियम:");
+    lines.push(`• ${displayDate(input.startsOn)} से 45 दिन के अंदर, यानी ${displayDate(graceLastDay)} तक वापस आने पर एडमिशन फीस नहीं लगेगी।`);
+    lines.push(`• ${displayDate(graceLastDay)} के बाद आपका सब्सक्रिप्शन बंद (Inactive) हो जाएगा और दोबारा जुड़ने पर एडमिशन फीस लगेगी।`);
+    lines.push("• वापस आने पर नया सब्सक्रिप्शन उसी दिन से शुरू होगा।");
   } else {
     lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.startsOn)} से बंद (Inactive) कर दिया गया है।`);
+    lines.push("", "ध्यान दें:");
+    lines.push("• दोबारा जुड़ने पर एडमिशन फीस फिर से लगेगी।");
+    lines.push("• आपकी प्रोफ़ाइल और पुराना रिकॉर्ड सुरक्षित रहेगा।");
   }
-  if (input.status === "paused") lines.push("45 दिन के अंदर वापस आने पर एडमिशन फीस नहीं लगेगी।");
   if (input.dueDays > 0) {
-    lines.push(`सब्सक्रिप्शन खत्म होने के बाद ${displayDate(input.dueFrom)} से ${displayDate(input.dueTo)} तक (${input.dueDays} दिन) इस्तेमाल का बकाया है, जो अगले सब्सक्रिप्शन में जुड़ेगा।`);
+    lines.push(`• सब्सक्रिप्शन खत्म होने के बाद ${displayDate(input.dueFrom)} से ${displayDate(input.dueTo)} तक (${input.dueDays} दिन) इस्तेमाल का बकाया है। दोबारा शुरू करते समय यह बकाया चुकाना होगा या नए सब्सक्रिप्शन में जोड़ा जाएगा।`);
   }
+  lines.push("", input.status === "paused" ? "दोबारा शुरू करने के लिए हमें सूचित करें।" : "दोबारा जुड़ने के लिए कभी भी संपर्क करें।");
   if (input.business) lines.push(`— ${input.business}`);
   return lines.join("\n");
 }
@@ -9618,6 +9636,7 @@ function LibraryStudentsView({
     name: student.name?.trim() || t("student"),
     roll: student.roll ?? "",
     end_date: displayDate(student.endDate ?? null),
+    fine_date: studentFineDate(student.endDate),
     days: String(Math.abs(daysBetweenIsoDates(today, student.endDate ?? null) ?? 0)),
     business: businessName,
     course: student.course ?? (selectedSource.type === "course" ? selectedSource.label : ""),
@@ -9664,7 +9683,7 @@ function LibraryStudentsView({
   }
   const smsBulkBatchSize = 50;
   // One text for everyone: only shared placeholders work, so personal ones block Send to all.
-  const smsHasPersonalPlaceholders = /\{(name|roll|end_date|days)\}/.test(smsMessage);
+  const smsHasPersonalPlaceholders = /\{(name|roll|end_date|fine_date|days)\}/.test(smsMessage);
   const smsBulkText = fillStudentMessageTemplate(smsMessage, {
     business: businessName,
     course: selectedSource.type === "course" ? selectedSource.label : "",
@@ -10028,7 +10047,7 @@ function LibraryStudentsView({
                 placeholder={t("smsMessagePlaceholder")}
               />
             </label>
-            <small className="date-filter-note">{"{name}"} · {"{roll}"} · {"{end_date}"} · {"{days}"} · {"{course}"} · {"{business}"}</small>
+            <small className="date-filter-note">{"{name}"} · {"{roll}"} · {"{end_date}"} · {"{fine_date}"} · {"{days}"} · {"{course}"} · {"{business}"}</small>
             {smsMessage.trim() ? (
               <p className="student-sms-preview">{smsTextFor(withPhone.find((student) => contactIds.has(student.id)) ?? withPhone[0] ?? { id: "", roll: "1", name: t("name"), phone: null })}</p>
             ) : null}
@@ -10184,11 +10203,13 @@ function LibraryStudentsView({
                 showCallAction={allowCallActions}
                 onOpen={() => openStudentDetails(student.id)}
                 whatsappMessage={fillStudentMessageTemplate(
-                  expired(student) ? messageTemplates?.student_expired : messageTemplates?.student_active,
+                  // Expired: the business message, else the suggested one; running subscriptions open blank.
+                  expired(student) ? messageTemplates?.student_expired || defaultLibraryExpiredMessage : messageTemplates?.student_active,
                   {
                     name: displayName,
                     roll: rollNumber,
                     end_date: displayDate(student.subscription_end_date),
+                    fine_date: studentFineDate(student.subscription_end_date),
                     days: String(Math.abs(daysBetweenIsoDates(today, student.subscription_end_date) ?? 0)),
                     business: businessName,
                   },
@@ -10232,12 +10253,13 @@ function LibraryStudentsView({
                 whatsappMessage={fillStudentMessageTemplate(
                   // Expired: the course's own message, else the business "Expired students" one.
                   courseExpired
-                    ? (selectedSource.type === "course" ? selectedSource.course.expired_message_template : null) || messageTemplates?.student_expired
+                    ? (selectedSource.type === "course" ? selectedSource.course.expired_message_template : null) || messageTemplates?.student_expired || defaultCourseExpiredMessage
                     : messageTemplates?.student_active,
                   {
                     name: displayName,
                     roll: record.rollNumber ?? "",
                     end_date: displayDate(record.subscriptionEndDate),
+                    fine_date: studentFineDate(record.subscriptionEndDate),
                     days: String(Math.abs(daysBetweenIsoDates(today, record.subscriptionEndDate) ?? 0)),
                     business: businessName,
                     course: record.courseName ?? "",

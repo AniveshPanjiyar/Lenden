@@ -26,6 +26,7 @@ import {
   setRoomActiveAction,
 } from "@/app/actions";
 import { normalizeActionError } from "@/lib/action-errors";
+import { defaultCourseExpiredMessage, defaultLibraryExpiredMessage } from "@/lib/message-templates";
 import { businessLabels, formatMoney } from "@/lib/constants";
 import { useSafeActionState as useActionState } from "@/lib/use-safe-action-state";
 import type {
@@ -340,7 +341,7 @@ export function BusinessSetupSettings({
                     />
                   </label>
                   <small>
-                    {"{name}"} = student name · {"{course}"} = course · {"{end_date}"} = end date · {"{roll}"} = roll number · {"{days}"} = days since it ended
+                    {"{name}"} = student name · {"{course}"} = course · {"{end_date}"} = end date · {"{fine_date}"} = end date + 10 days (late fine) · {"{roll}"} = roll number · {"{days}"} = days since it ended · {"{business}"} = business name
                   </small>
                 </BusinessMutationForm>
               </details>
@@ -422,7 +423,7 @@ function MessageTemplatesSettings({
   }, [router, state.ok]);
   const placeholderGuide = (
     <small>
-      {"{name}"} = student name · {"{end_date}"} = end date · {"{roll}"} = roll number · {"{days}"} = days · {"{business}"} = business name
+      {"{name}"} = student name · {"{end_date}"} = end date · {"{fine_date}"} = end date + 10 days (late fine) · {"{roll}"} = roll number · {"{days}"} = days · {"{business}"} = business name
     </small>
   );
 
@@ -491,14 +492,6 @@ function MessageTemplatesSettings({
     </section>
   );
 }
-
-const defaultLibraryExpiredMessage =
-  "नमस्ते {name}, आपका लाइब्रेरी का सब्सक्रिप्शन {end_date} को समाप्त हो गया है। "
-  + "अपना सब्सक्रिप्शन जारी रखने के लिए तुरंत रिन्यू करवाएँ, या पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
-
-const defaultCourseExpiredMessage =
-  "नमस्ते {name}, आपके {course} का सब्सक्रिप्शन {end_date} को समाप्त हो गया है। "
-  + "अपना सब्सक्रिप्शन जारी रखने के लिए तुरंत रिन्यू करवाएँ, या पॉज़ या बंद करने के लिए संस्थान को सूचित करें।";
 
 const initialBusinessActionState: BusinessUserActionState = {
   ok: false,
