@@ -595,6 +595,10 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "Expires today",
     finalizeAndSettle: "Finalize & Settle",
     fee: "Fee",
+    notifyStudent: "Notify the student",
+    statusUpdated: "Status updated",
+    notifyOnWhatsApp: "Send to {name} on WhatsApp",
+    notNow: "Not now",
     overstayDuesTitle: "{days} due days pending",
     overstayDuesHelp: "Used the library from {from} to {to} after the last subscription ended. Settle these before the new subscription.",
     overstayMerge: "Merge into this subscription",
@@ -1207,6 +1211,10 @@ const messages: Record<Language, Record<string, string>> = {
     expiresToday: "आज खत्म",
     finalizeAndSettle: "फाइनल जमा करें",
     fee: "फीस",
+    notifyStudent: "छात्र को बताएँ",
+    statusUpdated: "स्टेटस बदल गया",
+    notifyOnWhatsApp: "{name} को WhatsApp पर भेजें",
+    notNow: "अभी नहीं",
     overstayDuesTitle: "{days} दिन का बकाया",
     overstayDuesHelp: "पिछला सब्सक्रिप्शन खत्म होने के बाद {from} से {to} तक लाइब्रेरी इस्तेमाल की। नया सब्सक्रिप्शन से पहले इसे सेटल करें।",
     overstayMerge: "इसी सब्सक्रिप्शन में जोड़ें",
@@ -7619,6 +7627,36 @@ function fillStudentMessageTemplate(template: string | null | undefined, values:
 }
 
 /** Opens the student's WhatsApp chat (Indian numbers get +91), with the message prefilled if any. */
+/** WhatsApp text telling a student their subscription was paused / made inactive, with dates and any dues. */
+function studentStatusWhatsAppMessage(input: {
+  name: string;
+  service: string;
+  business: string;
+  status: "paused" | "inactive";
+  /** Day the pause / inactive status starts. */
+  startsOn: string;
+  /** Set for a pause that waits for the running subscription to end. */
+  runsUntil: string | null;
+  dueDays: number;
+  dueFrom: string | null;
+  dueTo: string | null;
+}) {
+  const lines = [`नमस्ते ${input.name},`];
+  if (input.status === "paused" && input.runsUntil) {
+    lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.runsUntil)} तक चलेगा। उसके बाद ${displayDate(input.startsOn)} से इसे पॉज़ कर दिया जाएगा।`);
+  } else if (input.status === "paused") {
+    lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.startsOn)} से पॉज़ कर दिया गया है।`);
+  } else {
+    lines.push(`आपका ${input.service} सब्सक्रिप्शन ${displayDate(input.startsOn)} से बंद (Inactive) कर दिया गया है।`);
+  }
+  if (input.status === "paused") lines.push("45 दिन के अंदर वापस आने पर एडमिशन फीस नहीं लगेगी।");
+  if (input.dueDays > 0) {
+    lines.push(`सब्सक्रिप्शन खत्म होने के बाद ${displayDate(input.dueFrom)} से ${displayDate(input.dueTo)} तक (${input.dueDays} दिन) इस्तेमाल का बकाया है, जो अगले सब्सक्रिप्शन में जुड़ेगा।`);
+  }
+  if (input.business) lines.push(`— ${input.business}`);
+  return lines.join("\n");
+}
+
 function studentWhatsAppHref(phoneNumber: string | null | undefined, message: string) {
   let digits = phoneNumber?.replace(/\D/g, "") ?? "";
   if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
@@ -9856,6 +9894,8 @@ function LibraryStudentsView({
   // turns the days since it ended into dues that the next subscription must settle.
   const canWaiveDues = useContext(DuesWaiverContext);
   const [statusNote, setStatusNote] = useState("");
+  // After a pause / inactive change: offer to tell the student on WhatsApp, message prefilled.
+  const [statusWhatsApp, setStatusWhatsApp] = useState<{ name: string; href: string | null; message: string } | null>(null);
   const drawerOverstayDays = Math.max(Number(selectedStudent?.overstay_days ?? selectedCourseStudent?.overstayDays ?? 0), 0);
   const drawerOverstayFrom = selectedStudent?.overstay_from ?? selectedCourseStudent?.overstayFrom ?? null;
   const drawerOverstayTo = selectedStudent?.overstay_to ?? selectedCourseStudent?.overstayTo ?? null;
@@ -10355,6 +10395,40 @@ function LibraryStudentsView({
         ) : null}
       </section>
 
+      {statusWhatsApp && typeof document !== "undefined" ? createPortal(
+        <div className="modal-layer" role="dialog" aria-modal="true" aria-label={t("notifyStudent")}>
+          <button className="modal-backdrop" aria-label={t("closeModal")} type="button" onClick={() => setStatusWhatsApp(null)} />
+          <section className="action-sheet student-status-whatsapp">
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{t("statusUpdated")}</p>
+                <h2>{t("notifyStudent")}</h2>
+              </div>
+              <button className="icon-button" type="button" aria-label={t("closeModal")} onClick={() => setStatusWhatsApp(null)}>
+                <X size={18} />
+              </button>
+            </header>
+            <p className="student-sms-preview">{statusWhatsApp.message}</p>
+            {statusWhatsApp.href ? (
+              <a
+                className="primary-button student-sms-open"
+                href={statusWhatsApp.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setStatusWhatsApp(null)}
+              >
+                <MessageCircle size={18} aria-hidden="true" />
+                {t("notifyOnWhatsApp").replace("{name}", statusWhatsApp.name)}
+              </a>
+            ) : (
+              <p className="form-warning">{t("noPhone")}</p>
+            )}
+            <button className="secondary-button" type="button" onClick={() => setStatusWhatsApp(null)}>{t("notNow")}</button>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+
       {drawerKind ? (
         <div className="student-drawer-layer">
           <button className="student-drawer-backdrop" aria-label={t("closeModal")} type="button" onClick={closeStudentDetails} />
@@ -10557,6 +10631,21 @@ function LibraryStudentsView({
                               setNotice,
                               startTransition,
                               () => {
+                                if (nextStatus !== "active") {
+                                  const scheduled = nextStatus === "paused" && drawerPauseWaitsForEnd && drawerSubscriptionEnd;
+                                  const message = studentStatusWhatsAppMessage({
+                                    name: drawerName,
+                                    service: selectedCourseStudent ? `${selectedCourseStudent.courseName} कोर्स` : "लाइब्रेरी",
+                                    business: businessName,
+                                    status: nextStatus,
+                                    startsOn: scheduled ? addDaysIsoDate(drawerSubscriptionEnd, 1) ?? today : today,
+                                    runsUntil: scheduled ? drawerSubscriptionEnd : null,
+                                    dueDays: drawerDaysOverStay,
+                                    dueFrom: drawerSubscriptionEnd && drawerDaysOverStay > 0 ? addDaysIsoDate(drawerSubscriptionEnd, 1) : null,
+                                    dueTo: drawerDaysOverStay > 0 ? today : null,
+                                  });
+                                  setStatusWhatsApp({ name: drawerName, href: studentWhatsAppHref(drawerPhoneNumber, message), message });
+                                }
                                 setStatusNote("");
                                 setQuery("");
                                 // A scheduled pause keeps the student active until their subscription ends.
