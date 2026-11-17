@@ -872,6 +872,12 @@ const messages: Record<Language, Record<string, string>> = {
     transferringTransaction: "Transferring transaction...",
     transferringCash: "Transferring cash...",
     savingStudent: "Saving student...",
+    pausingStudent: "Pausing student...",
+    deactivatingStudent: "Moving student to inactive...",
+    reactivatingStudent: "Reactivating student...",
+    reactivateHelp: "The student returns to Active with the same profile and subscription history.",
+    cancellingPause: "Cancelling scheduled pause...",
+    waivingDues: "Waiving due days...",
     updatingSubscription: "Updating subscription...",
     checkingIn: "Checking in...",
     checkingOut: "Checking out...",
@@ -1488,6 +1494,12 @@ const messages: Record<Language, Record<string, string>> = {
     transferringTransaction: "लेनदेन ट्रांसफ़र हो रहा है...",
     transferringCash: "कैश ट्रांसफ़र हो रहा है...",
     savingStudent: "छात्र सेव हो रहा है...",
+    pausingStudent: "छात्र को पॉज़ किया जा रहा है...",
+    deactivatingStudent: "छात्र को इनएक्टिव किया जा रहा है...",
+    reactivatingStudent: "छात्र को फिर से एक्टिव किया जा रहा है...",
+    reactivateHelp: "छात्र उसी प्रोफ़ाइल और सब्सक्रिप्शन हिस्ट्री के साथ फिर से एक्टिव हो जाएगा।",
+    cancellingPause: "पॉज़ रद्द किया जा रहा है...",
+    waivingDues: "बकाया दिन माफ़ किए जा रहे हैं...",
     updatingSubscription: "सब्सक्रिप्शन अपडेट हो रहा है...",
     checkingIn: "चेक-इन हो रहा है...",
     checkingOut: "चेक-आउट हो रहा है...",
@@ -1741,6 +1753,14 @@ function actionSavingMessageKey(action: ClientAction, formData: FormData) {
   if (action === updateSubscriptionAction) return "updatingSubscription";
   if (action === checkInAction) return "checkingIn";
   if (action === checkOutAction) return "checkingOut";
+  if (action === setStudentStatusAction) {
+    const status = formData.get("status");
+    return status === "paused" ? "pausingStudent"
+      : status === "cancel_pause" ? "cancellingPause"
+        : status === "active" ? "reactivatingStudent"
+          : "deactivatingStudent";
+  }
+  if (action === waiveStudentDuesAction) return "waivingDues";
   return null;
 }
 
@@ -8067,7 +8087,12 @@ const studentPauseGraceDays = 45;
 function studentPauseState(active: boolean, pausedAt: string | null | undefined) {
   if (active) return { state: "active" as const, daysLeft: 0 };
   if (!pausedAt) return { state: "inactive" as const, daysLeft: 0 };
-  const elapsedDays = Math.floor((Date.now() - new Date(pausedAt).getTime()) / 86400000);
+  // Calendar days (the pause day itself counts as day 1 of 45), not 24-hour blocks: a student
+  // paused late last night has 44 days left today.
+  const elapsedDays = Math.max(
+    daysBetweenIsoDates(new Date(pausedAt).toLocaleDateString("en-CA"), new Date().toLocaleDateString("en-CA")) ?? 0,
+    0,
+  );
   const daysLeft = studentPauseGraceDays - elapsedDays;
   return daysLeft > 0 ? { state: "paused" as const, daysLeft } : { state: "inactive" as const, daysLeft: 0 };
 }
@@ -9429,6 +9454,15 @@ function LibraryStudentsView({
   const [editingStudent, setEditingStudent] = useState(false);
   const [drawerView, setDrawerView] = useState<StudentDrawerView>("details");
   const [confirmingStatus, setConfirmingStatus] = useState(false);
+  const statusConfirmationRef = useRef<HTMLElement | null>(null);
+  // The status box opens at the top of the drawer body; bring it into view even when the
+  // person had scrolled down, so tapping Pause / Inactive / Reactivate visibly does something.
+  useEffect(() => {
+    if (!confirmingStatus) return;
+    const box = statusConfirmationRef.current;
+    box?.scrollIntoView({ block: "start", behavior: "smooth" });
+    box?.focus({ preventScroll: true });
+  }, [confirmingStatus]);
   const drawerPanelRef = useRef<HTMLElement>(null);
   const drawerOriginRef = useRef<HTMLElement | null>(null);
   const rosterLoadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -10494,7 +10528,11 @@ function LibraryStudentsView({
                         <button
                           type="button"
                           className={drawerActive ? "danger" : "positive"}
-                          onClick={() => setConfirmingStatus(true)}
+                          onClick={(event) => {
+                            event.currentTarget.closest("details")?.removeAttribute("open");
+                            setDrawerView("details");
+                            setConfirmingStatus(true);
+                          }}
                         >
                           {drawerActive ? <UserX size={16} /> : <UserCheck size={16} />}
                           {drawerActive ? t("markInactive") : t("reactivate")}
@@ -10578,7 +10616,7 @@ function LibraryStudentsView({
 
             <div className="student-drawer-body">
               {confirmingStatus ? (
-                <section className="student-status-confirmation" role="alertdialog" aria-label={drawerActive ? t("markInactive") : t("reactivate")}>
+                <section ref={statusConfirmationRef} tabIndex={-1} className="student-status-confirmation" role="alertdialog" aria-label={drawerActive ? t("markInactive") : t("reactivate")}>
                   {!drawerActive && drawerOverstayDays > 0 ? (
                     <>
                       <div>
@@ -10624,7 +10662,7 @@ function LibraryStudentsView({
                         <strong>{drawerActive ? t("changeStatus") : `${t("reactivate")}?`}</strong>
                         <p>
                           {!drawerActive
-                            ? "The student returns to Active with the same profile and subscription history."
+                            ? t("reactivateHelp")
                             : drawerPauseWaitsForEnd && drawerSubscriptionEnd
                               ? t("pauseWaitsForEnd").replace("{date}", displayDate(addDaysIsoDate(drawerSubscriptionEnd, 1)))
                               : t("pauseOrInactiveHelp")}

@@ -1170,7 +1170,9 @@ async function recordStudentStatusEvents(
     payment_id: event.paymentId ?? null,
     created_by: profile.id,
   })));
-  if (error) throw new Error(error.message);
+  // History is a record of a change that has already been saved (status, dues, payment). Failing
+  // here must not report the whole action as failed, or staff retry a change that went through.
+  if (error) console.error("student_status_events insert failed", { studentType, studentId, message: error.message });
 }
 
 /**

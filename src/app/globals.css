@@ -1495,7 +1495,7 @@ form[aria-busy="true"] textarea {
 .action-lock {
   position: fixed;
   inset: 0;
-  z-index: 130;
+  z-index: 170; /* above .student-drawer-layer */
   cursor: progress;
   display: grid;
   place-items: center;
@@ -2328,7 +2328,7 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
   position: fixed;
   top: 18px;
   right: 18px;
-  z-index: 140;
+  z-index: 175; /* above .student-drawer-layer and .action-lock */
   width: min(420px, calc(100vw - 28px));
   display: grid;
   gap: 10px;
@@ -2375,13 +2375,13 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
 }
 
 .toast-success {
-  background: rgba(47, 111, 94, 0.15);
+  background: linear-gradient(rgba(47, 111, 94, 0.15), rgba(47, 111, 94, 0.15)), var(--surface-container);
   border-color: rgba(47, 111, 94, 0.25);
   color: var(--good);
 }
 
 .toast-error {
-  background: rgba(182, 69, 53, 0.15);
+  background: linear-gradient(rgba(182, 69, 53, 0.15), rgba(182, 69, 53, 0.15)), var(--surface-container);
   border-color: rgba(182, 69, 53, 0.25);
   color: var(--bad);
 }
@@ -2398,7 +2398,7 @@ input[type="time"]:hover::-webkit-calendar-picker-indicator {
 }
 
 .toast-info {
-  background: rgba(82, 111, 159, 0.12);
+  background: linear-gradient(rgba(82, 111, 159, 0.12), rgba(82, 111, 159, 0.12)), var(--surface-container);
   border-color: rgba(82, 111, 159, 0.2);
   color: var(--online);
   grid-template-columns: 34px minmax(0, 1fr);
@@ -9472,7 +9472,18 @@ option {
 }
 
 .student-drawer-identity .status-chip {
-  margin-bottom: 7px;
+  margin: 0 6px 7px 0;
+}
+
+/* The drawer header is dark green: tinted chips vanish on it, so give them solid light fills. */
+.student-drawer-identity .status-chip.status-pending {
+  background: #fdf0d8;
+  color: #8a5a12;
+}
+
+.student-drawer-identity .status-chip.status-rejected {
+  background: #fde5e0;
+  color: #9b3324;
 }
 
 .student-drawer-identity h2 {
