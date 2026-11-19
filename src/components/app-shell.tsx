@@ -3807,7 +3807,7 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     if (recordType === "agent_payout") return t("agentPayouts");
     return t("allTypes");
   };
-  const transactionModeLabel = (mode: TransactionModeFilter) => mode === "all" ? t("all") : mode === "mixed" ? t("mixed") : mode === "cash" ? t("cash") : t("online");
+  const transactionModeLabel = (mode: TransactionModeFilter) => mode === "all" ? t("all") : mode === "mixed" ? t("mixed") : mode === "cash" ? `${t("cash")} + ${t("mixed")}` : `${t("online")} + ${t("mixed")}`;
   const scopeRangeLabel = (range: DateRangeState, formattedRange: string) => {
     if (range.preset === "custom") return formattedRange;
     const option = dateRangeOptions.find((item) => item.value === range.preset);
@@ -6874,8 +6874,11 @@ function TransactionsView({
     if (modeFilter !== "all") {
       const cash = numberValue(record.cashAmount);
       const online = numberValue(record.onlineAmount);
-      const recordMode: TransactionModeFilter = cash > 0 && online > 0 ? "mixed" : online > 0 ? "online" : "cash";
-      if (recordMode !== modeFilter) return false;
+      // Cash / Online also match mixed records (they hold a cash and an online part); Mixed is both only.
+      const matches = modeFilter === "cash" ? cash > 0 || online <= 0
+        : modeFilter === "online" ? online > 0
+          : cash > 0 && online > 0;
+      if (!matches) return false;
     }
     return true;
   }, [businessTypeFilter, modeFilter, recordTypeFilter, transactionSearchKey]);

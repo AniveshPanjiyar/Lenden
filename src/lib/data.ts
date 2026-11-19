@@ -265,6 +265,8 @@ async function loadDashboard(
       ? viewState?.dashboardFilters.businessType ?? "all"
       : "all";
   const modeFilter = activeTab === "payments" ? viewState?.transactionFilters.mode ?? "all" : "all";
+  // Cash / Online include mixed records, which carry a cash and an online part.
+  const modeFilterValues = modeFilter === "mixed" ? ["mixed"] : [modeFilter, "mixed"];
   const dashboardProfileId = activeTab === "home" && viewState?.dashboardFilters.profileId !== "all"
     ? viewState?.dashboardFilters.profileId ?? null
     : null;
@@ -275,7 +277,7 @@ async function loadDashboard(
     .select("*")
     .eq("business_id", bootstrap.businessContext.business.id);
   if (businessTypeFilter !== "all") paymentsQueryBase = paymentsQueryBase.eq("business_type", businessTypeFilter);
-  if (modeFilter !== "all") paymentsQueryBase = paymentsQueryBase.eq("mode", modeFilter);
+  if (modeFilter !== "all") paymentsQueryBase = paymentsQueryBase.in("mode", modeFilterValues);
   const paymentsQuery = (dateFilterKey === "transaction"
     ? paymentsQueryBase.gte("payment_date", range.from).lte("payment_date", range.to)
     : paymentsQueryBase.or(
@@ -288,7 +290,7 @@ async function loadDashboard(
     .select("*")
     .eq("business_id", bootstrap.businessContext.business.id);
   if (businessTypeFilter !== "all") expensesQueryBase = expensesQueryBase.eq("business_type", businessTypeFilter);
-  if (modeFilter !== "all") expensesQueryBase = expensesQueryBase.eq("mode", modeFilter);
+  if (modeFilter !== "all") expensesQueryBase = expensesQueryBase.in("mode", modeFilterValues);
   const expensesQuery = (dateFilterKey === "transaction"
     ? expensesQueryBase.gte("expense_date", range.from).lte("expense_date", range.to)
     : expensesQueryBase.gte("posted_on", range.from).lte("posted_on", range.to))
@@ -305,7 +307,7 @@ async function loadDashboard(
     .order("created_at", { ascending: false })
     .limit(500);
   if (businessTypeFilter !== "all") pendingPaymentsQuery = pendingPaymentsQuery.eq("business_type", businessTypeFilter);
-  if (modeFilter !== "all") pendingPaymentsQuery = pendingPaymentsQuery.eq("mode", modeFilter);
+  if (modeFilter !== "all") pendingPaymentsQuery = pendingPaymentsQuery.in("mode", modeFilterValues);
   let pendingExpensesQuery = supabase
     .from("expenses")
     .select("*")
@@ -317,7 +319,7 @@ async function loadDashboard(
     .order("created_at", { ascending: false })
     .limit(500);
   if (businessTypeFilter !== "all") pendingExpensesQuery = pendingExpensesQuery.eq("business_type", businessTypeFilter);
-  if (modeFilter !== "all") pendingExpensesQuery = pendingExpensesQuery.eq("mode", modeFilter);
+  if (modeFilter !== "all") pendingExpensesQuery = pendingExpensesQuery.in("mode", modeFilterValues);
   const closingLedgerQuery = () =>
     supabase
       .from("ledger_entries")
