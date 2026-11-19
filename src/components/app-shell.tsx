@@ -3792,14 +3792,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     ? t("notifications")
     : t(visibleTabItems.find((item) => item.id === tab)?.labelKey ?? "dashboard");
   const dateBasisLabel = (key: DateFilterKey) => dateFilterKeyLabel(key, t);
-  const transactionActivityLabel = (activity: TransactionFilter) => {
-    if (activity === "collections") return t("collections");
-    if (activity === "expenses") return t("expenses");
-    if (activity === "cash_in") return t("cashIn");
-    if (activity === "cash_out") return t("cashOut");
-    if (activity === "pending") return t("pending");
-    return t("all");
-  };
   const transactionRecordLabel = (recordType: TransactionRecordType) => {
     if (recordType === "payment") return t("payments");
     if (recordType === "expense") return t("expenses");
@@ -3824,7 +3816,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
     if (dashboardFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, dashboardFilters.profileId, t), clear: () => setDashboardFilters((current) => ({ ...current, profileId: "all" })) });
   } else if (tab === "payments") {
     if (transactionFilters.lens === "business" && transactionFilters.profileId !== "all") activeFilterChips.push({ key: "person", label: profileName(appData.profiles, transactionFilters.profileId, t), clear: () => setTransactionFilters((current) => ({ ...current, profileId: "all" })) });
-    if (transactionFilters.activity !== "all") activeFilterChips.push({ key: "activity", label: transactionActivityLabel(transactionFilters.activity), clear: () => setTransactionFilters((current) => ({ ...current, activity: "all" })) });
     if (transactionFilters.recordType !== "all") activeFilterChips.push({ key: "type", label: transactionRecordLabel(transactionFilters.recordType), clear: () => setTransactionFilters((current) => ({ ...current, recordType: "all" })) });
     if (transactionFilters.mode !== "all") activeFilterChips.push({ key: "mode", label: transactionModeLabel(transactionFilters.mode), clear: () => setTransactionFilters((current) => ({ ...current, mode: "all" })) });
     if (transactionFilters.businessType !== "all") activeFilterChips.push({ key: "business", label: labelForBusiness(transactionFilters.businessType, t), clear: () => setTransactionFilters((current) => ({ ...current, businessType: "all" })) });
@@ -4191,7 +4182,6 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
                 transactionProfiles={transactionSelectableProfiles}
                 showTransactionProfile={!currentUserIsSalesAgent && canViewSharedBusinessHistory}
                 salesAgent={currentUserIsSalesAgent}
-                businessFirst={primaryOwner}
                 defaultProfileId={appData.profile.id}
                 onApplyDashboard={setDashboardFilters}
                 onApplyTransactions={setTransactionFilters}
@@ -4717,7 +4707,6 @@ function OperationalFilterDrawer({
   transactionProfiles,
   showTransactionProfile,
   salesAgent,
-  businessFirst,
   defaultProfileId,
   onApplyDashboard,
   onApplyTransactions,
@@ -4732,7 +4721,6 @@ function OperationalFilterDrawer({
   transactionProfiles: Profile[];
   showTransactionProfile: boolean;
   salesAgent: boolean;
-  businessFirst: boolean;
   defaultProfileId: string;
   onApplyDashboard: (filters: DashboardFilterState) => void;
   onApplyTransactions: (filters: TransactionFilterState) => void;
@@ -4763,12 +4751,19 @@ function OperationalFilterDrawer({
     return () => window.clearTimeout(timeout);
   }, [closingFilters, dashboardDraft, onPrefetch, tab, transactionDraft]);
 
-  // The date, range and date basis are set from the header; reset keeps them.
-  // Reset keeps the Approval / Payment choice, which lives in the header.
+  // Reset clears filters only: date range, person, type, payment mode, business module. The page's
+  // views stay as they are: Business / My activity, the All / Collections / Expenses / Pending tabs,
+  // and the Approval / Payment date choice in the header.
   function resetDraft() {
     setDateError(false);
     if (tab === "home") setDashboardDraft((current) => ({ ...defaultDashboardFilters(), dateFilterKey: current.dateFilterKey }));
-    if (tab === "payments") setTransactionDraft((current) => ({ ...defaultTransactionFilters(defaultProfileId), dateFilterKey: current.dateFilterKey }));
+    if (tab === "payments") setTransactionDraft((current) => ({
+      ...defaultTransactionFilters(defaultProfileId),
+      dateFilterKey: current.dateFilterKey,
+      lens: current.lens,
+      activity: current.activity,
+      profileId: current.lens === "personal" ? defaultProfileId : "all",
+    }));
   }
 
   function applyDraft() {
@@ -4791,23 +4786,9 @@ function OperationalFilterDrawer({
     });
   }
 
-  const activityOptions = transactionDraft.lens === "business"
-    ? (["all", "collections", "expenses", "pending"] as TransactionFilter[])
-    : (["all", "cash_in", "cash_out", "pending"] as TransactionFilter[]);
   const recordTypeOptions = salesAgent
     ? (["all", "agent_payout"] as TransactionRecordType[])
     : (["all", "payment", "expense", "transfer", "agent_payout"] as TransactionRecordType[]);
-  const activityLabel = (activity: TransactionFilter) => activity === "collections"
-    ? t("collections")
-    : activity === "expenses"
-      ? t("expenses")
-      : activity === "cash_in"
-        ? t("cashIn")
-        : activity === "cash_out"
-          ? t("cashOut")
-          : activity === "pending"
-            ? t("pending")
-            : t("all");
   const personOptions = [
     { value: "all", label: t("all") },
     ...transactionProfiles.map((person) => ({
@@ -4868,19 +4849,6 @@ function OperationalFilterDrawer({
                 onChange={(dateRange) => { setDateError(false); setTransactionDraft((current) => ({ ...current, dateRange })); }}
                 error={dateError}
               />
-              <FilterChipGroup
-                className="filter-chip-segmented"
-                label="View"
-                value={transactionDraft.lens}
-                options={(businessFirst ? ["business", "personal"] as const : ["personal", "business"] as const)
-                  .map((lens) => ({ value: lens, label: lens === "business" ? "Business" : "My activity" }))}
-                onChange={(lens) => setTransactionDraft((current) => ({
-                  ...current,
-                  lens,
-                  activity: "all",
-                  profileId: lens === "personal" ? defaultProfileId : "all",
-                }))}
-              />
               {showTransactionProfile && transactionDraft.lens === "business" ? (
                 <FilterChipGroup
                   label="Person or team"
@@ -4889,12 +4857,6 @@ function OperationalFilterDrawer({
                   onChange={(profileId) => setTransactionDraft((current) => ({ ...current, profileId }))}
                 />
               ) : null}
-              <FilterChipGroup
-                label={t("direction")}
-                value={transactionDraft.activity}
-                options={activityOptions.map((activity) => ({ value: activity, label: activityLabel(activity) }))}
-                onChange={(activity) => setTransactionDraft((current) => ({ ...current, activity }))}
-              />
               <FilterChipGroup
                 label={t("transactionType")}
                 value={transactionDraft.recordType}
