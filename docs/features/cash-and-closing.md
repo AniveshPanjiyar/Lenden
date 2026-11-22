@@ -30,6 +30,7 @@ All of this state lives in the URL; see `src/lib/view-state.ts` (`parseAppViewSt
 ## Dashboard (`tab=home`)
 
 - Cards: Cash in hand (cash with staff); and Total, Total cash, Cash, Online per unit, each with collections against approved or verified amounts.
+- **Cash in hand is always the current balance (today)**, whatever date range is picked. Only the unit filter applies to it. `lenden_dashboard_cash_position` gets `p_as_of = today` in `data.ts`, and the card says "As of <today>". Other cards follow the date range.
 - **Tapping a figure opens Transactions** with the matching lens, direction and mode. For example, Cash collections opens `txFilter=collections&txMode=cash`, which includes mixed payments.
 - Business tab: staff cash positions. My activity: your own flow.
 - Data comes from the `lenden_dashboard_summary`, `lenden_dashboard_cash_position` and `lenden_dashboard_business_status` RPCs.

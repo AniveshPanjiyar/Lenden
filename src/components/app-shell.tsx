@@ -5476,7 +5476,7 @@ function HomeView({
     return (
       <RoleDashboardView
         summary={data.dashboardSummary}
-        asOfDate={dateRange.to}
+        asOfDate={todayIso()}
         openTransactions={openTransactions}
         openClosing={() => changeTab("closing")}
         personFilter={personFilter}

@@ -422,7 +422,8 @@ async function loadDashboard(
       : Promise.resolve({ data: [], error: null }),
     needsDashboard
       ? supabase.rpc("lenden_dashboard_cash_position", {
-          p_as_of: range.to,
+          // Cash in hand is always the current balance, whatever dates the dashboard shows.
+          p_as_of: dateIsoInTimeZone(new Date(), bootstrap.businessContext.business.timezone || undefined),
           p_business_type: businessTypeFilter === "all" ? null : businessTypeFilter,
         })
       : Promise.resolve({ data: null, error: null }),

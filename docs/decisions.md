@@ -4,6 +4,7 @@ Rules the owner chose. Do not change one without asking. Newest first.
 
 | Date | Decision |
 |---|---|
+| 2026-11-22 | Dashboard **Cash in hand** is always the current cash in hand, whatever the date filter. |
 | 2026-11-19 | Filter **Reset** resets filters only: date, person, type, payment mode and unit. Business / My activity, the direction tabs and the Approval / Payment date basis are **views**; they are not filters and are never reset. |
 | 2026-11-19 | The Cash and Online mode filters include **mixed** payments. Mixed shows mixed only. |
 | 2026-11-17 | Expired-student WhatsApp messages are detailed (Hindi): expiry date; inform us to Pause (45 days, no admission fee) or Inactive; days until the pause or inactive become dues; ₹100 late fine after end date + 10 days, with that date written out. Active students' message stays **blank**. |
