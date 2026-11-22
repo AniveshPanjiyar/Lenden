@@ -26,6 +26,7 @@ student rosters for the Library and Courses: subscriptions, pause and dues, remi
 
 ## Recent changes (newest first)
 
+- 2026-11-22 Transaction details show the student (name, roll, phone, status, seat) and the payment's subscription for library and course payments.
 - 2026-11-22 Dashboard **Cash in hand** always shows the current balance, whatever the date filter.
 - 2026-11-22 Added `docs/` (this handoff system).
 - 2026-11-19 Filter **Reset** clears filters only; views (Business / My activity, All / Collections / Expenses / Pending, Approval / Payment date) stay. The filter sheet no longer repeats the views.

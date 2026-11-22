@@ -55,6 +55,19 @@ is still valid.
 - **Refund of a student's advance** (`refundStudentAdvance`).
 - **Sales agents:** read-only, except for incentives. The Owner records payouts (`createAgentSettlement`), which the agent accepts (`respondAgentSettlement`). Referral codes are managed with `saveReferral`.
 
+## Transaction details sheet
+
+Opened from a card's **⋯ → View details**. It shows the amount and split, who made it, the payment,
+approval and created dates, the note and the transaction flow. For a **library or course payment**
+(`library_student_id` / `course_student_id`) it also shows:
+- **Student details:** name, roll number, phone (tap to call), current status (Active, Paused,
+  Inactive) and seat. Phone and status are loaded through `/api/businesses/<id>/students/<source>/<studentId>`
+  (the same `student-detail` query the Students drawer uses). Staff without that unit's permission
+  get the payment snapshot only: name, roll and seat, with phone shown as "-".
+- **Subscription:** this payment's start and end dates, timing, slot hours, fee, paid, dues and
+  advance. If the student's subscription now ends on a different date, "Subscription now ends"
+  shows that date too.
+
 ## Transaction card and chain
 
 A card shows a cash lane and an online lane, each a chain of steps: collected, then approved or

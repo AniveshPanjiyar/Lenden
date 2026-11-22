@@ -747,6 +747,7 @@ const messages: Record<Language, Record<string, string>> = {
     amountLockedAfterApproval: "Approved · amount and date locked",
     subscriptionPeriod: "Subscription",
     timing: "Timing",
+    currentSubscriptionEnd: "Subscription now ends",
     logout: "Logout",
     main: "Main",
     markSettled: "Mark settled",
@@ -1369,6 +1370,7 @@ const messages: Record<Language, Record<string, string>> = {
     amountLockedAfterApproval: "पक्का हो चुका · रकम और तारीख नहीं बदलेगी",
     subscriptionPeriod: "सब्सक्रिप्शन",
     timing: "समय",
+    currentSubscriptionEnd: "अभी सब्सक्रिप्शन खत्म",
     logout: "लॉग आउट",
     main: "मुख्य",
     markSettled: "जमा हो गया",
@@ -6809,6 +6811,22 @@ function TransactionsView({
     enabled: transactionAction?.kind === "detail" && Boolean(attachmentRecord),
     staleTime: 300_000,
   });
+  // A payment made for a library or course student: load the student (phone, current status) for the details sheet.
+  const selectedPaymentStudent = selectedPayment?.library_student_id
+    ? { source: "library" as const, id: selectedPayment.library_student_id }
+    : selectedPayment?.course_student_id
+      ? { source: "course" as const, id: selectedPayment.course_student_id }
+      : null;
+  const paymentStudentQuery = useQuery({
+    queryKey: ["student-detail", cacheScope, selectedPaymentStudent?.source ?? "none", selectedPaymentStudent?.id ?? ""],
+    queryFn: ({ signal }) => fetchJson<StudentDetailPayload>(
+      `/api/businesses/${businessId}/students/${selectedPaymentStudent?.source}/${encodeURIComponent(selectedPaymentStudent?.id ?? "")}`,
+      signal,
+    ),
+    enabled: transactionAction?.kind === "detail" && Boolean(selectedPaymentStudent),
+    staleTime: 300_000,
+    retry: false,
+  });
   const closeTransactionAction = () => {
     setTransactionAction(null);
     setTransactionActionNotice(null);
@@ -7203,13 +7221,21 @@ function TransactionsView({
                     <dt>{t("recordCreated")}</dt>
                     <dd>{recordCreatedLabel(selectedPayment?.created_at ?? selectedExpense?.created_at ?? selectedTransactionActionRecord.sortAt)}</dd>
                   </div>
-                  {selectedPayment?.customer_name ? <div><dt>For</dt><dd>{selectedPayment.customer_name}</dd></div> : null}
-                  {selectedPayment?.roll_number ? <div><dt>Roll number</dt><dd>{selectedPayment.roll_number}</dd></div> : null}
+                  {selectedPayment?.customer_name && !selectedPaymentStudent ? <div><dt>For</dt><dd>{selectedPayment.customer_name}</dd></div> : null}
+                  {selectedPayment?.roll_number && !selectedPaymentStudent ? <div><dt>Roll number</dt><dd>{selectedPayment.roll_number}</dd></div> : null}
                   {selectedPayment?.room_number_snapshot ? <div><dt>Room</dt><dd>{selectedPayment.room_number_snapshot}</dd></div> : null}
-                  {selectedPayment?.seat_number ? <div><dt>Seat</dt><dd>{selectedPayment.seat_number}</dd></div> : null}
+                  {selectedPayment?.seat_number && !selectedPaymentStudent ? <div><dt>Seat</dt><dd>{selectedPayment.seat_number}</dd></div> : null}
                   {selectedPayment?.description || selectedExpense?.description ? <div className="full"><dt>Purpose</dt><dd>{selectedPayment?.description ?? selectedExpense?.description}</dd></div> : null}
                   {selectedPayment?.remark || selectedExpense?.remark ? <div className="full"><dt>Note</dt><dd>{selectedPayment?.remark ?? selectedExpense?.remark}</dd></div> : null}
                 </dl>
+                {selectedPayment && selectedPaymentStudent ? (
+                  <PaymentStudentDetails
+                    payment={selectedPayment}
+                    student={paymentStudentQuery.data?.student ?? null}
+                    loading={paymentStudentQuery.isPending}
+                    t={t}
+                  />
+                ) : null}
                 {selectedTransactionActionRecord.journey?.length || selectedTransactionActionRecord.journeyLanes?.length ? (
                   <section>
                     <h3>Transaction flow</h3>
@@ -7677,6 +7703,70 @@ function rollSearchRank(rollNumber: string | null | undefined, search: string) {
   if (roll.startsWith(term)) return 1;
   if (roll.includes(term)) return 2;
   return 3;
+}
+
+/** Student and subscription block in the transaction details sheet for a library or course payment. */
+function PaymentStudentDetails({
+  payment,
+  student,
+  loading,
+  t,
+}: {
+  payment: Payment;
+  student: LibraryStudent | CourseStudent | null;
+  loading: boolean;
+  t: (key: string) => string;
+}) {
+  const name = student?.student_name || payment.customer_name;
+  const roll = student?.roll_number || payment.roll_number;
+  const phone = student?.phone_number ?? null;
+  const phoneHref = studentPhoneHref(phone);
+  const pause = student ? studentPauseState(student.active, student.paused_at) : null;
+  const statusLabel = !pause ? null : pause.state === "active" ? t("active") : pause.state === "paused" ? t("pausedTag") : t("inactive");
+  const seat = payment.seat_number || (student && "seat_number" in student ? student.seat_number : null);
+  const timeRange = payment.start_time || payment.end_time ? displayTimeRange(payment.start_time, payment.end_time) : "";
+  const currentEnd = student?.subscription_end_date ?? null;
+  const showCurrentEnd = Boolean(currentEnd && currentEnd !== payment.end_date);
+  const hasSubscription = Boolean(
+    payment.start_date || payment.end_date || payment.fee_amount !== null || payment.slot_hours || timeRange,
+  );
+  return (
+    <>
+      <section>
+        <h3>{t("studentDetails")}</h3>
+        <dl className="transaction-detail-grid">
+          <div className="full"><dt>{t("name")}</dt><dd>{name || "-"}</dd></div>
+          <div><dt>{t("rollNumber")}</dt><dd>{roll || "-"}</dd></div>
+          <div>
+            <dt>{t("phone")}</dt>
+            <dd>
+              {phone && phoneHref ? <a className="transaction-attachment" href={phoneHref}>{phone}</a> : loading ? t("loading") : phone || "-"}
+            </dd>
+          </div>
+          {statusLabel ? <div><dt>{t("status")}</dt><dd>{statusLabel}</dd></div> : null}
+          {seat ? <div><dt>{t("seat")}</dt><dd>{seat}</dd></div> : null}
+        </dl>
+      </section>
+      {hasSubscription ? (
+        <section>
+          <h3>{t("subscription")}</h3>
+          <dl className="transaction-detail-grid">
+            <div><dt>{t("startDate")}</dt><dd>{payment.start_date ? displayDate(payment.start_date) : "-"}</dd></div>
+            <div><dt>{t("endDate")}</dt><dd>{payment.end_date ? displayDate(payment.end_date) : "-"}</dd></div>
+            {timeRange ? <div><dt>{t("timing")}</dt><dd>{timeRange}</dd></div> : null}
+            {payment.slot_hours ? <div><dt>{t("slotHours")}</dt><dd>{payment.slot_hours}</dd></div> : null}
+            <div><dt>{t("fee")}</dt><dd>{displayMoneyValue(payment.fee_amount)}</dd></div>
+            <div><dt>{t("paid")}</dt><dd>{displayMoneyValue(payment.paid_amount)}</dd></div>
+            {Number(payment.dues_amount ?? 0) > 0 ? <div><dt>{t("dues")}</dt><dd>{formatMoney(Number(payment.dues_amount))}</dd></div> : null}
+            {Number(payment.advance_amount ?? 0) > 0 ? <div><dt>{t("advance")}</dt><dd>{formatMoney(Number(payment.advance_amount))}</dd></div> : null}
+            {showCurrentEnd && currentEnd ? (
+              <div className="full"><dt>{t("currentSubscriptionEnd")}</dt><dd>{displayDate(currentEnd)}</dd></div>
+            ) : null}
+          </dl>
+        </section>
+      ) : null}
+    </>
+  );
 }
 
 function studentPhoneHref(phoneNumber: string | null | undefined) {
