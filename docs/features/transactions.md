@@ -36,7 +36,7 @@ at least 3 characters. An expense can be approved or rejected.
 
 ## Edit (`updateRecord`, `updatePaymentDate`)
 
-- Before approval: the creator, or a Manager for Staff records, can edit the amount, mode (including the cash/online split), and for student payments the fee and paid amount. Subscription amounts are then recalculated (`resyncSubscriptionAmounts`).
+- Before approval: the creator, or a Manager for Staff records, can edit the amount, mode (including the cash/online split), and for student payments the fee and paid amount. The fee stays editable while this payment is unapproved, even if an earlier payment of the same subscription was approved; it is locked only once every payment of the subscription is approved. Subscription amounts are then recalculated (`resyncSubscriptionAmounts`).
 - No edit once any part is approved, or when the record has transfer history.
 - **Payment date:** only the Owner can change it, even after approval.
 - After approval, staff send a change or cancel request (`requestCancel` → `record_change_requests`), and the Owner or a Manager reviews it (`reviewChangeRequest`).

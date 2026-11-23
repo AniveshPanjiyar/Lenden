@@ -9286,7 +9286,8 @@ function SubscriptionHistoryTimeline({
                   endTime={subscription.endTime?.slice(0, 5) ?? ""}
                   extraSlots={editTarget.studentType === "library" ? subscription.extraSlots ?? [] : null}
                 />
-                {subscription.transactions.some((transaction) => transaction.recordStatus === "active" && (
+                {subscription.transactions.some((transaction) => transaction.recordStatus === "active")
+                && subscription.transactions.filter((transaction) => transaction.recordStatus === "active").every((transaction) => (
                   transaction.approvalStatus === "approved"
                   || transaction.cashApprovalStatus === "approved"
                   || transaction.onlineApprovalStatus === "approved"

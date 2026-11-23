@@ -26,6 +26,7 @@ student rosters for the Library and Courses: subscriptions, pause and dues, remi
 
 ## Recent changes (newest first)
 
+- 2026-11-23 Fee of a student subscription can be edited while any of its payments is still pending (transaction edit and subscription edit). Before, an earlier approved payment of the same subscription locked it ("The fee is locked once a payment…"). It now locks only when every payment is approved.
 - 2026-11-23 New subscription default end date is one day before the same date next month (23 Nov → 22 Dec), via `subscriptionMonthEndIso` in `constants.ts`. It was 23 Dec before.
 - 2026-11-22 Transaction details show the student (name, roll, phone, status, seat) and the payment's subscription for library and course payments.
 - 2026-11-22 Dashboard **Cash in hand** always shows the current balance, whatever the date filter.

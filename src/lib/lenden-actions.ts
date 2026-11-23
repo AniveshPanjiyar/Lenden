@@ -3163,22 +3163,31 @@ const handlers = {
       }
     }
 
-    // The fee (the subscription's total value) can change while none of its payments is approved.
+    // The fee (the subscription's total value) can change while a payment of it is still pending:
+    // the creator or owner of that pending payment may edit it. Once every payment is approved it is locked.
     const currentFee = Math.max(...payments.map((payment) => Number(payment.fee_amount ?? 0)), 0);
     const requestedFee = asNumber(formData, "fee_amount");
     const feeChanged = requestedFee !== null && moneyToCents(requestedFee) !== moneyToCents(currentFee);
     if (feeChanged) {
       if (requestedFee < 0) return fail("Enter a valid fee.");
-      for (const payment of payments) {
-        if (payment.record_status !== "active") continue;
-        if ((await recordIsEffectivelyApproved(admin, "payment", payment)) || paymentHasApprovedComponent(payment)) {
-          return fail("The fee is locked once a payment of this subscription is approved.");
+      const activePayments = payments.filter((payment) => payment.record_status === "active");
+      const pendingPayments: typeof activePayments = [];
+      for (const payment of activePayments) {
+        if (!(await recordIsEffectivelyApproved(admin, "payment", payment)) && !paymentHasApprovedComponent(payment)) {
+          pendingPayments.push(payment);
         }
-        if (!(await canManageBusinessRecord(admin, profile, studentType, recordOwnerProfileId("payment", payment)))) {
-          return fail("You can edit your own transactions, or Staff transactions when you are a Manager.");
-        }
-        updatesFor(String(payment.id)).fee_amount = requestedFee;
       }
+      if (pendingPayments.length === 0) {
+        return fail("The fee is locked once every payment of this subscription is approved.");
+      }
+      let canEditFee = false;
+      for (const payment of pendingPayments) {
+        if (await canManageBusinessRecord(admin, profile, studentType, recordOwnerProfileId("payment", payment))) canEditFee = true;
+      }
+      if (!canEditFee) return fail("You can edit your own transactions, or Staff transactions when you are a Manager.");
+      activePayments.forEach((payment) => {
+        updatesFor(String(payment.id)).fee_amount = requestedFee;
+      });
     }
 
     // Keep each payment's paid / dues / advance snapshot in step with the amounts.
@@ -4033,12 +4042,7 @@ const handlers = {
     if (requestedFee !== null && moneyToCents(requestedFee) !== moneyToCents(Number(record.fee_amount ?? 0))) {
       if (requestedFee < 0) return fail("Enter a valid fee.");
       if (recordBusinessType !== "library" && recordBusinessType !== "course") return fail("Only student payments have a fee.");
-      for (const row of await subscriptionPayments(admin, record)) {
-        if (row.id === id || String(row.record_status ?? "active") !== "active") continue;
-        if ((await recordIsEffectivelyApproved(admin, "payment", row)) || paymentHasApprovedComponent(row)) {
-          return fail("The fee is locked once a payment of this subscription is approved.");
-        }
-      }
+      // This payment is unapproved (checked above), so the fee stays editable even when an earlier payment of the subscription was approved.
       nextFee = requestedFee;
     }
 
