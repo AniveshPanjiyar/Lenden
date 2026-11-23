@@ -87,7 +87,7 @@ import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/clie
 import { pullRefreshCompleteEvent, pullRefreshEvent, showOfflineDialogEvent } from "@/lib/client-events";
 import { clearPersistedQueryCache, QueryProvider } from "@/components/query-provider";
 import { normalizeActionError } from "@/lib/action-errors";
-import { addMonthsIso, businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, todayIso } from "@/lib/constants";
+import { businessLabels, businessPermissions, formatIndiaTime, formatMoney, INDIA_TIME_ZONE, indiaDateIso, indiaMinuteOfDay, isOwnerish, isSalesAgent, STAFF_TRANSACTION_TRANSFERS_ENABLED, subscriptionMonthEndIso, todayIso } from "@/lib/constants";
 import { buildDailyPostingEvents, financialActivityPostingEvents, postingEventDate, postingEventsForProfileDate, postingFlowTotals } from "@/lib/transaction-postings";
 import type { ActionResult, AgentSettlement, AppData, AppNotification, ApprovalStatus, BootstrapPayload, BusinessType, Course, CourseStudent, DailyPostingEvent, DashboardPayload, DashboardSummary, Expense, FinancialActivity, LedgerEntry, LibraryStudent, ManagerUnitScope, MoneyMovement, MutationPatch, OperationalPagePayload, Payment, PaymentMode, PendingApprovalsPayload, StudentRosterFlag, Profile, ReferralCode, StaffUnitAssignment, StudentCollectionPage, StudentDetailPayload, StudentRosterPayload, StudentStatusEvent, StudentSubscriptionHistoryItem, StudentSubscriptionHistoryPage, StudentSubscriptionTransaction, TransactionJourneyLane, TransactionJourneyStep, WorkPage, WorkTask, WorkTaskStatus, WorkUpdate } from "@/lib/types";
 import {
@@ -8857,16 +8857,12 @@ function addDaysIsoDate(value: string, days: number) {
 function subscriptionRenewalDateRange(previousEndDate: string | null | undefined, continuesPrevious = true) {
   // Active students continue from their last end date; paused / inactive ones start today.
   if (!previousEndDate || !continuesPrevious) {
-    return { startDate: todayIso(), endDate: addMonthsIso() };
+    return { startDate: todayIso(), endDate: subscriptionMonthEndIso() };
   }
 
   const startDate = addDaysIsoDate(previousEndDate, 1);
-  const monthEndBase = startDate ? addMonthsIso(new Date(`${startDate}T00:00:00.000Z`)) : null;
-  const endDate = monthEndBase ? addDaysIsoDate(monthEndBase, -1) : null;
-  return {
-    startDate: startDate ?? todayIso(),
-    endDate: endDate ?? addMonthsIso(),
-  };
+  const start = startDate ?? todayIso();
+  return { startDate: start, endDate: subscriptionMonthEndIso(start) };
 }
 
 function libraryRenewalDateRange(student: LibraryStudent | null | undefined) {
@@ -11501,7 +11497,7 @@ function PaymentForm({
   const [seatNumber, setSeatNumber] = useState(initialLibraryPrefill?.seatNumber ?? initialCoursePrefill?.seatNumber ?? "");
   const [lockerNumber, setLockerNumber] = useState(initialLibraryPrefill?.lockerNumber ?? "");
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(initialLibraryRenewalRange?.startDate ?? initialCourseRenewalRange?.startDate ?? todayIso());
-  const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? initialCourseRenewalRange?.endDate ?? addMonthsIso());
+  const [subscriptionEndDate, setSubscriptionEndDate] = useState(initialLibraryRenewalRange?.endDate ?? initialCourseRenewalRange?.endDate ?? subscriptionMonthEndIso());
   const selectedCourseSource = useMemo<CourseStudentRecordSource | null>(() => {
     const course = courses.find((item) => item.id === selectedCourseId);
     return course ? { id: studentRecordSourceId(course), type: "course", label: course.name, course } : null;
@@ -11788,7 +11784,7 @@ function PaymentForm({
     setFee("");
     setLibrarySearch("");
     setSubscriptionStartDate(todayIso());
-    setSubscriptionEndDate(addMonthsIso());
+    setSubscriptionEndDate(subscriptionMonthEndIso());
     setPaid("");
     setCashCollection("");
     setOnlineCollection("");
@@ -11810,7 +11806,7 @@ function PaymentForm({
     setFee("");
     setLibrarySearch("");
     setSubscriptionStartDate(todayIso());
-    setSubscriptionEndDate(addMonthsIso());
+    setSubscriptionEndDate(subscriptionMonthEndIso());
     setPaid("");
     setCashCollection("");
     setOnlineCollection("");
@@ -11865,7 +11861,7 @@ function PaymentForm({
       setFee("");
       setLibrarySearch("");
       setSubscriptionStartDate(todayIso());
-      setSubscriptionEndDate(addMonthsIso());
+      setSubscriptionEndDate(subscriptionMonthEndIso());
       return;
     }
     applyLibraryStudentPrefill(student);
@@ -11895,7 +11891,7 @@ function PaymentForm({
     setExtraSlots([]);
     setFee("");
     setSubscriptionStartDate(today);
-    setSubscriptionEndDate(addMonthsIso());
+    setSubscriptionEndDate(subscriptionMonthEndIso(today));
     setPaid("");
     setCashCollection("");
     setOnlineCollection("");
@@ -11917,7 +11913,7 @@ function PaymentForm({
     setExtraSlots([]);
     setFee("");
     setSubscriptionStartDate(today);
-    setSubscriptionEndDate(addMonthsIso());
+    setSubscriptionEndDate(subscriptionMonthEndIso(today));
     setPaid("");
     setCashCollection("");
     setOnlineCollection("");
@@ -12952,7 +12948,7 @@ function DatePair({ subscription = false }: { subscription?: boolean }) {
       </label>
       <label>
         {t("endDate")}
-        <input name="end_date" type="date" defaultValue={subscription ? addMonthsIso() : todayIso()} required />
+        <input name="end_date" type="date" defaultValue={subscription ? subscriptionMonthEndIso() : todayIso()} required />
       </label>
     </div>
   );

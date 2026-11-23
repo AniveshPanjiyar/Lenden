@@ -18,7 +18,7 @@ Code: `app-shell.tsx` (the Students tab, the student drawer, `PaymentForm` for s
 
 ## Subscriptions
 
-- A student payment creates or extends a subscription (`subscription_key`) with start and end dates, fee, paid, dues and advance. The student row keeps a snapshot of the current subscription.
+- A student payment creates or extends a subscription (`subscription_key`) with start and end dates, fee, paid, dues and advance. The student row keeps a snapshot of the current subscription. The default one-month range ends the day before the same date next month (23 Nov → 22 Dec).
 - Subscription history lives in the drawer's history tab (`lenden_student_subscription_history`, paged), together with the **Status history** (`student_status_events`).
 - `updateSubscription` edits dates, slot and fee. Editing an amount resyncs paid, dues and advance across the subscription's payments.
 - Returning an advance uses `refundStudentAdvance`.

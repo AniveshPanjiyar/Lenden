@@ -62,6 +62,16 @@ export function addMonthsIso(date = new Date(), months = 1) {
   return next.toISOString().slice(0, 10);
 }
 
+/** Last day of a one-month subscription starting on `startIso` (23 Nov -> 22 Dec). */
+export function subscriptionMonthEndIso(startIso: string = todayIso()) {
+  const [year, month, day] = startIso.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1 + 1, day));
+  // Clamp (31 Jan + 1 month -> 28/29 Feb), then step back one day.
+  if (next.getUTCDate() !== day) next.setUTCDate(0);
+  next.setUTCDate(next.getUTCDate() - 1);
+  return next.toISOString().slice(0, 10);
+}
+
 export function formatIndiaTime(value: Date | string | null | undefined) {
   if (!value) return "-";
   const date = value instanceof Date ? value : new Date(value);
