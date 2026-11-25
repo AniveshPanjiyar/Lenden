@@ -16,6 +16,10 @@ Code: `app-shell.tsx` (the Students tab, the student drawer, `PaymentForm` for s
 - **Library slots:** a full-time slot, or start and end times. Extra slots may not overlap (`extra_time_slots`). Hours are calculated.
 - Photos (student, Aadhaar front and back) can be cropped and rotated, and save at once. A new student's photos are kept as drafts on the device.
 
+## Photo
+
+- Tapping a student's photo (summary card or drawer) opens it full size; the cross button closes it (`ZoomablePhoto`).
+
 ## Subscriptions
 
 - A student payment creates or extends a subscription (`subscription_key`) with start and end dates, fee, paid, dues and advance. The student row keeps a snapshot of the current subscription. The default one-month range ends the day before the same date next month (23 Nov → 22 Dec).

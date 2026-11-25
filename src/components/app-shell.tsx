@@ -319,6 +319,59 @@ function SafeAvatarImage({
   );
 }
 
+function PhotoLightbox({ src, alt, closeLabel, onClose }: { src: string; alt: string; closeLabel: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label={alt} onClick={onClose}>
+      <button className="photo-lightbox-close" type="button" aria-label={closeLabel} onClick={onClose}>
+        <X size={24} />
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="photo-lightbox-image" src={src} alt={alt} onClick={(event) => event.stopPropagation()} />
+    </div>,
+    document.body,
+  );
+}
+
+/** Tap the photo to see it full size; the cross button, backdrop or Escape closes it. */
+function ZoomablePhoto({ src, alt, closeLabel, children }: { src?: string | null; alt: string; closeLabel: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const closeLightbox = useCallback(() => setOpen(false), []);
+  const source = src?.trim();
+  if (!source || !/^(?:https?:\/\/|data:image\/|blob:|\/(?!\/))/i.test(source)) return <>{children}</>;
+  return (
+    <>
+      <span
+        className="photo-zoom-trigger"
+        role="button"
+        tabIndex={0}
+        aria-label={alt}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(true);
+          }
+        }}
+      >
+        {children}
+      </span>
+      {open ? <PhotoLightbox src={source} alt={alt} closeLabel={closeLabel} onClose={closeLightbox} /> : null}
+    </>
+  );
+}
+
 function getTabIcon(id: Tab) {
   switch (id) {
     case "home":
@@ -445,6 +498,7 @@ const messages: Record<Language, Record<string, string>> = {
     balanceIncentive: "Incentive due",
     business: "Business",
     cancel: "Cancel",
+    closePhoto: "Close photo",
     cancelWrongEntry: "Cancel wrong entry",
     cancelledExcluded: "Cancelled · excluded from totals",
     cash: "Cash",
@@ -1068,6 +1122,7 @@ const messages: Record<Language, Record<string, string>> = {
     balanceIncentive: "कमिशन बाकी",
     business: "काम",
     cancel: "रद्द करें",
+    closePhoto: "फ़ोटो बंद करें",
     cancelWrongEntry: "गलत एंट्री हटाएं",
     cancelledExcluded: "रद्द · कुल रकम में शामिल नहीं",
     cash: "नकद",
@@ -3990,7 +4045,9 @@ function AppShellContent({ data, initialViewState }: { data: AppData; initialVie
             <X size={20} />
           </button>
           <div className="app-sidebar-profile px-6 mb-8 flex items-center gap-4">
-            <SafeAvatarImage alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
+            <ZoomablePhoto src={appData.profile.avatar_url} alt={appData.profile.full_name} closeLabel={t("closePhoto")}>
+              <SafeAvatarImage alt="User profile" className="w-12 h-12 rounded-full object-cover shadow-sm" fullName={appData.profile.full_name} avatarUrl={appData.profile.avatar_url} />
+            </ZoomablePhoto>
             <div>
               <h2 className="font-headline text-lg font-bold text-primary">{appData.profile.full_name}</h2>
               <p className="font-body text-body-md text-on-surface-variant">{profileRoleLabel(appData.profile, t)}</p>
@@ -7851,12 +7908,15 @@ function StudentAvatar({
   displayName,
   imageUrl,
   className = "",
+  zoomLabel,
 }: {
   displayName: string;
   imageUrl?: string | null;
   className?: string;
+  /** Pass the "close" label to make the photo open full size on tap. */
+  zoomLabel?: string;
 }) {
-  return (
+  const avatar = (
     <span className={`library-student-photo ${className}`}>
       <SafeAvatarImage
         alt={`${displayName} photo`}
@@ -7866,18 +7926,22 @@ function StudentAvatar({
       />
     </span>
   );
+  if (!zoomLabel) return avatar;
+  return <ZoomablePhoto src={imageUrl} alt={`${displayName} photo`} closeLabel={zoomLabel}>{avatar}</ZoomablePhoto>;
 }
 
 function StudentPhoto({
   student,
   displayName,
   className = "",
+  zoomLabel,
 }: {
   student: LibraryStudent;
   displayName: string;
   className?: string;
+  zoomLabel?: string;
 }) {
-  return <StudentAvatar displayName={displayName} imageUrl={student.photo_url} className={className} />;
+  return <StudentAvatar displayName={displayName} imageUrl={student.photo_url} className={className} zoomLabel={zoomLabel} />;
 }
 
 async function compressUploadImage(file: File) {
@@ -8911,7 +8975,7 @@ function LibraryStudentSummaryCard({
       <div className="library-student-summary-top">
         <div className="library-student-summary-person">
           <div className="library-student-photo-frame">
-            <StudentPhoto student={student} displayName={displayName} className="hero" />
+            <StudentPhoto student={student} displayName={displayName} className="hero" zoomLabel={t("closePhoto")} />
             {onEditPhoto ? (
               <button className="library-photo-edit-button" type="button" onClick={onEditPhoto} aria-label={`${t("editTransaction")} ${t("studentPhoto")}`}>
                 <Pencil size={14} />
@@ -10614,7 +10678,7 @@ function LibraryStudentsView({
                 </div>
               </div>
               <div className="student-drawer-profile">
-                <StudentAvatar displayName={drawerName} imageUrl={drawerPhotoUrl} className="drawer" />
+                <StudentAvatar displayName={drawerName} imageUrl={drawerPhotoUrl} className="drawer" zoomLabel={t("closePhoto")} />
                 <div className="student-drawer-identity">
                   <span className={`status-chip ${drawerStatusClass}`}>{drawerStatusLabel}</span>
                   {drawerPauseScheduledOn ? (

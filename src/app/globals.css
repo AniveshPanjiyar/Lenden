@@ -12235,3 +12235,8 @@ button.icon-button[data-loading="true"]::after {
   color: var(--foreground);
   font-size: 16px;
 }
+
+.photo-zoom-trigger { display: inline-flex; cursor: zoom-in; border-radius: inherit; }
+.photo-lightbox { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, 0.88); }
+.photo-lightbox-image { max-width: 100%; max-height: 85vh; border-radius: 12px; object-fit: contain; }
+.photo-lightbox-close { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.18); color: #fff; cursor: pointer; }
